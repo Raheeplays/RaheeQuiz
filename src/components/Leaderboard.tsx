@@ -17,7 +17,7 @@ export default function Leaderboard() {
     onValue(playersRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        const list = Object.values(data) as User[];
+        const list = Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })) as User[];
         // Sort by XP descending
         list.sort((a, b) => b.xp - a.xp);
         setPlayers(list);

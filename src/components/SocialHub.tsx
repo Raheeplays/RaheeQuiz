@@ -38,7 +38,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
         
         // If they are a friend, allow partial matching for convenience
         if (isFriend) {
-          return u.name.toLowerCase().includes(query) || 
+          return (u.name || '').toLowerCase().includes(query) || 
                  (u.username && u.username.toLowerCase().includes(query));
         }
         

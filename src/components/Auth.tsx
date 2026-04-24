@@ -100,7 +100,7 @@ export default function Auth() {
           const users = snapshot.val();
           // Check both name and username for login
           const userMatch = Object.values(users).find(
-            (u: any) => (u.name.toLowerCase() === name.toLowerCase() || u.id.toLowerCase() === name.toLowerCase()) && u.password === password
+            (u: any) => ((u.name || '').toLowerCase() === name.toLowerCase() || (u.id || '').toLowerCase() === name.toLowerCase()) && u.password === password
           ) as User | undefined;
 
           if (userMatch) {
@@ -130,7 +130,7 @@ export default function Auth() {
         
         // Clean ID (username format)
         const cleanId = username.replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
-        const exists = users[cleanId] || Object.values(users).some((u: any) => u.name.toLowerCase() === name.toLowerCase());
+        const exists = users[cleanId] || Object.values(users).some((u: any) => (u.name || '').toLowerCase() === name.toLowerCase());
 
         if (exists) {
           setError('Username or Name already taken');

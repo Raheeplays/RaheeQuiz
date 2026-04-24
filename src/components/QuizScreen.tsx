@@ -77,8 +77,12 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en' }
       incorrect: prev.incorrect + (isCorrect ? 0 : 1)
     }));
 
+    const globalHistoryRef = push(ref(db, 'history'));
+    const historyId = globalHistoryRef.key || Date.now().toString();
+
     // Update local history
     const historyEntry: QuizHistory = {
+      id: historyId,
       userId: currentUser.id,
       quizId: quizzes[absoluteIndex].id,
       userAnswerIndex: index,
@@ -93,7 +97,6 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en' }
     const newIndex = currentIndex + 1;
 
     // Push to global history collection
-    const globalHistoryRef = push(ref(db, 'history'));
     await set(globalHistoryRef, historyEntry);
 
     const currentTopicId = currentUser.selectedTopicId || 'general';

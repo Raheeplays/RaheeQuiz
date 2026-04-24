@@ -98,6 +98,7 @@ export interface Feedback {
 }
 
 export interface QuizHistory {
+  id: string;
   userId: string;
   quizId: string;
   userAnswerIndex: number;

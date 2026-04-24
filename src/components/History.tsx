@@ -22,7 +22,9 @@ export default function History({ onClose }: { onClose: () => void }) {
     onValue(historyRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        const list = Object.values(data).filter((h: any) => h.userId === currentUser.id) as QuizHistory[];
+        const list = Object.entries(data)
+          .map(([key, val]: [string, any]) => ({ ...val, id: key }))
+          .filter((h: any) => h.userId === currentUser.id) as QuizHistory[];
         setHistory(list.sort((a, b) => b.timestamp - a.timestamp));
       }
     });

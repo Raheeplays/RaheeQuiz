@@ -39,8 +39,18 @@ export default function AdminPanel() {
   });
 
   useEffect(() => {
-    onValue(ref(db, 'users'), s => s.exists() && setUsers(Object.values(s.val())));
-    onValue(ref(db, 'topics'), s => s.exists() && setTopics(Object.values(s.val())));
+    onValue(ref(db, 'users'), s => {
+      if (s.exists()) {
+        const data = s.val();
+        setUsers(Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })));
+      }
+    });
+    onValue(ref(db, 'topics'), s => {
+      if (s.exists()) {
+        const data = s.val();
+        setTopics(Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })));
+      }
+    });
     
     // Fetch all quizzes from all topics for admin panel listing
     onValue(ref(db, 'topicQuizzes'), s => {
@@ -54,7 +64,12 @@ export default function AdminPanel() {
       }
     });
 
-    onValue(ref(db, 'feedback'), s => s.exists() && setFeedback(Object.values(s.val())));
+    onValue(ref(db, 'feedback'), s => {
+      if (s.exists()) {
+        const data = s.val();
+        setFeedback(Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })));
+      }
+    });
     onValue(ref(db, 'settings/activeSkin'), s => s.exists() && setCurrentSkin(s.val()));
   }, []);
 
@@ -67,19 +82,61 @@ export default function AdminPanel() {
   useEffect(() => {
     if (selectedUser) {
       const historyRef = ref(db, 'history');
-      onValue(historyRef, (snapshot) => {
+      const unsubscribe = onValue(historyRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
-          const filtered = Object.values(data).filter((h: any) => h.userId === selectedUser.id) as QuizHistory[];
-          setUserHistory(filtered.sort((a, b) => b.timestamp - a.timestamp));
+          const mapped = Object.entries(data)
+            .map(([key, val]: [string, any]) => ({ ...val, id: key }))
+            .filter((h: any) => h.userId === selectedUser.id);
+          setUserHistory(mapped.sort((a: any, b: any) => b.timestamp - a.timestamp));
         } else {
           setUserHistory([]);
         }
       });
+      return () => unsubscribe();
     } else {
       setUserHistory([]);
     }
   }, [selectedUser]);
+
+  const deleteHistoryItem = async (historyId: string) => {
+    if (!historyId) return;
+    if (!confirm("Delete this history entry?")) return;
+    try {
+      await remove(ref(db, `history/${historyId}`));
+    } catch (error) {
+      console.error("Failed to delete history item:", error);
+      alert('Failed to delete history item.');
+    }
+  };
+
+  const clearUserHistory = async (userId: string) => {
+    if (!confirm("Are you sure you want to delete ALL history for this player? This cannot be undone.")) return;
+    
+    try {
+      const historyRef = ref(db, 'history');
+      const snapshot = await get(historyRef);
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const updates: any = {};
+        Object.entries(data).forEach(([key, val]: [string, any]) => {
+          if (val.userId === userId) {
+            updates[key] = null;
+          }
+        });
+        
+        if (Object.keys(updates).length > 0) {
+          await update(historyRef, updates);
+          alert('Player history cleared!');
+        } else {
+          alert('No history found to clear.');
+        }
+      }
+    } catch (error) {
+      console.error("Failed to clear history:", error);
+      alert('Failed to clear player history.');
+    }
+  };
 
   const changeUserStatus = async (userId: string, status: any) => {
     await set(ref(db, `users/${userId}/status`), status);
@@ -441,8 +498,8 @@ export default function AdminPanel() {
                    <button 
                      onClick={() => {
                        setIsEditingUser(true);
-                       setEditName(u.name);
-                       setEditId(u.id);
+                       setEditName(u.name || '');
+                       setEditId(u.id || '');
                      }}
                      className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-white/60 font-black uppercase tracking-widest text-[8px] hover:bg-white/10 transition-all"
                    >
@@ -536,10 +593,21 @@ export default function AdminPanel() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
              <div className="lg:col-span-2 bg-[#111] p-6 rounded-[2.5rem] border border-white/5">
                 <div className="flex items-center justify-between mb-6">
-                  <h4 className="font-black text-sm uppercase tracking-widest flex items-center gap-2">
-                     <HistoryIcon size={18} className="text-primary" />
-                     Quiz History
-                  </h4>
+                  <div className="flex items-center gap-4">
+                    <h4 className="font-black text-sm uppercase tracking-widest flex items-center gap-2">
+                       <HistoryIcon size={18} className="text-primary" />
+                       Quiz History
+                    </h4>
+                    {userHistory.length > 0 && (
+                      <button 
+                        onClick={() => clearUserHistory(u.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 border border-red-500/20 rounded-lg text-red-500 text-[10px] font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all shadow-lg shadow-red-500/5 active:scale-95"
+                      >
+                        <Trash2 size={12} />
+                        Clear All
+                      </button>
+                    )}
+                  </div>
                   <select 
                     value={historyFilter}
                     onChange={(e) => setHistoryFilter(e.target.value)}
@@ -569,10 +637,11 @@ export default function AdminPanel() {
                                   <span className="text-[10px] font-black text-white/20 uppercase tracking-[0.2em]">Round {round}</span>
                                   <div className="h-[1px] flex-1 bg-white/5" />
                                </div>
-                               {rounds[Number(round)].map((h, i) => {
+                               {rounds[Number(round)].map((h) => {
                                   const quiz = quizzes.find(q => q.id === h.quizId);
+                                  const historyKey = h.id || `hist-${h.timestamp}-${h.quizId}`;
                                   return (
-                                     <div key={i} className="bg-black/40 p-4 rounded-2xl border border-white/5 flex items-center justify-between hover:bg-white/5 transition-all group">
+                                     <div key={historyKey} className="bg-black/40 p-4 rounded-2xl border border-white/5 flex items-center justify-between hover:bg-white/5 transition-all group">
                                         <div>
                                            <div className="flex items-center gap-2 mb-1">
                                              <p className="text-[8px] font-black text-primary uppercase px-1.5 py-0.5 bg-primary/10 rounded">{quiz?.topicId || 'Unknown'}</p>
@@ -580,12 +649,20 @@ export default function AdminPanel() {
                                            </div>
                                            <p className="font-bold text-xs truncate max-w-[200px] sm:max-w-[400px]">{quiz?.question?.en || 'Deleted Quiz'}</p>
                                         </div>
-                                        <div className={cn(
-                                          "w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ml-4",
-                                          h.isCorrect ? "bg-green-500/10 text-green-500 border border-green-500/20" : "bg-red-500/10 text-red-500 border border-red-500/20"
-                                        )}>
-                                           {h.isCorrect ? <CheckCircle size={18} /> : <XCircle size={18} />}
-                                        </div>
+                                        <div className="flex items-center gap-2 shrink-0 ml-4">
+                                            <button 
+                                              onClick={() => deleteHistoryItem(h.id)}
+                                              className="p-2 text-white/10 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                                            >
+                                              <Trash2 size={16} />
+                                            </button>
+                                            <div className={cn(
+                                              "w-10 h-10 rounded-2xl flex items-center justify-center",
+                                              h.isCorrect ? "bg-green-500/10 text-green-500 border border-green-500/20" : "bg-red-500/10 text-red-500 border border-red-500/20"
+                                            )}>
+                                               {h.isCorrect ? <CheckCircle size={18} /> : <XCircle size={18} />}
+                                            </div>
+                                         </div>
                                      </div>
                                   );
                                })}
@@ -666,28 +743,143 @@ export default function AdminPanel() {
                 </div>
 
                 <div className="bg-[#111] p-6 rounded-[2.5rem] border border-white/5 mt-6">
-                   <h4 className="font-black text-sm uppercase tracking-widest mb-4 flex items-center gap-2">
-                      <Coins size={18} className="text-primary italic" />
-                      Economy Editor
+                   <h4 className="font-black text-sm uppercase tracking-widest mb-6 flex items-center gap-2">
+                      <Shield size={18} className="text-primary" />
+                      Experience & Rank
                    </h4>
                    <div className="space-y-4">
-                      <div>
-                         <p className="text-[10px] font-bold text-white/20 uppercase mb-2 ml-1">Update Rahee Coins</p>
-                         <div className="flex gap-3">
-                            <input 
-                               type="number"
-                               defaultValue={u.raheeCoins || 0}
-                               onBlur={async (e) => {
-                                  const val = parseInt(e.target.value);
-                                  if (!isNaN(val)) {
-                                     await update(ref(db, `users/${u.id}`), { raheeCoins: val });
-                                  }
-                               }}
-                               className="flex-1 bg-black border border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
-                            />
-                         </div>
-                         <p className="text-[8px] text-white/20 uppercase font-bold tracking-[0.2em] mt-3 ml-2 italic">Changes save automatically on exit</p>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-white/20 uppercase mb-1 ml-1">Total XP</p>
+                           <input 
+                              type="number"
+                              defaultValue={u.xp ?? 0}
+                              key={`xp-${u.id}-${u.xp}`}
+                              onBlur={async (e) => {
+                                 const val = parseInt(e.target.value);
+                                 if (!isNaN(val) && val !== u.xp) {
+                                    await update(ref(db, `users/${u.id}`), { xp: val });
+                                 }
+                              }}
+                              className="w-full bg-black border border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                           />
+                        </div>
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-white/20 uppercase mb-1 ml-1">Current Rank</p>
+                           <input 
+                              type="number"
+                              defaultValue={u.rank ?? 1}
+                              key={`rank-${u.id}-${u.rank}`}
+                              onBlur={async (e) => {
+                                 const val = parseInt(e.target.value);
+                                 if (!isNaN(val) && val !== u.rank) {
+                                    await update(ref(db, `users/${u.id}`), { rank: val });
+                                 }
+                              }}
+                              className="w-full bg-black border border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                           />
+                        </div>
                       </div>
+                      <p className="text-[8px] text-white/20 uppercase font-bold tracking-[0.2em] mt-1 ml-2 italic">Changes save automatically on exit</p>
+                   </div>
+                </div>
+
+                <div className="bg-[#111] p-6 rounded-[2.5rem] border border-white/5 mt-6">
+                   <h4 className="font-black text-sm uppercase tracking-widest mb-6 flex items-center gap-2">
+                      <Edit2 size={18} className="text-primary" />
+                      Progression Editor
+                   </h4>
+                   <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-white/20 uppercase mb-1 ml-1">Current Round</p>
+                           <input 
+                              type="number"
+                              defaultValue={u.currentRound ?? 1}
+                              key={`round-${u.id}-${u.currentRound}`}
+                              onBlur={async (e) => {
+                                 const val = parseInt(e.target.value);
+                                 if (!isNaN(val) && val !== u.currentRound) {
+                                    await update(ref(db, `users/${u.id}`), { currentRound: val });
+                                 }
+                              }}
+                              className="w-full bg-black border border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                           />
+                        </div>
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-white/20 uppercase mb-1 ml-1">Quiz Index</p>
+                           <input 
+                              type="number"
+                              defaultValue={u.currentQuizIndex ?? 0}
+                              key={`index-${u.id}-${u.currentQuizIndex}`}
+                              onBlur={async (e) => {
+                                 const val = parseInt(e.target.value);
+                                 if (!isNaN(val) && val !== u.currentQuizIndex) {
+                                    await update(ref(db, `users/${u.id}`), { currentQuizIndex: val });
+                                 }
+                              }}
+                              className="w-full bg-black border border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                           />
+                        </div>
+                      </div>
+                      <p className="text-[8px] text-white/20 uppercase font-bold tracking-[0.2em] mt-1 ml-2 italic">Changes save automatically on exit</p>
+                   </div>
+                </div>
+
+                <div className="bg-[#111] p-6 rounded-[2.5rem] border border-white/5 mt-6">
+                   <h4 className="font-black text-sm uppercase tracking-widest mb-4 flex items-center gap-2">
+                      <Coins size={18} className="text-primary italic" />
+                      Economy & Lifelines
+                   </h4>
+                   <div className="space-y-6">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-white/20 uppercase mb-1 ml-1">Rahee Coins</p>
+                           <input 
+                              type="number"
+                              defaultValue={u.raheeCoins ?? 0}
+                              key={`coins-${u.id}-${u.raheeCoins}`}
+                              onBlur={async (e) => {
+                                 const val = parseInt(e.target.value);
+                                 if (!isNaN(val) && val !== u.raheeCoins) {
+                                    await update(ref(db, `users/${u.id}`), { raheeCoins: val });
+                                 }
+                              }}
+                              className="w-full bg-black border border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                           />
+                        </div>
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-white/20 uppercase mb-1 ml-1">50:50 Lifelines</p>
+                           <input 
+                              type="number"
+                              defaultValue={u.lifelines?.fiftyFifty ?? 0}
+                              key={`5050-${u.id}-${u.lifelines?.fiftyFifty}`}
+                              onBlur={async (e) => {
+                                 const val = parseInt(e.target.value);
+                                 if (!isNaN(val)) {
+                                    await update(ref(db, `users/${u.id}/lifelines`), { fiftyFifty: val });
+                                 }
+                              }}
+                              className="w-full bg-black border border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                           />
+                        </div>
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-white/20 uppercase mb-1 ml-1">Change Lifelines</p>
+                           <input 
+                              type="number"
+                              defaultValue={u.lifelines?.changeQuiz ?? 0}
+                              key={`change-${u.id}-${u.lifelines?.changeQuiz}`}
+                              onBlur={async (e) => {
+                                 const val = parseInt(e.target.value);
+                                 if (!isNaN(val)) {
+                                    await update(ref(db, `users/${u.id}/lifelines`), { changeQuiz: val });
+                                 }
+                              }}
+                              className="w-full bg-black border border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                           />
+                        </div>
+                      </div>
+                      <p className="text-[8px] text-white/20 uppercase font-bold tracking-[0.2em] mt-1 ml-2 italic">Changes save automatically on exit</p>
                    </div>
                 </div>
              </div>
@@ -929,7 +1121,7 @@ export default function AdminPanel() {
                       <h4 className="font-bold text-sm leading-tight mb-4">{q.question?.en || 'Untitled Question'}</h4>
                       <div className="grid grid-cols-2 gap-2">
                         {q.options?.en?.map((opt, i) => (
-                           <div key={i} className={cn(
+                           <div key={`${q.id}-opt-${i}`} className={cn(
                              "p-2 rounded-xl text-[10px] font-bold truncate",
                              i === q.correctAnswerIndex ? "bg-green-500/10 text-green-500 border border-green-500/20" : "bg-white/5 text-white/20"
                            )}>
