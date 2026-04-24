@@ -30,11 +30,22 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
   const pendingOutgoing = allUsers.filter(u => currentUser.pendingRequests?.[u.id] === 'outgoing');
 
   const filteredUsers = searchQuery.trim() 
-    ? allUsers.filter(u => 
-        u.id !== currentUser.id && 
-        (u.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-         (u.username && u.username.toLowerCase().includes(searchQuery.toLowerCase())))
-      ).slice(0, 5)
+    ? allUsers.filter(u => {
+        if (u.id === currentUser.id) return false;
+        
+        const query = searchQuery.trim().toLowerCase();
+        const isFriend = currentUser.friends?.[u.id];
+        
+        // If they are a friend, allow partial matching for convenience
+        if (isFriend) {
+          return u.name.toLowerCase().includes(query) || 
+                 (u.username && u.username.toLowerCase().includes(query));
+        }
+        
+        // If not a friend, only show if the query EXACTLY matches their username
+        // This prevents "Unknown" players from appearing in partial searches
+        return u.username && u.username.toLowerCase() === query;
+      }).slice(0, 5)
     : [];
 
   const sendFriendRequest = async (targetUserId: string) => {

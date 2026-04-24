@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { ref, onValue, set, push, remove, get } from 'firebase/database';
+import { ref, onValue, set, push, remove, get, update } from 'firebase/database';
 import { User, Topic, Quiz, Feedback, QuizHistory } from '../types';
 import ScoreCard from './ScoreCard';
-import { Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2 } from 'lucide-react';
+import { Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2, Coins } from 'lucide-react';
 import { cn } from '../lib/utils';
 import Papa from 'papaparse';
 import { motion, AnimatePresence } from 'motion/react';
@@ -59,7 +59,7 @@ export default function AdminPanel() {
   }, []);
 
   const getUserRank = (userId: string) => {
-    const sorted = [...users].sort((a, b) => b.xp - a.xp);
+    const sorted = [...users].sort((a, b) => (b.xp || 0) - (a.xp || 0));
     const index = sorted.findIndex(u => u.id === userId);
     return index !== -1 ? index + 1 : '-';
   };
@@ -306,6 +306,7 @@ export default function AdminPanel() {
               currentRound: 1,
               currentQuizIndex: 0,
               selectedTopicId: 'general',
+              language: 'en',
               raheeCoins: 0,
               lifelines: {
                 'fiftyFifty': 0,
@@ -326,6 +327,18 @@ export default function AdminPanel() {
     await set(ref(db, `users/${userId}/extraTriesRequested`), false);
     await set(ref(db, `users/${userId}/currentRound`), 1);
     await set(ref(db, `users/${userId}/currentQuizIndex`), 0);
+  };
+
+  const fullResetPlayer = async (userId: string) => {
+    if (!confirm("Are you sure? This will reset ALL stats (XP, Rank, Round, Progress) to zero. This cannot be undone.")) return;
+    await update(ref(db, `users/${userId}`), {
+      xp: 0,
+      rank: 1,
+      currentRound: 1,
+      currentQuizIndex: 0,
+      scores: {}
+    });
+    alert('Player data fully reset!');
   };
 
   const renameUser = async (u: User, newName: string, newId: string) => {
@@ -452,7 +465,7 @@ export default function AdminPanel() {
 
           <div className="bg-black/40 border border-white/5 p-8 rounded-[2.5rem] flex flex-col md:flex-row items-center gap-8">
              <div className="w-24 h-24 bg-primary/20 rounded-full flex items-center justify-center text-primary text-4xl font-black">
-                {u.name[0]}
+                {u.name?.[0] || '?'}
              </div>
              <div className="flex-1 text-center md:text-left w-full">
                 {isEditingUser ? (
@@ -640,6 +653,15 @@ export default function AdminPanel() {
                             <button onClick={() => allowExtraTries(u.id)} className="w-full bg-primary text-black py-3 rounded-xl font-black uppercase text-[10px] tracking-widest">Grant Reset</button>
                          </div>
                       )}
+
+                      <div className="pt-2 border-t border-white/5 mt-4">
+                         <button 
+                           onClick={() => fullResetPlayer(u.id)}
+                           className="w-full bg-red-500/10 border border-red-500/20 text-red-500 hover:bg-red-500 hover:text-white py-3 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all"
+                         >
+                           Master Reset (XP & Stats)
+                         </button>
+                      </div>
                    </div>
                 </div>
 

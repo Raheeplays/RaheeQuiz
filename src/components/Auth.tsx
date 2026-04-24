@@ -35,6 +35,7 @@ export default function Auth() {
           currentRound: 1,
           currentQuizIndex: 0,
           selectedTopicId: 'general',
+          language: 'en',
           raheeCoins: 0,
           lifelines: {
             'fiftyFifty': 0,
@@ -66,6 +67,7 @@ export default function Auth() {
             currentRound: 1,
             currentQuizIndex: 0,
             selectedTopicId: 'general',
+            language: 'en',
             raheeCoins: 0,
             lifelines: {
               'fiftyFifty': 0,
@@ -145,6 +147,7 @@ export default function Auth() {
             currentRound: 1,
             currentQuizIndex: 0,
             selectedTopicId: 'general',
+            language: 'en',
             raheeCoins: 0,
             lifelines: {
               'fiftyFifty': 0,

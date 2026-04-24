@@ -19,6 +19,7 @@ import MultiplayerGame from './MultiplayerGame';
 import AdminPanel from './AdminPanel';
 import ScoreCard from './ScoreCard';
 import History from './History';
+import Chat from './Chat';
 import { db } from '../firebase/config';
 import { ref, onValue, update } from 'firebase/database';
 import { User } from '../types';
