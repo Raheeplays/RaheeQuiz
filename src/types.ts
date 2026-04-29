@@ -15,7 +15,9 @@ export interface User {
   isBot?: boolean;
   avatar?: string;
   lastPlayed?: number;
-  selectedTopicId: string;
+  selectedTopicId: string | null;
+  selectedSubTopicId?: string;
+  selectedSubSubTopicId?: string;
   language: 'en' | 'hi';
   raheeCoins: number;
   lifelines: {
@@ -32,6 +34,36 @@ export interface User {
   pendingRequests?: { [userId: string]: 'incoming' | 'outgoing' };
   extraTriesRequested?: boolean;
   extraTriesAllowed?: boolean;
+  stats?: {
+    totalAttempted: number;
+    correctAnswers: number;
+    incorrectAnswers: number;
+  };
+}
+
+export interface Event {
+  id: string;
+  title: string;
+  description: string;
+  topicId: string;
+  startTime: number;
+  endTime: number;
+  type: 'test' | 'exam' | 'contest';
+  participants?: { [userId: string]: boolean };
+  hasTimer?: boolean;
+  timerDuration?: number;
+  certificateTitle?: string;
+  certificateSubtitle?: string;
+  certificateFooter?: string;
+  certificateColor?: string;
+  results?: {
+    [userId: string]: {
+      score: number;
+      total: number;
+      completedAt: number;
+    }
+  };
+  createdAt: number;
 }
 
 export interface MatchProgress {
@@ -76,6 +108,8 @@ export interface Quiz {
   };
   correctAnswerIndex: number;
   topicId: string;
+  subTopicId?: string;
+  subSubTopicId?: string;
   explanation?: {
     en: string;
     hi: string;
@@ -86,6 +120,7 @@ export interface Topic {
   id: string;
   name: string;
   description?: string;
+  children?: { [childId: string]: Topic };
 }
 
 export interface Feedback {

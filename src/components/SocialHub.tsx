@@ -32,6 +32,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
   const filteredUsers = searchQuery.trim() 
     ? allUsers.filter(u => {
         if (u.id === currentUser.id) return false;
+        if (u.isBot && currentUser.role !== 'admin') return false;
         
         const query = searchQuery.trim().toLowerCase();
         const isFriend = currentUser.friends?.[u.id];
@@ -77,22 +78,22 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
   };
 
   return (
-    <div className="bg-[#0a0a0a] rounded-[2.5rem] border border-white/5 overflow-hidden flex flex-col h-full max-h-[85vh]">
+    <div className="bg-white dark:bg-[#0a0a0a] rounded-[2.5rem] border border-black/5 dark:border-white/5 overflow-hidden flex flex-col h-full max-h-[85vh]">
         {/* Header */}
-        <div className="p-6 md:p-8 flex items-center justify-between border-b border-white/5 bg-black/40 backdrop-blur-xl">
+        <div className="p-6 md:p-8 flex items-center justify-between border-b border-black/5 dark:border-white/5 bg-white/40 dark:bg-black/40 backdrop-blur-xl">
            <div className="flex items-center gap-4">
              <div className="w-12 h-12 bg-primary/10 rounded-2xl flex items-center justify-center text-primary border border-primary/20">
                <Users size={24} />
              </div>
              <div>
-               <h2 className="text-xl font-black tracking-tighter text-white uppercase">{t.friends}</h2>
-               <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest px-1">Connect with friends</p>
+               <h2 className="text-xl font-black tracking-tighter text-black dark:text-white uppercase">{t.friends}</h2>
+               <p className="text-[10px] font-bold text-black/30 dark:text-white/40 uppercase tracking-widest px-1">Connect with friends</p>
              </div>
            </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex p-2 gap-1 bg-white/5 mx-6 mt-6 rounded-2xl">
+        <div className="flex p-2 gap-1 bg-black/5 dark:bg-white/5 mx-6 mt-6 rounded-2xl">
           {[
             { id: 'search', label: t.search, icon: SearchIcon },
             { id: 'friends', label: t.friends, icon: Users, count: friends.length },
@@ -103,7 +104,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
               onClick={() => setActiveTab(tab.id as any)}
               className={cn(
                 "flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all",
-                activeTab === tab.id ? "bg-primary text-black" : "text-white/40 hover:bg-white/5"
+                activeTab === tab.id ? "bg-primary text-black" : "text-black/40 dark:text-white/40 hover:bg-black/5 dark:hover:bg-white/5"
               )}
             >
               <tab.icon size={14} />
@@ -125,13 +126,13 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
           {activeTab === 'search' && (
             <div className="space-y-6">
               <div className="relative">
-                <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20" size={20} />
+                <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-black/20 dark:text-white/20" size={20} />
                 <input 
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search by name or @username..."
-                  className="w-full bg-white/5 border border-white/5 rounded-2xl p-5 pl-12 text-white outline-none focus:border-primary/30 transition-all font-bold"
+                  className="w-full bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 rounded-2xl p-5 pl-12 text-black dark:text-white outline-none focus:border-primary/30 transition-all font-bold"
                 />
               </div>
 
@@ -142,17 +143,17 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                       key={user.id}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="bg-white/5 p-4 rounded-2xl border border-white/5 flex items-center justify-between group hover:border-primary/20 transition-all"
+                      className="bg-black/5 dark:bg-white/5 p-4 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between group hover:border-primary/20 transition-all"
                     >
                       <div 
                         className="flex items-center gap-4 cursor-pointer"
                         onClick={() => setSelectedUser(user)}
                       >
-                         <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center text-white/40 font-black text-xl border border-white/5">
+                         <div className="w-12 h-12 bg-black/5 dark:bg-white/10 rounded-xl flex items-center justify-center text-black/40 dark:text-white/40 font-black text-xl border border-black/5 dark:border-white/5">
                             {(user.name || 'P')[0].toUpperCase()}
                          </div>
-                         <div>
-                            <h4 className="font-bold text-sm text-white">{user.name}</h4>
+                         <div className="text-left">
+                            <h4 className="font-bold text-sm text-black dark:text-white">{user.name}</h4>
                             <p className="text-[10px] text-primary font-mono lowercase">@{user.username || user.id}</p>
                          </div>
                       </div>
@@ -165,7 +166,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                         ) : currentUser.pendingRequests?.[user.id] === 'outgoing' ? (
                           <button 
                             onClick={() => cancelOrDeclineRequest(user.id)}
-                            className="text-[10px] font-bold text-white/20 hover:text-red-500 uppercase px-3 py-2 bg-white/5 rounded-xl transition-all"
+                            className="text-[10px] font-bold text-black/30 dark:text-white/20 hover:text-red-500 dark:hover:text-red-500 uppercase px-3 py-2 bg-black/5 dark:bg-white/5 rounded-xl transition-all"
                           >
                             Cancel
                           </button>
@@ -189,13 +190,13 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                   ))
                 ) : searchQuery.trim() !== '' ? (
                   <div className="text-center py-12 opacity-40">
-                    <SearchIcon size={48} className="mx-auto mb-4 text-white" />
-                    <p className="text-sm font-bold text-white">No players found matching "{searchQuery}"</p>
+                    <SearchIcon size={48} className="mx-auto mb-4 text-black dark:text-white" />
+                    <p className="text-sm font-bold text-black dark:text-white">No players found matching "{searchQuery}"</p>
                   </div>
                 ) : (
                   <div className="text-center py-12 opacity-20">
-                     <Users size={48} className="mx-auto mb-4 text-white" />
-                     <p className="text-xs font-bold uppercase tracking-widest leading-loose text-white">Search for players to<br/>start a competition</p>
+                     <Users size={48} className="mx-auto mb-4 text-black dark:text-white" />
+                     <p className="text-xs font-bold uppercase tracking-widest leading-loose text-black dark:text-white">Search for players to<br/>start a competition</p>
                   </div>
                 )}
               </div>
@@ -208,7 +209,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                 friends.map(user => (
                   <div 
                     key={user.id}
-                    className="bg-white/5 p-4 rounded-2xl border border-white/5 flex items-center justify-between group hover:border-primary/20 transition-all"
+                    className="bg-black/5 dark:bg-white/5 p-4 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between group hover:border-primary/20 transition-all"
                   >
                     <div 
                       className="flex items-center gap-4 cursor-pointer"
@@ -217,17 +218,17 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                        <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center text-primary font-black text-xl border border-primary/20">
                           {(user.name || 'P')[0].toUpperCase()}
                        </div>
-                       <div>
-                          <h4 className="font-bold text-sm text-white">{user.name}</h4>
+                       <div className="text-left">
+                          <h4 className="font-bold text-sm text-black dark:text-white">{user.name}</h4>
                           <div className="flex items-center gap-2">
                             <Shield size={10} className="text-primary" />
-                            <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Rank {user.rank || 1}</span>
+                            <span className="text-[10px] font-bold text-black/30 dark:text-white/40 uppercase tracking-widest">Rank {user.rank || 1}</span>
                           </div>
                        </div>
                     </div>
                     <button 
                       onClick={() => removeFriend(user.id)}
-                      className="p-3 bg-red-500/10 text-red-500 rounded-xl opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500 hover:text-white"
+                      className="p-3 bg-red-500/10 text-red-500 rounded-xl md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-red-500 hover:text-white"
                     >
                       <UserMinus size={18} />
                     </button>
@@ -235,8 +236,8 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                 )
               )) : (
                 <div className="text-center py-12 opacity-40">
-                  <Users size={48} className="mx-auto mb-4 text-white" />
-                  <p className="text-sm font-bold text-white">No friends yet. Start searching!</p>
+                  <Users size={48} className="mx-auto mb-4 text-black dark:text-white" />
+                  <p className="text-sm font-bold text-black dark:text-white">No friends yet. Start searching!</p>
                 </div>
               )}
             </div>
@@ -248,20 +249,20 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                 <div className="space-y-3">
                   <p className="text-[10px] font-black text-primary uppercase tracking-widest px-2">Incoming Requests</p>
                   {pendingIncoming.map(user => (
-                    <div key={user.id} className="bg-white/5 p-4 rounded-3xl border border-white/5 flex items-center justify-between">
-                       <div className="flex items-center gap-4 text-white">
-                          <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-white/40">
+                    <div key={user.id} className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl border border-black/5 dark:border-white/5 flex items-center justify-between">
+                       <div className="flex items-center gap-4 text-black dark:text-white">
+                          <div className="w-10 h-10 bg-black/5 dark:bg-white/10 rounded-xl flex items-center justify-center text-black/30 dark:text-white/40">
                              {(user.name || 'P')[0].toUpperCase()}
                           </div>
-                          <div>
+                          <div className="text-left">
                              <h4 className="font-bold text-sm">{user.name}</h4>
-                             <p className="text-[8px] text-white/40 uppercase tracking-widest">Wants to be friends</p>
+                             <p className="text-[8px] text-black/30 dark:text-white/40 uppercase tracking-widest">Wants to be friends</p>
                           </div>
                        </div>
                        <div className="flex gap-2">
                           <button 
                              onClick={() => cancelOrDeclineRequest(user.id)}
-                             className="p-2 text-white/40 hover:text-red-500 transition-colors"
+                             className="p-2 text-black/30 dark:text-white/40 hover:text-red-500 transition-colors"
                           >
                              <X size={20} />
                           </button>
@@ -279,16 +280,16 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
 
               {pendingOutgoing.length > 0 && (
                 <div className="space-y-3">
-                  <p className="text-[10px] font-black text-white/40 uppercase tracking-widest px-2">Pending Requests</p>
+                  <p className="text-[10px] font-black text-black/30 dark:text-white/40 uppercase tracking-widest px-2">Pending Requests</p>
                   {pendingOutgoing.map(user => (
-                    <div key={user.id} className="bg-white/5 p-4 rounded-3xl border border-white/5 flex items-center justify-between opacity-60">
-                       <div className="flex items-center gap-4 text-white">
-                          <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-white/20">
+                    <div key={user.id} className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl border border-black/5 dark:border-white/5 flex items-center justify-between opacity-60">
+                       <div className="flex items-center gap-4 text-black dark:text-white">
+                          <div className="w-10 h-10 bg-black/5 dark:bg-white/10 rounded-xl flex items-center justify-center text-black/20 dark:text-white/20">
                              {(user.name || 'P')[0].toUpperCase()}
                           </div>
-                          <div>
+                          <div className="text-left">
                              <h4 className="font-bold text-sm">{user.name}</h4>
-                             <p className="text-[8px] text-white/20 uppercase tracking-widest font-mono">@{user.username || user.id}</p>
+                             <p className="text-[8px] text-black/20 dark:text-white/20 uppercase tracking-widest font-mono">@{user.username || user.id}</p>
                           </div>
                        </div>
                        <button 
@@ -304,8 +305,8 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
 
               {pendingIncoming.length === 0 && pendingOutgoing.length === 0 && (
                 <div className="text-center py-12 opacity-40">
-                  <Clock size={48} className="mx-auto mb-4 text-white" />
-                  <p className="text-sm font-bold text-white">No pending requests</p>
+                  <Clock size={48} className="mx-auto mb-4 text-black dark:text-white" />
+                  <p className="text-sm font-bold text-black dark:text-white">No pending requests</p>
                 </div>
               )}
             </div>

@@ -3,18 +3,22 @@ import { db } from '../firebase/config';
 import { ref, onValue, set, push, remove, get, update } from 'firebase/database';
 import { User, Topic, Quiz, Feedback, QuizHistory } from '../types';
 import ScoreCard from './ScoreCard';
-import { Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2, Coins } from 'lucide-react';
+import { Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2, Coins, TrendingUp, Calendar, Sun, Moon, Star } from 'lucide-react';
+import { useTheme } from '../contexts/ThemeContext';
 import { cn } from '../lib/utils';
 import Papa from 'papaparse';
 import { motion, AnimatePresence } from 'motion/react';
-import { SKINS } from '../types';
+import { SKINS, Event } from '../types';
+import { CLASSES, SUBJECTS } from '../constants';
 
 export default function AdminPanel() {
+  const { isDark, setIsDark } = useTheme();
   const [activeSubTab, setActiveSubTab] = useState('users');
   const [users, setUsers] = useState<User[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [feedback, setFeedback] = useState<Feedback[]>([]);
+  const [events, setEvents] = useState<Event[]>([]);
   const [currentSkin, setCurrentSkin] = useState('rahee');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [userHistory, setUserHistory] = useState<QuizHistory[]>([]);
@@ -24,17 +28,38 @@ export default function AdminPanel() {
   const [editName, setEditName] = useState('');
   const [editId, setEditId] = useState('');
   const [editingQuizId, setEditingQuizId] = useState<string | null>(null);
+  const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
+  const [topicPath, setTopicPath] = useState<string[]>([]); // Array of IDs representing the path
+  const [quizTopicPath, setQuizTopicPath] = useState<Topic[]>([]); 
+  const [newNode, setNewNode] = useState({ id: '', name: '', description: '' });
+  const [nodeEditMode, setNodeEditMode] = useState<string | null>(null);
   
   // Create state
-  const [newTopicName, setNewTopicName] = useState('');
+  const [newTopic, setNewTopic] = useState({
+    name: ''
+  });
   const [bulkText, setBulkText] = useState('');
+  const [newEvent, setNewEvent] = useState({
+    title: '',
+    description: '',
+    topicId: '',
+    startTime: '',
+    durationHours: '1',
+    type: 'test' as 'test' | 'exam' | 'contest',
+    hasTimer: false,
+    timerDuration: '30',
+    certificateTitle: 'CERTIFICATE OF ACHIEVEMENT',
+    certificateSubtitle: 'This is to certify that',
+    certificateFooter: 'Rahee Quiz Team',
+    certificateColor: '#32befa'
+  });
   const [newQuiz, setNewQuiz] = useState({
     questionEn: '', questionHi: '',
     opt1En: '', opt1Hi: '',
     opt2En: '', opt2Hi: '',
     opt3En: '', opt3Hi: '',
     opt4En: '', opt4Hi: '',
-    correct: 1, topicId: '',
+    correct: 1, topicId: '', subTopicId: '', subSubTopicId: '',
     explanationEn: '', explanationHi: ''
   });
 
@@ -71,6 +96,14 @@ export default function AdminPanel() {
       }
     });
     onValue(ref(db, 'settings/activeSkin'), s => s.exists() && setCurrentSkin(s.val()));
+    onValue(ref(db, 'events'), s => {
+      if (s.exists()) {
+        const data = s.val();
+        setEvents(Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })));
+      } else {
+        setEvents([]);
+      }
+    });
   }, []);
 
   const getUserRank = (userId: string) => {
@@ -148,10 +181,82 @@ export default function AdminPanel() {
   };
 
   const addTopic = async () => {
-    if (!newTopicName) return;
-    const id = newTopicName.toLowerCase().replace(/\s+/g, '_');
-    await set(ref(db, `topics/${id}`), { id, name: newTopicName });
-    setNewTopicName('');
+    if (!newTopic.name) return;
+    const topicId = editingTopicId || newTopic.name.toLowerCase().replace(/\s+/g, '_');
+    const topicData: any = {
+      id: topicId,
+      name: newTopic.name
+    };
+    
+    // Preserve existing children if editing
+    if (editingTopicId) {
+       const existingTopic = topics.find(t => t.id === editingTopicId);
+       if (existingTopic?.children) {
+          topicData.children = existingTopic.children;
+       }
+    }
+    
+    await set(ref(db, `topics/${topicId}`), topicData);
+    setNewTopic({ name: '' });
+    setEditingTopicId(null);
+    setTopicPath([]);
+    if (editingTopicId) alert('Topic updated!');
+  };
+
+  const getCurrentNode = () => {
+    if (!editingTopicId) return null;
+    let current: Topic | undefined = topics.find(t => t.id === editingTopicId);
+    for (const pid of topicPath) {
+        current = current?.children?.[pid];
+    }
+    return current;
+  };
+
+  const addNode = async () => {
+    if (!editingTopicId || !newNode.name) return;
+    const nodeId = newNode.id || `node_${Date.now()}`;
+    
+    let dbPath = `topics/${editingTopicId}`;
+    topicPath.forEach(pid => {
+        dbPath += `/children/${pid}`;
+    });
+    const parentPath = dbPath;
+    dbPath += `/children/${nodeId}`;
+
+    if (nodeEditMode && nodeEditMode !== nodeId) {
+      await remove(ref(db, `${parentPath}/children/${nodeEditMode}`));
+    }
+
+    const nodeData: any = {
+      id: nodeId,
+      name: newNode.name,
+      description: newNode.description
+    };
+    
+    if (nodeEditMode) {
+      const current = getCurrentNode();
+      const existing = current?.children?.[nodeEditMode];
+      if (existing?.children) {
+        nodeData.children = existing.children;
+      }
+    }
+
+    await set(ref(db, dbPath), nodeData);
+    setNewNode({ id: '', name: '', description: '' });
+    setNodeEditMode(null);
+  };
+
+  const removeNode = async (nodeId: string) => {
+    if (!editingTopicId) return;
+    if (!confirm("Remove this child node and all its descendants?")) return;
+    
+    let dbPath = `topics/${editingTopicId}`;
+    topicPath.forEach(pid => {
+        dbPath += `/children/${pid}`;
+    });
+    dbPath += `/children/${nodeId}`;
+    
+    await remove(ref(db, dbPath));
   };
 
   const getNextQuizId = () => {
@@ -192,17 +297,20 @@ export default function AdminPanel() {
       quizId = getNextQuizId();
     }
 
-    const quiz: Quiz = {
+    const quiz: any = {
       id: quizId,
       topicId: newQuiz.topicId || topics[0]?.id,
-      question: { en: newQuiz.questionEn, hi: newQuiz.questionHi },
+      subTopicId: newQuiz.subTopicId || null,
+      subSubTopicId: newQuiz.subSubTopicId || null,
+      question: { en: newQuiz.questionEn, hi: newQuiz.questionHi || newQuiz.questionEn },
       options: {
         en: [newQuiz.opt1En, newQuiz.opt2En, newQuiz.opt3En, newQuiz.opt4En].filter(o => o),
-        hi: [newQuiz.opt1Hi, newQuiz.opt2Hi, newQuiz.opt3Hi, newQuiz.opt4Hi].filter(o => o)
+        hi: [newQuiz.opt1Hi || newQuiz.opt1En, newQuiz.opt2Hi || newQuiz.opt2En, newQuiz.opt3Hi || newQuiz.opt3En, newQuiz.opt4Hi || newQuiz.opt4En].filter(o => o)
       },
       correctAnswerIndex: newQuiz.correct - 1,
-      explanation: { en: newQuiz.explanationEn, hi: newQuiz.explanationHi }
+      explanation: { en: newQuiz.explanationEn, hi: newQuiz.explanationHi || newQuiz.explanationEn }
     };
+
     await set(ref(db, `topicQuizzes/${quiz.topicId}/${quizId}`), quiz);
     setNewQuiz({
       questionEn: '', questionHi: '',
@@ -210,7 +318,7 @@ export default function AdminPanel() {
       opt2En: '', opt2Hi: '',
       opt3En: '', opt3Hi: '',
       opt4En: '', opt4Hi: '',
-      correct: 1, topicId: '',
+      correct: 1, topicId: '', subTopicId: '', subSubTopicId: '',
       explanationEn: '', explanationHi: ''
     });
     setEditingQuizId(null);
@@ -231,6 +339,8 @@ export default function AdminPanel() {
       opt4Hi: q.options?.hi?.[3] || '',
       correct: q.correctAnswerIndex + 1,
       topicId: q.topicId,
+      subTopicId: q.subTopicId || '',
+      subSubTopicId: q.subSubTopicId || '',
       explanationEn: q.explanation?.en || '',
       explanationHi: q.explanation?.hi || ''
     });
@@ -241,10 +351,29 @@ export default function AdminPanel() {
 
   const loadAllForBulkEdit = () => {
     const csvContent = quizzes.map(q => {
-      return `${q.id}, ${q.question?.en || ''}, ${q.question?.hi || ''}, ${q.options?.en?.[0] || ''}, ${q.options?.hi?.[0] || ''}, ${q.options?.en?.[1] || ''}, ${q.options?.hi?.[1] || ''}, ${q.options?.en?.[2] || ''}, ${q.options?.hi?.[2] || ''}, ${q.options?.en?.[3] || ''}, ${q.options?.hi?.[3] || ''}, ${q.correctAnswerIndex + 1}, ${q.topicId}`;
+      const parts = [
+        q.id,
+        q.question?.en || '',
+        q.question?.hi || '',
+        q.options?.en?.[0] || '',
+        q.options?.hi?.[0] || '',
+        q.options?.en?.[1] || '',
+        q.options?.hi?.[1] || '',
+        q.options?.en?.[2] || '',
+        q.options?.hi?.[2] || '',
+        q.options?.en?.[3] || '',
+        q.options?.hi?.[3] || '',
+        q.correctAnswerIndex + 1,
+        q.topicId,
+        q.subTopicId || '',
+        q.subSubTopicId || '',
+        q.explanation?.en || '',
+        q.explanation?.hi || ''
+      ];
+      return parts.join(', ');
     }).join('\n');
     setBulkText(csvContent);
-    alert('Loaded all quizzes into text area for editing. IMPORTANT: Include ID as the first column for updates.');
+    alert('Loaded all quizzes. Format: ID, Q_EN, Q_HI, O1_EN, O1_HI, O2_EN, O2_HI, O3_EN, O3_HI, O4_EN, O4_HI, Correct, Topic, SubTopic, SubSubTopic, Exp_EN, Exp_HI');
   };
 
   const addBulkQuizzes = async () => {
@@ -262,19 +391,21 @@ export default function AdminPanel() {
       if (!line.trim()) continue;
       const parts = line.split(',').map(p => p.trim());
       
-      // Handle both new (14 parts with explanations) and existing (15 parts: first is ID)
-      if (parts.length >= 12) {
-        let id, qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, expEn, expHi;
+      if (parts.length >= 10) {
+        let id, qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, subTopic, subSubTopic, expEn, expHi;
         
-        if (parts.length >= 13) {
-          [id, qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, expEn, expHi] = parts;
+        // Check if first part is a numeric ID or looks like a question
+        const isFirstPartId = !isNaN(parseInt(parts[0])) && parts[0].length < 10;
+        
+        if (isFirstPartId) {
+          [id, qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, subTopic, subSubTopic, expEn, expHi] = parts;
         } else {
-          [qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, expEn, expHi] = parts;
+          [qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, subTopic, subSubTopic, expEn, expHi] = parts;
           lastIdNum++;
           id = lastIdNum.toString();
         }
 
-        const quiz: Quiz = {
+        const quiz: any = {
           id: id.toString(),
           question: { en: qEn || '', hi: qHi || qEn || '' },
           options: {
@@ -283,6 +414,8 @@ export default function AdminPanel() {
           },
           correctAnswerIndex: (parseInt(corr) || 1) - 1,
           topicId: topic || topics[0]?.id || 'general',
+          subTopicId: subTopic || null,
+          subSubTopicId: subSubTopic || null,
           explanation: { 
             en: expEn || '', 
             hi: expHi || expEn || '' 
@@ -318,9 +451,11 @@ export default function AdminPanel() {
                lastIdNum++;
                id = lastIdNum.toString();
              }
-             const quiz: Quiz = {
+             const quiz: any = {
                id,
                topicId: row.topicId || row.TopicId || (topics[0]?.id || 'general'),
+               subTopicId: row.subTopicId || row.SubTopicId || null,
+               subSubTopicId: row.subSubTopicId || row.SubSubTopicId || null,
                question: { 
                  en: row.questionEn || row.QuestionEn || row.question || row.Question || '', 
                  hi: row.questionHi || row.QuestionHi || row.questionEn || row.QuestionEn || row.question || row.Question || '' 
@@ -431,6 +566,39 @@ export default function AdminPanel() {
     alert('User updated successfully');
   };
 
+  const exportSampleCsv = () => {
+    const sampleData = [{
+      id: '',
+      questionEn: 'Sample Question in English',
+      questionHi: 'Sample Question in Hindi',
+      opt1En: 'Option 1 English',
+      opt1Hi: 'Option 1 Hindi',
+      opt2En: 'Option 2 English',
+      opt2Hi: 'Option 2 Hindi',
+      opt3En: 'Option 3 English',
+      opt3Hi: 'Option 3 Hindi',
+      opt4En: 'Option 4 English',
+      opt4Hi: 'Option 4 Hindi',
+      correct: '1',
+      topicId: newQuiz.topicId || (topics[0]?.id || 'general'),
+      subTopicId: newQuiz.subTopicId || '',
+      subSubTopicId: newQuiz.subSubTopicId || '',
+      explanationEn: 'Explanation in English',
+      explanationHi: 'Explanation in Hindi'
+    }];
+
+    const csv = Papa.unparse(sampleData);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `rahee_sample_quiz_${newQuiz.topicId || 'general'}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const exportQuizzesCsv = () => {
     if (quizzes.length === 0) return alert('No quizzes to export');
 
@@ -448,6 +616,8 @@ export default function AdminPanel() {
       opt4Hi: q.options?.hi?.[3] || '',
       correct: q.correctAnswerIndex + 1,
       topicId: q.topicId,
+      subTopicId: q.subTopicId || '',
+      subSubTopicId: q.subSubTopicId || '',
       explanationEn: q.explanation?.en || '',
       explanationHi: q.explanation?.hi || ''
     }));
@@ -520,7 +690,7 @@ export default function AdminPanel() {
              </div>
           </div>
 
-          <div className="bg-black/40 border border-white/5 p-8 rounded-[2.5rem] flex flex-col md:flex-row items-center gap-8">
+          <div className="bg-black/5 dark:bg-black/40 border border-black/5 dark:border-white/5 p-8 rounded-[2.5rem] flex flex-col md:flex-row items-center gap-8">
              <div className="w-24 h-24 bg-primary/20 rounded-full flex items-center justify-center text-primary text-4xl font-black">
                 {u.name?.[0] || '?'}
              </div>
@@ -528,7 +698,7 @@ export default function AdminPanel() {
                 {isEditingUser ? (
                    <div className="space-y-4 max-w-md mx-auto md:mx-0">
                       <div className="space-y-1">
-                         <label className="text-[10px] font-black uppercase text-white/30 ml-2">Full Name</label>
+                         <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Full Name</label>
                          <input 
                            value={editName}
                            onChange={(e) => {
@@ -536,18 +706,18 @@ export default function AdminPanel() {
                              // Auto-sync ID if it hasn't been manually diverged much
                              setEditId(e.target.value.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, ''));
                            }}
-                           className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white font-bold outline-none focus:border-primary transition-all"
+                           className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary transition-all"
                            placeholder="Full Name"
                          />
                       </div>
                       <div className="space-y-1">
-                         <label className="text-[10px] font-black uppercase text-white/30 ml-2">Username (ID)</label>
+                         <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Username (ID)</label>
                          <div className="relative">
                             <span className="absolute left-4 top-1/2 -translate-y-1/2 text-primary font-black">@</span>
                             <input 
                               value={editId}
                               onChange={(e) => setEditId(e.target.value)}
-                              className="w-full bg-black border border-white/10 rounded-2xl p-4 pl-10 text-white font-bold outline-none focus:border-primary transition-all"
+                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 pl-10 text-black dark:text-white font-bold outline-none focus:border-primary transition-all"
                               placeholder="username"
                             />
                          </div>
@@ -561,7 +731,7 @@ export default function AdminPanel() {
                          </button>
                          <button 
                            onClick={() => setIsEditingUser(false)}
-                           className="flex-1 bg-white/5 text-white/60 font-black uppercase tracking-widest text-xs py-4 rounded-2xl hover:bg-white/10 transition-all"
+                           className="flex-1 bg-black/5 dark:bg-white/5 text-black/60 dark:text-white/60 font-black uppercase tracking-widest text-xs py-4 rounded-2xl hover:bg-black/10 dark:hover:bg-white/10 transition-all font-mono"
                          >
                            Cancel
                          </button>
@@ -569,19 +739,19 @@ export default function AdminPanel() {
                    </div>
                 ) : (
                    <>
-                      <h3 className="text-3xl font-black mb-1 uppercase tracking-tighter">{u.name}</h3>
-                      <p className="text-white/40 font-bold uppercase tracking-widest text-xs mb-4">Player ID: @{u.id}</p>
+                      <h3 className="text-3xl font-black mb-1 uppercase tracking-tighter text-black dark:text-white">{u.name}</h3>
+                      <p className="text-black/40 dark:text-white/40 font-bold uppercase tracking-widest text-xs mb-4">Player ID: @{u.id}</p>
                       <div className="flex flex-wrap justify-center md:justify-start gap-3">
-                         <div className="px-4 py-2 bg-white/5 rounded-xl border border-white/5">
-                            <p className="text-[10px] text-white/30 uppercase font-black">Global Rank</p>
+                         <div className="px-4 py-2 bg-black/5 dark:bg-white/5 rounded-xl border border-black/5 dark:border-white/5">
+                            <p className="text-[10px] text-black/30 dark:text-white/30 uppercase font-black">Global Rank</p>
                             <p className="font-black text-primary">RANK #{getUserRank(u.id)}</p>
                          </div>
-                         <div className="px-4 py-2 bg-white/5 rounded-xl border border-white/5">
-                            <p className="text-[10px] text-white/30 uppercase font-black">Experience</p>
+                         <div className="px-4 py-2 bg-black/5 dark:bg-white/5 rounded-xl border border-black/5 dark:border-white/5">
+                            <p className="text-[10px] text-black/30 dark:text-white/30 uppercase font-black">Experience</p>
                             <p className="font-black text-primary">{u.xp} XP</p>
                          </div>
-                         <div className="px-4 py-2 bg-white/5 rounded-xl border border-white/5">
-                            <p className="text-[10px] text-white/30 uppercase font-black">Progression</p>
+                         <div className="px-4 py-2 bg-black/5 dark:bg-white/5 rounded-xl border border-black/5 dark:border-white/5">
+                            <p className="text-[10px] text-black/30 dark:text-white/30 uppercase font-black">Progression</p>
                             <p className="font-black text-primary">ROUND {u.currentRound} • Q{u.currentQuizIndex}</p>
                          </div>
                       </div>
@@ -591,7 +761,7 @@ export default function AdminPanel() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-             <div className="lg:col-span-2 bg-[#111] p-6 rounded-[2.5rem] border border-white/5">
+             <div className="lg:col-span-2 bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5">
                 <div className="flex items-center justify-between mb-6">
                   <div className="flex items-center gap-4">
                     <h4 className="font-black text-sm uppercase tracking-widest flex items-center gap-2">
@@ -611,7 +781,7 @@ export default function AdminPanel() {
                   <select 
                     value={historyFilter}
                     onChange={(e) => setHistoryFilter(e.target.value)}
-                    className="bg-black border border-white/10 rounded-lg px-3 py-1 text-[10px] font-bold uppercase tracking-widest outline-none text-white/60"
+                    className="bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-lg px-3 py-1 text-[10px] font-bold uppercase tracking-widest outline-none text-black/60 dark:text-white/60"
                   >
                     <option value="all">All Topics</option>
                     {topics.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -637,11 +807,11 @@ export default function AdminPanel() {
                                   <span className="text-[10px] font-black text-white/20 uppercase tracking-[0.2em]">Round {round}</span>
                                   <div className="h-[1px] flex-1 bg-white/5" />
                                </div>
-                               {rounds[Number(round)].map((h) => {
+                               {rounds[Number(round)].map((h, historyIndex) => {
                                   const quiz = quizzes.find(q => q.id === h.quizId);
-                                  const historyKey = h.id || `hist-${h.timestamp}-${h.quizId}`;
+                                  const historyKey = h.id || `hist-${h.timestamp}-${h.quizId}-${historyIndex}`;
                                   return (
-                                     <div key={historyKey} className="bg-black/40 p-4 rounded-2xl border border-white/5 flex items-center justify-between hover:bg-white/5 transition-all group">
+                                     <div key={historyKey} className="bg-black/5 dark:bg-black/40 p-4 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between hover:bg-black/10 dark:hover:bg-white/5 transition-all group">
                                         <div>
                                            <div className="flex items-center gap-2 mb-1">
                                              <p className="text-[8px] font-black text-primary uppercase px-1.5 py-0.5 bg-primary/10 rounded">{quiz?.topicId || 'Unknown'}</p>
@@ -680,13 +850,13 @@ export default function AdminPanel() {
                   totalQuizzesCount={quizzes.length}
                   onClose={() => setSelectedUser(null)} 
                 />
-                <div className="bg-[#111] p-6 rounded-[2.5rem] border border-white/5">
+                <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5">
                    <h4 className="font-black text-sm uppercase tracking-widest mb-6">Account Controls</h4>
                    <div className="space-y-4">
                       <div>
-                        <p className="text-[10px] font-bold text-white/20 uppercase mb-3 ml-1">Current Status</p>
-                        <div className="flex items-center justify-between p-4 bg-black rounded-2xl border border-white/5">
-                           <span className="text-white/40 text-[10px] font-black uppercase tracking-widest">Status</span>
+                        <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-3 ml-1">Current Status</p>
+                        <div className="flex items-center justify-between p-4 bg-white dark:bg-black rounded-2xl border border-black/5 dark:border-white/5">
+                           <span className="text-black/40 dark:text-white/40 text-[10px] font-black uppercase tracking-widest">Status</span>
                            <span className={cn(
                              "text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded",
                              u.status === 'approved' ? "bg-green-500/10 text-green-500" : 
@@ -697,7 +867,7 @@ export default function AdminPanel() {
                       </div>
 
                       <div>
-                        <p className="text-[10px] font-bold text-white/20 uppercase mb-3 ml-1">Update Access</p>
+                        <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-3 ml-1">Update Access</p>
                         <div className="grid grid-cols-2 gap-2">
                            <button 
                              onClick={() => changeUserStatus(u.id, u.status === 'approved' ? 'pending' : 'approved')}
@@ -784,102 +954,158 @@ export default function AdminPanel() {
                    </div>
                 </div>
 
-                <div className="bg-[#111] p-6 rounded-[2.5rem] border border-white/5 mt-6">
-                   <h4 className="font-black text-sm uppercase tracking-widest mb-6 flex items-center gap-2">
+                <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5 mt-6">
+                   <h4 className="font-black text-sm uppercase tracking-widest mb-6 flex items-center gap-2 text-black dark:text-white">
                       <Edit2 size={18} className="text-primary" />
                       Progression Editor
                    </h4>
                    <div className="space-y-4">
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                           <p className="text-[10px] font-bold text-white/20 uppercase mb-1 ml-1">Current Round</p>
+                           <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-1 ml-1">Current Round</p>
                            <input 
                               type="number"
                               defaultValue={u.currentRound ?? 1}
                               key={`round-${u.id}-${u.currentRound}`}
-                              onBlur={async (e) => {
+                              onChange={async (e) => {
                                  const val = parseInt(e.target.value);
-                                 if (!isNaN(val) && val !== u.currentRound) {
+                                 if (!isNaN(val) && val > 0) {
                                     await update(ref(db, `users/${u.id}`), { currentRound: val });
                                  }
                               }}
-                              className="w-full bg-black border border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
                            />
                         </div>
                         <div className="space-y-2">
-                           <p className="text-[10px] font-bold text-white/20 uppercase mb-1 ml-1">Quiz Index</p>
+                           <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-1 ml-1">Quiz Index</p>
                            <input 
                               type="number"
                               defaultValue={u.currentQuizIndex ?? 0}
                               key={`index-${u.id}-${u.currentQuizIndex}`}
-                              onBlur={async (e) => {
+                              onChange={async (e) => {
                                  const val = parseInt(e.target.value);
-                                 if (!isNaN(val) && val !== u.currentQuizIndex) {
+                                 if (!isNaN(val) && val >= 0) {
                                     await update(ref(db, `users/${u.id}`), { currentQuizIndex: val });
                                  }
                               }}
-                              className="w-full bg-black border border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
                            />
                         </div>
                       </div>
-                      <p className="text-[8px] text-white/20 uppercase font-bold tracking-[0.2em] mt-1 ml-2 italic">Changes save automatically on exit</p>
+                      <p className="text-[8px] text-black/20 dark:text-white/20 uppercase font-bold tracking-[0.2em] mt-1 ml-2 italic">Changes save automatically on exit</p>
                    </div>
                 </div>
 
-                <div className="bg-[#111] p-6 rounded-[2.5rem] border border-white/5 mt-6">
-                   <h4 className="font-black text-sm uppercase tracking-widest mb-4 flex items-center gap-2">
+                <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5 mt-6">
+                   <h4 className="font-black text-sm uppercase tracking-widest mb-4 flex items-center gap-2 text-black dark:text-white">
+                      <TrendingUp size={18} className="text-primary" />
+                      Statistics Editor
+                   </h4>
+                   <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-1 ml-1">Attempted</p>
+                           <input 
+                               type="number"
+                               defaultValue={u.stats?.totalAttempted ?? 0}
+                               key={`attempted-${u.id}-${u.stats?.totalAttempted}`}
+                               onChange={async (e) => {
+                                  const val = parseInt(e.target.value);
+                                  if (!isNaN(val)) {
+                                     await update(ref(db, `users/${u.id}/stats`), { totalAttempted: val });
+                                  }
+                               }}
+                               className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                           />
+                        </div>
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-1 ml-1">Correct</p>
+                           <input 
+                               type="number"
+                               defaultValue={u.stats?.correctAnswers ?? 0}
+                               key={`correct-${u.id}-${u.stats?.correctAnswers}`}
+                               onChange={async (e) => {
+                                  const val = parseInt(e.target.value);
+                                  if (!isNaN(val)) {
+                                     await update(ref(db, `users/${u.id}/stats`), { correctAnswers: val });
+                                  }
+                               }}
+                               className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                           />
+                        </div>
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-1 ml-1">Incorrect</p>
+                           <input 
+                               type="number"
+                               defaultValue={u.stats?.incorrectAnswers ?? 0}
+                               key={`incorrect-${u.id}-${u.stats?.incorrectAnswers}`}
+                               onChange={async (e) => {
+                                  const val = parseInt(e.target.value);
+                                  if (!isNaN(val)) {
+                                     await update(ref(db, `users/${u.id}/stats`), { incorrectAnswers: val });
+                                  }
+                               }}
+                               className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                           />
+                        </div>
+                      </div>
+                   </div>
+                </div>
+
+                <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5 mt-6">
+                   <h4 className="font-black text-sm uppercase tracking-widest mb-4 flex items-center gap-2 text-black dark:text-white">
                       <Coins size={18} className="text-primary italic" />
                       Economy & Lifelines
                    </h4>
                    <div className="space-y-6">
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="space-y-2">
-                           <p className="text-[10px] font-bold text-white/20 uppercase mb-1 ml-1">Rahee Coins</p>
+                           <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-1 ml-1">Rahee Coins</p>
                            <input 
                               type="number"
                               defaultValue={u.raheeCoins ?? 0}
                               key={`coins-${u.id}-${u.raheeCoins}`}
-                              onBlur={async (e) => {
+                              onChange={async (e) => {
                                  const val = parseInt(e.target.value);
-                                 if (!isNaN(val) && val !== u.raheeCoins) {
+                                 if (!isNaN(val)) {
                                     await update(ref(db, `users/${u.id}`), { raheeCoins: val });
                                  }
                               }}
-                              className="w-full bg-black border border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
                            />
                         </div>
                         <div className="space-y-2">
-                           <p className="text-[10px] font-bold text-white/20 uppercase mb-1 ml-1">50:50 Lifelines</p>
+                           <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-1 ml-1">50:50 Lifelines</p>
                            <input 
                               type="number"
                               defaultValue={u.lifelines?.fiftyFifty ?? 0}
                               key={`5050-${u.id}-${u.lifelines?.fiftyFifty}`}
-                              onBlur={async (e) => {
+                              onChange={async (e) => {
                                  const val = parseInt(e.target.value);
                                  if (!isNaN(val)) {
                                     await update(ref(db, `users/${u.id}/lifelines`), { fiftyFifty: val });
                                  }
                               }}
-                              className="w-full bg-black border border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
                            />
                         </div>
                         <div className="space-y-2">
-                           <p className="text-[10px] font-bold text-white/20 uppercase mb-1 ml-1">Change Lifelines</p>
+                           <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-1 ml-1">Change Lifelines</p>
                            <input 
                               type="number"
                               defaultValue={u.lifelines?.changeQuiz ?? 0}
                               key={`change-${u.id}-${u.lifelines?.changeQuiz}`}
-                              onBlur={async (e) => {
+                              onChange={async (e) => {
                                  const val = parseInt(e.target.value);
                                  if (!isNaN(val)) {
                                     await update(ref(db, `users/${u.id}/lifelines`), { changeQuiz: val });
                                  }
                               }}
-                              className="w-full bg-black border border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
                            />
                         </div>
                       </div>
-                      <p className="text-[8px] text-white/20 uppercase font-bold tracking-[0.2em] mt-1 ml-2 italic">Changes save automatically on exit</p>
+                      <p className="text-[8px] text-black/20 dark:text-white/20 uppercase font-bold tracking-[0.2em] mt-1 ml-2 italic">Changes save automatically on exit</p>
                    </div>
                 </div>
              </div>
@@ -909,7 +1135,7 @@ export default function AdminPanel() {
                         <button 
                           key={u.id} 
                           onClick={() => setSelectedUser(u)}
-                          className="w-full bg-[#111] p-4 rounded-2xl border border-white/5 flex items-center justify-between hover:bg-white/5 transition-all group"
+                          className="w-full bg-black/5 dark:bg-[#111] p-4 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between hover:bg-black/10 dark:hover:bg-white/5 transition-all group"
                         >
                           <div className="text-left">
                             <p className="font-bold flex items-center gap-2">
@@ -957,26 +1183,388 @@ export default function AdminPanel() {
           </div>
         );
       case 'topics':
+        const currentTopic = topics.find(t => t.id === editingTopicId);
+        const currentNode = getCurrentNode();
+
         return (
-          <div className="space-y-6">
-            <div className="bg-[#111] p-6 rounded-2xl border border-white/5">
-              <h3 className="font-bold mb-4">Add New Topic</h3>
-              <div className="flex gap-2">
-                <input 
-                  type="text" value={newTopicName} onChange={e => setNewTopicName(e.target.value)}
-                  placeholder="Topic Name" className="flex-1 bg-black border border-white/10 p-3 rounded-xl outline-none"
-                />
-                <button onClick={addTopic} className="bg-[#32befa] text-black px-4 rounded-xl font-bold"><Plus /></button>
+          <div className="space-y-8 pb-32">
+            <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[2.5rem] border border-black/5 dark:border-white/5">
+              {editingTopicId && (
+                <div className="flex flex-wrap items-center gap-2 mb-6 bg-black/10 dark:bg-white/5 p-3 rounded-2xl border border-black/5 dark:border-white/5">
+                   <button 
+                     onClick={() => { setEditingTopicId(null); setTopicPath([]); }}
+                     className="text-[10px] font-black uppercase text-primary hover:underline flex items-center gap-1"
+                   >
+                     Topics
+                   </button>
+                   <ChevronRight size={10} className="text-white/20" />
+                   <button 
+                     onClick={() => setTopicPath([])}
+                     className={cn("text-[10px] font-black uppercase hover:underline", topicPath.length === 0 ? "text-white" : "text-primary")}
+                   >
+                     {currentTopic?.name}
+                   </button>
+                   {topicPath.map((pid, idx) => {
+                      let node: Topic | undefined = currentTopic;
+                      for(let i=0; i<idx; i++) {
+                         node = node?.children?.[topicPath[i]];
+                      }
+                      const child = node?.children?.[pid];
+                      return (
+                        <React.Fragment key={`${pid}-${idx}`}>
+                           <ChevronRight size={10} className="text-white/20" />
+                           <button 
+                             onClick={() => setTopicPath(topicPath.slice(0, idx + 1))}
+                             className={cn("text-[10px] font-black uppercase hover:underline", idx === topicPath.length - 1 ? "text-white" : "text-primary")}
+                           >
+                             {child?.name}
+                           </button>
+                        </React.Fragment>
+                      );
+                   })}
+                </div>
+              )}
+
+              <h3 className="text-xl font-black mb-6 uppercase tracking-tighter text-black dark:text-white flex items-center gap-2">
+                <Plus size={20} className={cn("transition-all", editingTopicId && topicPath.length === 0 && !nodeEditMode ? "text-yellow-500 rotate-45" : "text-[#32befa]")} />
+                {!editingTopicId ? 'Create New Topic' : (nodeEditMode ? `Edit ${getCurrentNode()?.children?.[nodeEditMode]?.name}` : `Add Sub-Topic to ${currentNode?.name || currentTopic?.name}`)}
+                {editingTopicId && topicPath.length === 0 && (
+                   <button onClick={() => { setEditingTopicId(null); setNewTopic({ name: '' }); }} className="ml-auto text-xs text-red-500 font-black uppercase">Close</button>
+                )}
+              </h3>
+
+              <div className="space-y-6">
+                {!editingTopicId ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Topic Name</label>
+                      <input 
+                        value={newTopic.name} 
+                        onChange={e => setNewTopic({...newTopic, name: e.target.value})}
+                        className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl outline-none text-black dark:text-white font-bold focus:border-primary"
+                        placeholder="e.g. Ancient Rome"
+                      />
+                    </div>
+                    <button onClick={addTopic} className="bg-primary text-black font-black uppercase tracking-widest py-4 rounded-2xl shadow-lg shadow-primary/20 active:scale-95 transition-all self-end">
+                      CREATE TOPIC
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white/5 p-6 rounded-3xl border border-black/10 dark:border-white/10">
+                     <div className="space-y-4">
+                        <div className="space-y-1">
+                           <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">ID (Slug)</label>
+                           <input 
+                             value={newNode.id}
+                             onChange={e => setNewNode({...newNode, id: e.target.value.toLowerCase().replace(/\s+/g, '_')})}
+                             className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-3 rounded-xl outline-none text-black dark:text-white text-xs font-mono"
+                             placeholder="identifier_name"
+                           />
+                        </div>
+                        <div className="space-y-1">
+                           <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Display Name</label>
+                           <input 
+                             value={newNode.name}
+                             onChange={e => setNewNode({...newNode, name: e.target.value})}
+                             className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-3 rounded-xl outline-none text-black dark:text-white text-sm font-bold"
+                             placeholder="e.g., The Rise of Empires"
+                           />
+                        </div>
+                        <div className="space-y-1">
+                           <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Description</label>
+                           <input 
+                             value={newNode.description}
+                             onChange={e => setNewNode({...newNode, description: e.target.value})}
+                             className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-3 rounded-xl outline-none text-black dark:text-white text-xs"
+                             placeholder="Brief overview"
+                           />
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={addNode} className="flex-1 bg-white dark:bg-white text-black font-black uppercase tracking-widest py-3 rounded-xl text-[10px]">
+                            {nodeEditMode ? 'Update' : 'Add'} Node
+                          </button>
+                          {nodeEditMode && (
+                            <button onClick={() => { setNodeEditMode(null); setNewNode({ id: '', name: '', description: '' }); }} className="px-4 bg-red-500/10 text-red-500 font-bold uppercase py-3 rounded-xl text-[10px]">Cancel</button>
+                          )}
+                        </div>
+                     </div>
+                     <div className="space-y-2 max-h-[250px] overflow-y-auto custom-scrollbar pr-2">
+                        {currentNode?.children ? (
+                           Object.values(currentNode.children).map((child: Topic, cIdx) => (
+                              <div key={`${child.id}-${cIdx}`} className="flex items-center justify-between p-3 bg-black/20 dark:bg-white/5 rounded-xl border border-white/5 group/node">
+                                 <div className="flex-1 cursor-pointer" onClick={() => setTopicPath([...topicPath, child.id])}>
+                                    <div className="flex items-center gap-2">
+                                       <p className="font-bold text-xs text-black dark:text-white group-hover/node:text-primary transition-colors">{child.name}</p>
+                                       {child.children && <span className="text-[8px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">{Object.keys(child.children).length}</span>}
+                                    </div>
+                                    <p className="text-[8px] font-mono text-black/30 dark:text-white/30 mb-0.5">{child.id}</p>
+                                 </div>
+                                 <div className="flex items-center opacity-20 group-hover/node:opacity-100 transition-opacity">
+                                    <button onClick={() => {
+                                      setNewNode({ id: child.id, name: child.name, description: child.description || '' });
+                                      setNodeEditMode(child.id);
+                                    }} className="text-primary p-2"><Edit2 size={12} /></button>
+                                    <button onClick={() => removeNode(child.id)} className="text-red-500 p-2"><Trash2 size={12} /></button>
+                                 </div>
+                              </div>
+                           ))
+                        ) : (
+                           <div className="h-full flex flex-col items-center justify-center py-12 italic text-black/20 dark:text-white/20">
+                              <HelpCircle size={32} className="mb-2 opacity-20" />
+                              <p className="text-[10px] font-black uppercase tracking-widest text-center">No nested topics found.<br/>Add your first sub-topic!</p>
+                           </div>
+                        )}
+                     </div>
+                  </div>
+                )}
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              {topics.map(t => (
-                <div key={t.id} className="bg-[#111] p-4 rounded-2xl border border-white/5 flex justify-between items-center capitalize">
-                  <span className="font-bold">{t.name}</span>
-                  <button onClick={() => remove(ref(db, `topics/${t.id}`))} className="text-red-500"><Trash2 size={16} /></button>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {topics.map((t, tIdx) => (
+                <div key={`${t.id}-${tIdx}`} className="bg-black/5 dark:bg-[#111] p-5 rounded-[2rem] border border-black/5 dark:border-white/5 flex justify-between items-center group">
+                  <div className="flex-1 truncate pr-4">
+                    <span className="font-black text-black dark:text-white uppercase tracking-tighter text-lg truncate block">{t.name}</span>
+                    <div className="flex flex-wrap gap-2 mt-1">
+                      {t.children && <span className="text-[8px] font-black uppercase tracking-widest bg-[#32befa]/10 text-[#32befa] px-2 py-0.5 rounded-full">{Object.keys(t.children).length} Sub-topics</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => { setEditingTopicId(t.id); setTopicPath([]); }} className="bg-[#32befa]/10 text-[#32befa] px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all">Manage</button>
+                    <button onClick={() => { if(confirm('Delete entire topic and its configuration?')) remove(ref(db, `topics/${t.id}`)); }} className="text-red-500/20 group-hover:text-red-500 transition-all p-2"><Trash2 size={16} /></button>
+                  </div>
                 </div>
               ))}
             </div>
+          </div>
+        );
+      case 'events':
+        const addEvent = async () => {
+          if (!newEvent.title || !newEvent.topicId || !newEvent.startTime) return alert('Fill all fields');
+          const eventId = `event-${Date.now()}`;
+          const startTime = new Date(newEvent.startTime).getTime();
+          const endTime = startTime + (parseInt(newEvent.durationHours) * 60 * 60 * 1000);
+          
+          const event: Event = {
+            id: eventId,
+            title: newEvent.title,
+            description: newEvent.description,
+            topicId: newEvent.topicId,
+            startTime,
+            endTime,
+            type: newEvent.type,
+            hasTimer: newEvent.hasTimer,
+            timerDuration: parseInt(newEvent.timerDuration),
+            certificateTitle: newEvent.certificateTitle,
+            certificateSubtitle: newEvent.certificateSubtitle,
+            certificateFooter: newEvent.certificateFooter,
+            certificateColor: newEvent.certificateColor || '#32befa',
+            createdAt: Date.now()
+          };
+          
+          await set(ref(db, `events/${eventId}`), event);
+          setNewEvent({ 
+            title: '', description: '', topicId: '', startTime: '', durationHours: '1', type: 'test',
+            hasTimer: false, timerDuration: '30', certificateTitle: 'CERTIFICATE OF ACHIEVEMENT',
+            certificateSubtitle: 'This is to certify that', certificateFooter: 'Rahee Quiz Team'
+          });
+          alert('Event created!');
+        };
+
+        return (
+          <div className="space-y-8">
+             <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[2.5rem] border border-black/5 dark:border-white/5">
+                <h3 className="text-xl font-black mb-6 uppercase tracking-tighter text-black dark:text-white">Create New Event</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                   <div className="space-y-4">
+                      <div className="space-y-1">
+                         <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Event Title</label>
+                         <input 
+                           value={newEvent.title}
+                           onChange={e => setNewEvent({...newEvent, title: e.target.value})}
+                           className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary"
+                           placeholder="Annual Exam 2024"
+                         />
+                      </div>
+                      <div className="space-y-1">
+                         <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Description</label>
+                         <input 
+                           value={newEvent.description}
+                           onChange={e => setNewEvent({...newEvent, description: e.target.value})}
+                           className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary"
+                           placeholder="Special test for top ranking players"
+                         />
+                      </div>
+                      <div className="space-y-1">
+                         <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Assign to Topic/Niche</label>
+                         <div className="p-4 bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl space-y-3">
+                            <div className="flex items-center justify-between">
+                               {quizTopicPath.length > 0 && (
+                                  <button 
+                                    onClick={() => setQuizTopicPath(quizTopicPath.slice(0, -1))}
+                                    className="text-[10px] font-bold text-primary hover:underline"
+                                  >
+                                     Back
+                                  </button>
+                               )}
+                            </div>
+                            <div className="flex flex-wrap gap-1 items-center bg-black/5 dark:bg-white/5 p-2 rounded-lg">
+                               <span className="text-[10px] font-bold text-black/40 dark:text-white/40">Path:</span>
+                               {quizTopicPath.length === 0 ? (
+                                  <span className="text-[10px] font-bold text-red-500 italic">None Selected</span>
+                               ) : (
+                                  quizTopicPath.map((node, i) => (
+                                     <React.Fragment key={`${node.id}-${i}`}>
+                                        <span className="text-[10px] font-bold text-primary">{node.name}</span>
+                                        {i < quizTopicPath.length - 1 && <ChevronRight size={10} className="text-black/20" />}
+                                     </React.Fragment>
+                                  ))
+                               )}
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 max-h-[120px] overflow-y-auto pr-1 custom-scrollbar">
+                               {(() => {
+                                  const options = quizTopicPath.length === 0 
+                                     ? topics 
+                                     : Object.values(quizTopicPath[quizTopicPath.length - 1].children || {});
+                                  
+                                  return options.map((opt, oIdx) => (
+                                     <button 
+                                       key={`${opt.id}-${oIdx}`}
+                                       onClick={() => {
+                                          const newPath = [...quizTopicPath, opt];
+                                          setQuizTopicPath(newPath);
+                                          setNewEvent({ ...newEvent, topicId: opt.id });
+                                       }}
+                                       className="p-2 bg-black/5 dark:bg-white/5 rounded-lg text-[10px] font-bold hover:bg-primary hover:text-black transition-all text-left truncate"
+                                     >
+                                        {opt.name}
+                                     </button>
+                                  ));
+                               })()}
+                            </div>
+                         </div>
+                      </div>
+                   </div>
+                   <div className="space-y-4">
+                      <div className="space-y-1">
+                         <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Start Date & Time</label>
+                         <input 
+                           type="datetime-local"
+                           value={newEvent.startTime}
+                           onChange={e => setNewEvent({...newEvent, startTime: e.target.value})}
+                           className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary"
+                         />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                           <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Duration (Hours)</label>
+                           <input 
+                             type="number"
+                             value={newEvent.durationHours}
+                             onChange={e => setNewEvent({...newEvent, durationHours: e.target.value})}
+                             className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary"
+                           />
+                        </div>
+                        <div className="space-y-1">
+                           <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Event Type</label>
+                           <select 
+                             value={newEvent.type}
+                             onChange={e => setNewEvent({...newEvent, type: e.target.value as any})}
+                             className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary appearance-none"
+                           >
+                              <option value="test">Test</option>
+                              <option value="exam">Exam</option>
+                              <option value="contest">Contest</option>
+                           </select>
+                        </div>
+                      </div>
+
+                      {/* Timer & Certificate Settings */}
+                      <div className="pt-4 border-t border-black/5 dark:border-white/5 space-y-4">
+                        <div className="flex items-center justify-between px-2">
+                           <span className="text-[10px] font-black uppercase text-black/30 dark:text-white/30">Quiz Timer</span>
+                           <label className="relative inline-flex items-center cursor-pointer">
+                              <input type="checkbox" checked={newEvent.hasTimer} onChange={e => setNewEvent({...newEvent, hasTimer: e.target.checked})} className="sr-only peer" />
+                              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+                           </label>
+                        </div>
+                        {newEvent.hasTimer && (
+                          <div className="space-y-1">
+                             <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Timer Duration (Minutes)</label>
+                             <input 
+                               type="number"
+                               value={newEvent.timerDuration}
+                               onChange={e => setNewEvent({...newEvent, timerDuration: e.target.value})}
+                               className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary"
+                             />
+                          </div>
+                        )}
+
+                        <div className="space-y-3">
+                           <span className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 px-2 block mb-2">Certificate Customization</span>
+                           <input 
+                             type="text"
+                             value={newEvent.certificateTitle}
+                             onChange={e => setNewEvent({...newEvent, certificateTitle: e.target.value})}
+                             placeholder="Certificate Header"
+                             className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-xl p-3 text-xs text-black dark:text-white font-bold"
+                           />
+                           <input 
+                             type="text"
+                             value={newEvent.certificateSubtitle}
+                             onChange={e => setNewEvent({...newEvent, certificateSubtitle: e.target.value})}
+                             placeholder="Certificate Subtitle"
+                             className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-xl p-3 text-xs text-black dark:text-white font-bold"
+                           />
+                           <input 
+                             type="text"
+                             value={newEvent.certificateFooter}
+                             onChange={e => setNewEvent({...newEvent, certificateFooter: e.target.value})}
+                             placeholder="Signature/Footer Name"
+                             className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-xl p-3 text-xs text-black dark:text-white font-bold"
+                           />
+                        </div>
+                      </div>
+
+                      <button 
+                        onClick={addEvent}
+                        className="w-full bg-primary text-black font-black uppercase tracking-widest py-4 rounded-2xl mt-2 shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                      >
+                        Launch Event
+                      </button>
+                   </div>
+                </div>
+             </div>
+
+             <div className="space-y-4">
+                <h3 className="text-xl font-black uppercase tracking-tighter px-2 text-black dark:text-white">Active & Scheduled Events ({events.length})</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   {events.map(event => (
+                      <div key={event.id} className="bg-black/5 dark:bg-[#111] p-6 rounded-3xl border border-black/5 dark:border-white/5 flex flex-col justify-between">
+                         <div>
+                            <div className="flex items-center justify-between mb-3">
+                               <span className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">{event.type}</span>
+                               <button onClick={() => remove(ref(db, `events/${event.id}`))} className="text-red-500/50 hover:text-red-500 transition-colors">
+                                  <Trash2 size={16} />
+                               </button>
+                            </div>
+                            <h4 className="font-black text-lg uppercase tracking-tight text-black dark:text-white">{event.title}</h4>
+                            <p className="text-xs text-black/40 dark:text-white/40 mt-1">{event.description}</p>
+                         </div>
+                         <div className="mt-6 flex items-center justify-between border-t border-black/5 dark:border-white/5 pt-4">
+                            <div>
+                               <p className="text-[8px] font-black text-black/20 dark:text-white/20 uppercase">Participants</p>
+                               <p className="font-bold text-xs text-black dark:text-white">{Object.keys(event.participants || {}).length} Joined</p>
+                            </div>
+                            <div className="text-right">
+                               <p className="text-[8px] font-black text-black/20 dark:text-white/20 uppercase">Starts On</p>
+                               <p className="font-bold text-xs text-black dark:text-white">{new Date(event.startTime).toLocaleDateString()}</p>
+                            </div>
+                         </div>
+                      </div>
+                   ))}
+                </div>
+             </div>
           </div>
         );
       case 'quizzes':
@@ -985,8 +1573,8 @@ export default function AdminPanel() {
             {/* Creation Section */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Single Quiz Form */}
-              <div className="bg-[#111] p-6 rounded-[2rem] border border-white/5">
-                <h3 className="text-lg font-black mb-6 flex items-center gap-2 uppercase tracking-tighter">
+              <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5">
+                <h3 className="text-lg font-black mb-6 flex items-center gap-2 uppercase tracking-tighter text-black dark:text-white">
                   <Plus size={20} className={cn("transition-all", editingQuizId ? "text-yellow-500 rotate-45" : "text-[#32befa]")} />
                   {editingQuizId ? 'Edit Quiz' : 'Manual Entry'}
                   {editingQuizId && (
@@ -999,7 +1587,8 @@ export default function AdminPanel() {
                           opt2En: '', opt2Hi: '',
                           opt3En: '', opt3Hi: '',
                           opt4En: '', opt4Hi: '',
-                          correct: 1, topicId: '',
+                          correct: 1, topicId: '', 
+                          subTopicId: '', subSubTopicId: '',
                           explanationEn: '', explanationHi: ''
                         });
                       }}
@@ -1011,44 +1600,88 @@ export default function AdminPanel() {
                 </h3>
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-3">
-                    <input type="text" placeholder="Question (EN)" value={newQuiz.questionEn} onChange={e => setNewQuiz({...newQuiz, questionEn: e.target.value})} className="bg-black border border-white/5 p-4 rounded-xl outline-none focus:border-[#32befa] transition-all text-sm" />
-                    <input type="text" placeholder="Question (HI)" value={newQuiz.questionHi} onChange={e => setNewQuiz({...newQuiz, questionHi: e.target.value})} className="bg-black border border-white/5 p-4 rounded-xl outline-none focus:border-[#32befa] transition-all text-sm" />
+                    <input type="text" placeholder="Question (EN)" value={newQuiz.questionEn} onChange={e => setNewQuiz({...newQuiz, questionEn: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-4 rounded-xl outline-none focus:border-[#32befa] transition-all text-sm text-black dark:text-white" />
+                    <input type="text" placeholder="Question (HI)" value={newQuiz.questionHi} onChange={e => setNewQuiz({...newQuiz, questionHi: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-4 rounded-xl outline-none focus:border-[#32befa] transition-all text-sm text-black dark:text-white" />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <input type="text" placeholder="Opt 1 (EN)" value={newQuiz.opt1En} onChange={e => setNewQuiz({...newQuiz, opt1En: e.target.value})} className="bg-black border border-white/5 p-3 rounded-xl outline-none text-xs" />
-                    <input type="text" placeholder="Opt 1 (HI)" value={newQuiz.opt1Hi} onChange={e => setNewQuiz({...newQuiz, opt1Hi: e.target.value})} className="bg-black border border-white/5 p-3 rounded-xl outline-none text-xs" />
+                    <input type="text" placeholder="Opt 1 (EN)" value={newQuiz.opt1En} onChange={e => setNewQuiz({...newQuiz, opt1En: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                    <input type="text" placeholder="Opt 1 (HI)" value={newQuiz.opt1Hi} onChange={e => setNewQuiz({...newQuiz, opt1Hi: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <input type="text" placeholder="Opt 2 (EN)" value={newQuiz.opt2En} onChange={e => setNewQuiz({...newQuiz, opt2En: e.target.value})} className="bg-black border border-white/5 p-3 rounded-xl outline-none text-xs" />
-                    <input type="text" placeholder="Opt 2 (HI)" value={newQuiz.opt2Hi} onChange={e => setNewQuiz({...newQuiz, opt2Hi: e.target.value})} className="bg-black border border-white/5 p-3 rounded-xl outline-none text-xs" />
+                    <input type="text" placeholder="Opt 2 (EN)" value={newQuiz.opt2En} onChange={e => setNewQuiz({...newQuiz, opt2En: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                    <input type="text" placeholder="Opt 2 (HI)" value={newQuiz.opt2Hi} onChange={e => setNewQuiz({...newQuiz, opt2Hi: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <input type="text" placeholder="Opt 3 (EN)" value={newQuiz.opt3En} onChange={e => setNewQuiz({...newQuiz, opt3En: e.target.value})} className="bg-black border border-white/5 p-3 rounded-xl outline-none text-xs" />
-                    <input type="text" placeholder="Opt 3 (HI)" value={newQuiz.opt3Hi} onChange={e => setNewQuiz({...newQuiz, opt3Hi: e.target.value})} className="bg-black border border-white/5 p-3 rounded-xl outline-none text-xs" />
+                    <input type="text" placeholder="Opt 3 (EN)" value={newQuiz.opt3En} onChange={e => setNewQuiz({...newQuiz, opt3En: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                    <input type="text" placeholder="Opt 3 (HI)" value={newQuiz.opt3Hi} onChange={e => setNewQuiz({...newQuiz, opt3Hi: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <input type="text" placeholder="Opt 4 (EN)" value={newQuiz.opt4En} onChange={e => setNewQuiz({...newQuiz, opt4En: e.target.value})} className="bg-black border border-white/5 p-3 rounded-xl outline-none text-xs" />
-                    <input type="text" placeholder="Opt 4 (HI)" value={newQuiz.opt4Hi} onChange={e => setNewQuiz({...newQuiz, opt4Hi: e.target.value})} className="bg-black border border-white/5 p-3 rounded-xl outline-none text-xs" />
+                    <input type="text" placeholder="Opt 4 (EN)" value={newQuiz.opt4En} onChange={e => setNewQuiz({...newQuiz, opt4En: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                    <input type="text" placeholder="Opt 4 (HI)" value={newQuiz.opt4Hi} onChange={e => setNewQuiz({...newQuiz, opt4Hi: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <input type="text" placeholder="Explanation (EN)" value={newQuiz.explanationEn} onChange={e => setNewQuiz({...newQuiz, explanationEn: e.target.value})} className="bg-black border border-white/5 p-3 rounded-xl outline-none text-xs" />
-                    <input type="text" placeholder="Explanation (HI)" value={newQuiz.explanationHi} onChange={e => setNewQuiz({...newQuiz, explanationHi: e.target.value})} className="bg-black border border-white/5 p-3 rounded-xl outline-none text-xs" />
+                    <input type="text" placeholder="Explanation (EN)" value={newQuiz.explanationEn} onChange={e => setNewQuiz({...newQuiz, explanationEn: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                    <input type="text" placeholder="Explanation (HI)" value={newQuiz.explanationHi} onChange={e => setNewQuiz({...newQuiz, explanationHi: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
                   </div>
-                  <div className="flex gap-3">
-                    <select value={newQuiz.correct} onChange={e => setNewQuiz({...newQuiz, correct: parseInt(e.target.value)})} className="flex-1 bg-black border border-white/5 p-3 rounded-xl text-xs font-bold text-white/60">
+                  <div className="grid grid-cols-1 gap-3">
+                    <select value={newQuiz.correct} onChange={e => setNewQuiz({...newQuiz, correct: parseInt(e.target.value)})} className="flex-1 bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl text-xs font-bold text-black/60 dark:text-white/60">
                       <option value={1}>Correct: Opt 1</option>
                       <option value={2}>Correct: Opt 2</option>
                       <option value={3}>Correct: Opt 3</option>
                       <option value={4}>Correct: Opt 4</option>
                     </select>
-                    <select value={newQuiz.topicId} onChange={e => setNewQuiz({...newQuiz, topicId: e.target.value})} className="flex-1 bg-black border border-white/5 p-3 rounded-xl text-xs font-bold text-white/60 capitalize">
-                      <option value="">Select Topic</option>
-                      {topics.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
+                    
+                    <div className="p-4 bg-white dark:bg-black border border-black/5 dark:border-white/5 rounded-xl space-y-3">
+                      <div className="flex items-center justify-between">
+                         <span className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 tracking-widest">Assign to Topic/Niche</span>
+                         {quizTopicPath.length > 0 && (
+                            <button 
+                              onClick={() => setQuizTopicPath(quizTopicPath.slice(0, -1))}
+                              className="text-[10px] font-bold text-primary hover:underline"
+                            >
+                               Back
+                            </button>
+                         )}
+                      </div>
+                      <div className="flex flex-wrap gap-1 items-center bg-black/5 dark:bg-white/5 p-2 rounded-lg">
+                         <span className="text-[10px] font-bold text-black/40 dark:text-white/40">Path:</span>
+                         {quizTopicPath.length === 0 ? (
+                            <span className="text-[10px] font-bold text-red-500 italic">None Selected</span>
+                         ) : (
+                            quizTopicPath.map((node, i) => (
+                               <React.Fragment key={`${node.id}-${i}`}>
+                                  <span className="text-[10px] font-bold text-primary">{node.name}</span>
+                                  {i < quizTopicPath.length - 1 && <ChevronRight size={10} className="text-black/20" />}
+                               </React.Fragment>
+                            ))
+                         )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 max-h-[120px] overflow-y-auto pr-1 custom-scrollbar">
+                         {(() => {
+                            const options = quizTopicPath.length === 0 
+                               ? topics 
+                               : Object.values(quizTopicPath[quizTopicPath.length - 1].children || {});
+                            
+                            return options.map((opt, oIdx) => (
+                               <button 
+                                 key={`${opt.id}-${oIdx}`}
+                                 onClick={() => {
+                                    const newPath = [...quizTopicPath, opt];
+                                    setQuizTopicPath(newPath);
+                                    setNewQuiz({ ...newQuiz, topicId: opt.id });
+                                 }}
+                                 className="p-2 bg-black/5 dark:bg-white/5 rounded-lg text-[10px] font-bold hover:bg-primary hover:text-black transition-all text-left truncate"
+                               >
+                                  {opt.name}
+                               </button>
+                            ));
+                         })()}
+                      </div>
+                    </div>
                   </div>
                   <button onClick={addQuiz} className={cn(
-                    "w-full font-black p-4 rounded-xl shadow-[0_10px_20px_rgba(50,190,250,0.2)] active:scale-95 transition-all",
-                    editingQuizId ? "bg-yellow-500 text-black" : "bg-[#32befa] text-black"
+                    "w-full font-black p-4 rounded-xl shadow-[0_10px_20px_rgba(50,190,250,0.2)] active:scale-95 transition-all text-black",
+                    editingQuizId ? "bg-yellow-500" : "bg-[#32befa]"
                   )}>
                     {editingQuizId ? 'SAVE CHANGES' : 'ADD QUIZ'}
                   </button>
@@ -1056,22 +1689,28 @@ export default function AdminPanel() {
               </div>
 
               {/* Bulk Add Text */}
-              <div className="bg-[#111] p-6 rounded-[2rem] border border-white/5">
-                <h3 className="text-lg font-black mb-6 flex items-center justify-between uppercase tracking-tighter">
+              <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5">
+                <h3 className="text-lg font-black mb-6 flex items-center justify-between uppercase tracking-tighter text-black dark:text-white">
                   <div className="flex items-center gap-2">
                     <MessageSquare size={20} className="text-[#32befa]" />
                     Bulk Write
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={loadAllForBulkEdit}
-                      className="bg-primary/20 text-primary border border-primary/20 px-3 py-1 rounded-full text-[10px] font-black hover:bg-primary hover:text-black transition-all uppercase"
-                    >
-                      Load for Edit
-                    </button>
+                    <div className="flex items-center gap-2">
+                       <button 
+                         onClick={exportSampleCsv}
+                         className="bg-yellow-500/20 text-yellow-500 border border-yellow-500/20 px-3 py-1 rounded-full text-[10px] font-black hover:bg-yellow-500 hover:text-black transition-all uppercase"
+                       >
+                         Sample CSV
+                       </button>
+                       <button 
+                         onClick={loadAllForBulkEdit}
+                         className="bg-primary/20 text-primary border border-primary/20 px-3 py-1 rounded-full text-[10px] font-black hover:bg-primary hover:text-black transition-all uppercase"
+                       >
+                         Edit All
+                       </button>
                     <button 
                       onClick={exportQuizzesCsv}
-                      className="bg-white/5 text-white/60 border border-white/10 px-3 py-1 rounded-full text-[10px] font-black hover:bg-white/10 transition-all uppercase"
+                      className="bg-black/5 dark:bg-white/5 text-black/60 dark:text-white/60 border border-black/10 dark:border-white/10 px-3 py-1 rounded-full text-[10px] font-black hover:bg-black/10 dark:hover:bg-white/10 transition-all uppercase"
                     >
                       Export CSV
                     </button>
@@ -1084,17 +1723,17 @@ export default function AdminPanel() {
                 <textarea 
                   value={bulkText}
                   onChange={e => setBulkText(e.target.value)}
-                  placeholder="Format: Q_EN, Q_HI, O1_EN, O1_HI, O2_EN, O2_HI, O3_EN, O3_HI, O4_EN, O4_HI, CorrectIndex(1-4), TopicID"
-                  className="w-full bg-black border border-white/5 p-4 rounded-2xl h-48 outline-none focus:border-[#32befa] transition-all text-[10px] font-mono leading-relaxed opacity-60 focus:opacity-100"
+                  placeholder="Format: ID, Q_EN, Q_HI, O1_EN, O1_HI, O2_EN, O2_HI, O3_EN, O3_HI, O4_EN, O4_HI, Correct, Topic, SubTopic, SubSubTopic, Class, Subject, Exp_EN, Exp_HI"
+                  className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-4 rounded-2xl h-48 outline-none focus:border-[#32befa] transition-all text-[10px] font-mono leading-relaxed text-black dark:text-white opacity-60 focus:opacity-100"
                 />
-                <button onClick={addBulkQuizzes} className="w-full mt-4 bg-white/5 border border-white/10 text-white font-black p-4 rounded-xl hover:bg-white/10 transition-all">BATCH PROCESS</button>
+                <button onClick={addBulkQuizzes} className="w-full mt-4 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-black dark:text-white font-black p-4 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 transition-all">BATCH PROCESS</button>
               </div>
             </div>
 
             {/* List Section */}
             <div className="space-y-4">
                <div className="flex items-center justify-between">
-                 <h3 className="font-black text-sm uppercase tracking-widest text-white/40">Registered Quizzes ({quizzes.length})</h3>
+                 <h3 className="font-black text-sm uppercase tracking-widest text-black/40 dark:text-white/40">Registered Quizzes ({quizzes.length})</h3>
                  <div className="flex items-center gap-4">
                     <button onClick={reindexQuizzes} className="text-[8px] font-black bg-yellow-500/10 text-yellow-500 px-3 py-1.5 rounded-lg border border-yellow-500/20 hover:bg-yellow-500/20 transition-all uppercase">Re-index IDs</button>
                     <span className="text-[10px] font-bold text-[#32befa]">LATEST UPLOADS</span>
@@ -1102,7 +1741,7 @@ export default function AdminPanel() {
                </div>
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                  {quizzes.slice().reverse().map(q => (
-                   <div key={q.id} className="bg-black/60 border border-white/5 p-5 rounded-[2rem] group relative overflow-hidden">
+                   <div key={q.id} className="bg-black/5 dark:bg-black/60 border border-black/5 dark:border-white/5 p-5 rounded-[2rem] group relative overflow-hidden">
                       <div className="absolute top-0 left-0 w-1 h-full bg-[#32befa] opacity-0 group-hover:opacity-100 transition-all" />
                       <div className="flex justify-between items-start mb-4">
                         <div className="flex items-center gap-2">
@@ -1111,19 +1750,25 @@ export default function AdminPanel() {
                                  {q.id}
                               </span>
                            )}
-                           <span className="text-[8px] bg-white/5 text-white/40 px-2 py-0.5 rounded font-black uppercase tracking-widest">{q.topicId}</span>
+                           <span className="text-[8px] bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40 px-2 py-0.5 rounded font-black uppercase tracking-widest">{q.topicId}</span>
+                           {q.subTopicId && <span className="text-[8px] bg-[#32befa]/10 text-[#32befa] px-2 py-0.5 rounded font-black uppercase tracking-widest">{q.subTopicId}</span>}
+                           {q.subSubTopicId && <span className="text-[8px] bg-yellow-500/10 text-yellow-500 px-2 py-0.5 rounded font-black uppercase tracking-widest">{q.subSubTopicId}</span>}
                         </div>
                         <div className="flex gap-2">
-                           <button onClick={() => editQuizInForm(q)} className="text-white/10 hover:text-primary transition-colors"><Edit2 size={16} /></button>
-                           <button onClick={() => remove(ref(db, `quizzes/${q.id}`))} className="text-white/10 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
+                           <button onClick={() => editQuizInForm(q)} className="text-black/10 dark:text-white/10 hover:text-primary transition-colors"><Edit2 size={16} /></button>
+                           <button onClick={async () => {
+                             if(confirm('Delete this quiz?')) {
+                               await remove(ref(db, `topicQuizzes/${q.topicId}/${q.id}`));
+                             }
+                           }} className="text-black/10 dark:text-white/10 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
                         </div>
                       </div>
-                      <h4 className="font-bold text-sm leading-tight mb-4">{q.question?.en || 'Untitled Question'}</h4>
+                      <h4 className="font-bold text-sm leading-tight mb-4 text-black dark:text-white">{q.question?.en || 'Untitled Question'}</h4>
                       <div className="grid grid-cols-2 gap-2">
                         {q.options?.en?.map((opt, i) => (
                            <div key={`${q.id}-opt-${i}`} className={cn(
                              "p-2 rounded-xl text-[10px] font-bold truncate",
-                             i === q.correctAnswerIndex ? "bg-green-500/10 text-green-500 border border-green-500/20" : "bg-white/5 text-white/20"
+                             i === q.correctAnswerIndex ? "bg-green-500/10 text-green-500 border border-green-500/20" : "bg-black/5 dark:bg-white/5 text-black/20 dark:text-white/20"
                            )}>
                              {opt}
                            </div>
@@ -1132,7 +1777,7 @@ export default function AdminPanel() {
                    </div>
                  ))}
                </div>
-               {quizzes.length === 0 && <p className="text-center text-white/20 italic p-12">No quizzes created yet</p>}
+               {quizzes.length === 0 && <p className="text-center text-black/20 dark:text-white/20 italic p-12">No quizzes created yet</p>}
             </div>
           </div>
         );
@@ -1140,9 +1785,9 @@ export default function AdminPanel() {
         const botPlayers = users.filter(u => u.isBot);
         return (
           <div className="space-y-6 pb-32">
-             <div className="bg-[#111] p-6 rounded-[2rem] border border-white/5">
+             <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5">
                 <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-lg font-black flex items-center gap-2 uppercase tracking-tighter">
+                  <h3 className="text-lg font-black flex items-center gap-2 uppercase tracking-tighter text-black dark:text-white">
                     <Bot size={20} className="text-[#32befa]" />
                     Bot Engine
                   </h3>
@@ -1152,29 +1797,29 @@ export default function AdminPanel() {
                     <input type="file" accept=".csv" className="hidden" onChange={e => handleCsvUpload(e, 'bots')} />
                   </label>
                 </div>
-                <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest leading-relaxed">
+                <p className="text-[10px] text-black/30 dark:text-white/30 font-bold uppercase tracking-widest leading-relaxed">
                   CSV Pattern: name, xp
                 </p>
              </div>
 
              <div className="space-y-4">
-               <h3 className="text-sm font-black text-white/20 uppercase tracking-widest">Active Simulators ({botPlayers.length})</h3>
+               <h3 className="text-sm font-black text-black/20 dark:text-white/20 uppercase tracking-widest">Active Simulators ({botPlayers.length})</h3>
                {botPlayers.length === 0 ? (
-                  <p className="text-center p-8 text-white/10 italic">Zero bots active</p>
+                  <p className="text-center p-8 text-black/10 dark:text-white/10 italic">Zero bots active</p>
                ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {botPlayers.map(b => (
-                       <div key={b.id} className="bg-[#111] p-4 rounded-2xl border border-white/5 flex items-center justify-between">
+                       <div key={b.id} className="bg-black/5 dark:bg-[#111] p-4 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between text-black dark:text-white">
                           <div className="flex items-center gap-3">
                              <div className="w-8 h-8 bg-[#32befa]/20 rounded-lg flex items-center justify-center text-[#32befa]">
                                 <Bot size={16} />
                              </div>
                              <div>
                                 <p className="font-bold text-sm tracking-tight">{b.name}</p>
-                                <p className="text-[10px] font-bold text-white/20 uppercase">{b.xp} XP • LVL {b.rank}</p>
+                                <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase">{b.xp} XP • LVL {b.rank}</p>
                              </div>
                           </div>
-                          <button onClick={() => deleteUser(b.id)} className="p-2 text-white/10 hover:text-red-500 transition-colors">
+                          <button onClick={() => deleteUser(b.id)} className="p-2 text-black/10 dark:text-white/10 hover:text-red-500 transition-colors">
                              <Trash2 size={16} />
                           </button>
                        </div>
@@ -1187,12 +1832,12 @@ export default function AdminPanel() {
       case 'appearance':
         return (
           <div className="space-y-6 pb-32">
-            <div className="bg-[#111] p-6 rounded-[2rem] border border-white/5">
-               <h3 className="text-xl font-black mb-6 uppercase tracking-tighter flex items-center gap-2">
+            <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5">
+               <h3 className="text-xl font-black mb-6 uppercase tracking-tighter flex items-center gap-2 text-black dark:text-white">
                  <Palette size={24} className="text-[#32befa]" />
                  Global Skin Management
                </h3>
-               <p className="text-sm text-white/40 mb-8 font-bold uppercase tracking-widest">Selected skin will sync to all active players instantly.</p>
+               <p className="text-sm text-black/40 dark:text-white/40 mb-8 font-bold uppercase tracking-widest">Selected skin will sync to all active players instantly.</p>
 
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {Object.entries(SKINS).map(([id, skin]) => (
@@ -1202,7 +1847,7 @@ export default function AdminPanel() {
                       className={cn(
                         "p-6 rounded-[2rem] border-2 text-left transition-all relative overflow-hidden group",
                         "hover:scale-[1.02] active:scale-[0.98]",
-                        id === currentSkin ? "bg-primary/20 border-primary shadow-[0_10px_30px_rgba(var(--primary-color),0.2)]" : "bg-black/40 border-white/5"
+                        id === currentSkin ? "bg-primary/20 border-primary shadow-[0_10px_30px_rgba(var(--primary-color),0.2)]" : "bg-black/5 dark:bg-black/40 border-black/5 dark:border-white/5"
                       )}
                     >
                        <div className="absolute top-0 right-0 p-4">
@@ -1211,12 +1856,80 @@ export default function AdminPanel() {
                             style={{ backgroundColor: skin.primary }}
                           />
                        </div>
-                       <h4 className="font-black text-lg mb-1">{skin.name}</h4>
-                       <p className="text-[10px] font-bold opacity-40 uppercase tracking-widest">Primary: {skin.primary}</p>
+                       <h4 className="font-black text-lg mb-1 text-black dark:text-white">{skin.name}</h4>
+                       <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Primary: {skin.primary}</p>
                     </button>
                   ))}
                </div>
             </div>
+          </div>
+        );
+      case 'feedback':
+        return (
+          <div className="space-y-6 pb-32">
+             <div className="flex items-center justify-between px-2">
+                <div>
+                   <h2 className="text-2xl font-black uppercase tracking-tighter text-black dark:text-white">Player Feedback</h2>
+                   <p className="text-[10px] font-bold text-black/30 dark:text-white/30 uppercase tracking-[0.2em]">Latest messages from the arena</p>
+                </div>
+                <div className="bg-primary/10 text-primary px-4 py-2 rounded-xl border border-primary/20 text-xs font-black uppercase tracking-widest">
+                   {feedback.length} Entries
+                </div>
+             </div>
+
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {[...feedback].reverse().map((f) => (
+                   <div key={f.id} className="bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/5 p-6 rounded-[2rem] space-y-4 hover:border-primary/20 transition-all flex flex-col group relative">
+                      <div className="flex items-start justify-between">
+                         <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-primary/20 rounded-xl flex items-center justify-center text-primary font-black uppercase border border-primary/10">
+                               {f.userName?.[0] || 'A'}
+                            </div>
+                            <div>
+                               <h4 className="font-bold text-sm text-black dark:text-white">{f.userName || 'Anonymous'}</h4>
+                               <p className="text-[8px] font-bold text-black/20 dark:text-white/20 uppercase tracking-widest font-mono">ID: {f.userId}</p>
+                            </div>
+                         </div>
+                         <div className="flex items-center gap-1.5">
+                            {[1, 2, 3, 4, 5].map((star) => (
+                               <Star 
+                                 key={star} 
+                                 size={10} 
+                                 className={cn(star <= (f.rating || 0) ? "text-yellow-500 fill-yellow-500" : "text-black/10 dark:text-white/10")} 
+                               />
+                            ))}
+                         </div>
+                      </div>
+
+                      <div className="bg-white/5 dark:bg-black/20 p-4 rounded-2xl border border-black/10 dark:border-white/5">
+                         <p className="text-xs text-black/70 dark:text-white/70 leading-relaxed italic">"{f.comment}"</p>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2">
+                         <span className="text-[8px] font-bold text-black/30 dark:text-white/30 uppercase tracking-[0.2em]">
+                            {new Date(f.timestamp).toLocaleDateString()} • {new Date(f.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                         </span>
+                         <button 
+                           onClick={async () => {
+                              if (confirm("Dismiss this feedback?")) {
+                                 await remove(ref(db, `feedback/${f.id}`));
+                              }
+                           }}
+                           className="text-red-500/30 hover:text-red-500 transition-colors p-2"
+                         >
+                            <Trash2 size={16} />
+                         </button>
+                      </div>
+                   </div>
+                ))}
+
+                {feedback.length === 0 && (
+                   <div className="col-span-full py-20 text-center opacity-10">
+                      <MessageSquare size={64} className="mx-auto mb-4" />
+                      <p className="font-black uppercase tracking-widest">No feedback records found</p>
+                   </div>
+                )}
+             </div>
           </div>
         );
       default: return null;
@@ -1224,19 +1937,27 @@ export default function AdminPanel() {
   };
 
   return (
-    <div className="flex min-h-screen bg-black text-white relative">
+    <div className="flex min-h-screen bg-white dark:bg-black text-black dark:text-white relative transition-colors duration-300">
        {/* Mobile Menu Toggle */}
-       <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-[#050505] border-b border-white/5 flex items-center justify-between px-6 z-[160]">
+       <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-white dark:bg-[#050505] border-b border-black/5 dark:border-white/5 flex items-center justify-between px-6 z-[160] transition-colors duration-300">
           <div className="flex items-center gap-2">
              <Shield className="text-primary" size={24} />
-             <h2 className="text-lg font-black tracking-tighter">ADMIN</h2>
+             <h2 className="text-lg font-black tracking-tighter text-black dark:text-white">ADMIN</h2>
           </div>
-          <button 
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="p-2 bg-white/5 rounded-xl text-white/60"
-          >
-            {isSidebarOpen ? <CloseIcon size={24} /> : <Menu size={24} />}
-          </button>
+          <div className="flex items-center gap-2">
+             <button 
+               onClick={() => setIsDark(!isDark)}
+               className="p-2 bg-black/5 dark:bg-white/5 rounded-xl text-black/60 dark:text-white/60 active:scale-95 transition-all"
+             >
+               {isDark ? <Moon size={20} /> : <Sun size={20} />}
+             </button>
+             <button 
+               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+               className="p-2 bg-black/5 dark:bg-white/5 rounded-xl text-black/60 dark:text-white/60"
+             >
+               {isSidebarOpen ? <CloseIcon size={24} /> : <Menu size={24} />}
+             </button>
+          </div>
        </div>
 
        {/* Sidebar Overlay for Mobile */}
@@ -1254,20 +1975,22 @@ export default function AdminPanel() {
 
        {/* Sidebar */}
        <div className={cn(
-         "fixed md:sticky top-0 left-0 h-full w-64 border-r border-white/5 bg-[#050505] p-6 flex flex-col gap-8 z-[155] transition-transform duration-300 md:translate-x-0 overflow-y-auto",
+         "fixed md:sticky top-0 left-0 h-full w-64 border-r border-black/5 dark:border-white/5 bg-white dark:bg-[#050505] p-6 flex flex-col gap-8 z-[155] transition-transform duration-300 md:translate-x-0 overflow-y-auto",
          isSidebarOpen ? "translate-x-0" : "-translate-x-full"
        )}>
           <div className="flex items-center gap-3">
              <Shield className="text-primary" size={32} />
-             <h2 className="text-xl font-black tracking-tighter">ADMIN</h2>
+             <h2 className="text-xl font-black tracking-tighter text-black dark:text-white">ADMIN</h2>
           </div>
 
           <nav className="flex-1 space-y-2">
              {[
                { id: 'users', label: 'Players', icon: Users },
+               { id: 'events', label: 'Events', icon: Calendar },
                { id: 'topics', label: 'Topics', icon: HelpCircle },
                { id: 'quizzes', label: 'Quizzes', icon: FileText },
                { id: 'bots', label: 'Bots', icon: Bot },
+               { id: 'feedback', label: 'Support', icon: MessageSquare },
                { id: 'appearance', label: 'Skin', icon: Palette },
              ].map(tab => (
                <button
@@ -1279,7 +2002,7 @@ export default function AdminPanel() {
                  }}
                  className={cn(
                    "w-full flex items-center gap-3 px-4 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all",
-                   activeSubTab === tab.id ? "bg-primary text-black" : "text-white/40 hover:bg-white/5"
+                   activeSubTab === tab.id ? "bg-primary text-black" : "text-black/40 dark:text-white/40 hover:bg-black/5 dark:hover:bg-white/5"
                  )}
                >
                  <tab.icon size={18} />
@@ -1288,17 +2011,17 @@ export default function AdminPanel() {
              ))}
           </nav>
           
-          <div className="pt-8 border-t border-white/5">
-             <p className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] mb-4">Internal System</p>
-             <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+          <div className="pt-8 border-t border-black/5 dark:border-white/5 space-y-6">
+             <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase tracking-[0.2em] mb-4">Internal System</p>
+             <div className="p-4 bg-black/5 dark:bg-white/5 rounded-2xl border border-black/5 dark:border-white/5">
                 <p className="text-[8px] font-black text-primary uppercase mb-1">Database Sync</p>
-                <p className="text-[10px] font-bold text-white/60">Live Status: Active</p>
+                <p className="text-[10px] font-bold text-black/60 dark:text-white/60">Live Status: Active</p>
              </div>
           </div>
        </div>
 
        {/* Main Content */}
-       <div className="flex-1 p-6 md:p-10 pt-24 md:pt-10 overflow-y-auto max-h-screen scrollbar-hide">
+       <div className="flex-1 p-6 md:p-10 pt-24 md:pt-10 overflow-y-auto max-h-screen scrollbar-hide bg-gray-50 dark:bg-transparent transition-colors duration-300">
           <AnimatePresence mode="wait">
             <motion.div
               key={activeSubTab + (selectedUser ? selectedUser.id : '')}

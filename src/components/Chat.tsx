@@ -12,14 +12,23 @@ export default function Chat({ onClose }: { onClose: () => void }) {
   const [input, setInput] = useState('');
 
   useEffect(() => {
+    if (!currentUser) return;
+
     const feedbackRef = ref(db, 'feedback');
     onValue(feedbackRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        setMessages(Object.values(data).sort((a: any, b: any) => a.timestamp - b.timestamp));
+        const allMessages = Object.values(data);
+        const filteredMessages = currentUser.role === 'admin' 
+          ? allMessages 
+          : allMessages.filter((m: any) => m.userId === currentUser.id);
+        
+        setMessages(filteredMessages.sort((a: any, b: any) => a.timestamp - b.timestamp));
+      } else {
+        setMessages([]);
       }
     });
-  }, []);
+  }, [currentUser]);
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();

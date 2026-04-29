@@ -38,7 +38,7 @@ export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCoun
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-zinc-900 border border-white/10 rounded-[2.5rem] overflow-hidden shadow-2xl w-full max-w-md mx-auto"
+      className="bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 rounded-[2.5rem] overflow-hidden shadow-2xl w-full max-w-md mx-auto"
     >
       {/* Header with Background Pattern */}
       <div className="relative p-8 bg-gradient-to-br from-[#32befa]/20 to-transparent overflow-hidden">
@@ -49,11 +49,11 @@ export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCoun
             <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#32befa] mb-2 block">
               Performance Index
             </span>
-            <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase">
+            <h2 className="text-3xl font-black text-black dark:text-white italic tracking-tighter uppercase">
               {user.name}
             </h2>
           </div>
-          <div className="bg-white/5 backdrop-blur-md p-3 rounded-2xl border border-white/10">
+          <div className="bg-black/5 dark:bg-white/5 backdrop-blur-md p-3 rounded-2xl border border-black/5 dark:border-white/10">
             <Trophy className="text-yellow-500" size={24} />
           </div>
         </div>
@@ -66,11 +66,11 @@ export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCoun
               size={18}
               className={cn(
                 "transition-all duration-500",
-                star <= rating ? "text-yellow-400 fill-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.4)]" : "text-white/10"
+                star <= rating ? "text-yellow-400 fill-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.4)]" : "text-black/10 dark:text-white/10"
               )}
             />
           ))}
-          <span className="ml-2 text-[10px] font-black text-white/40 self-center uppercase tracking-widest">
+          <span className="ml-2 text-[10px] font-black text-black/40 dark:text-white/40 self-center uppercase tracking-widest">
             {rating}.0 RATING
           </span>
         </div>
@@ -79,39 +79,39 @@ export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCoun
       {/* Main Stats Grid */}
       <div className="p-8 space-y-6">
         <div className="grid grid-cols-2 gap-4">
-          <div className="bg-white/5 p-5 rounded-3xl border border-white/5 hover:border-white/10 transition-colors group">
+          <div className="bg-black/5 dark:bg-white/5 p-5 rounded-3xl border border-black/5 dark:border-white/5 hover:border-black/10 dark:hover:border-white/10 transition-colors group">
             <div className="flex items-center gap-3 mb-2">
               <div className="p-2 bg-[#32befa]/20 rounded-xl text-[#32befa] group-hover:scale-110 transition-transform">
                 <Target size={16} />
               </div>
-              <span className="text-[8px] font-black uppercase tracking-widest text-white/30">Accuracy</span>
+              <span className="text-[8px] font-black uppercase tracking-widest text-black/30 dark:text-white/30">Accuracy</span>
             </div>
             <div className="flex items-baseline gap-1">
-              <span className="text-2xl font-black text-white">{accuracy}</span>
-              <span className="text-sm font-bold text-white/20">%</span>
+              <span className="text-2xl font-black text-black dark:text-white">{accuracy}</span>
+              <span className="text-sm font-bold text-black/20 dark:text-white/20">%</span>
             </div>
           </div>
 
-          <div className="bg-white/5 p-5 rounded-3xl border border-white/5 hover:border-white/10 transition-colors group">
+          <div className="bg-black/5 dark:bg-white/5 p-5 rounded-3xl border border-black/5 dark:border-white/5 hover:border-black/10 dark:hover:border-white/10 transition-colors group">
             <div className="flex items-center gap-3 mb-2">
               <div className="p-2 bg-yellow-500/20 rounded-xl text-yellow-500 group-hover:scale-110 transition-transform">
                 <Zap size={16} />
               </div>
-              <span className="text-[8px] font-black uppercase tracking-widest text-white/30">Total XP</span>
+              <span className="text-[8px] font-black uppercase tracking-widest text-black/30 dark:text-white/30">Total XP</span>
             </div>
             <div className="flex items-baseline gap-1">
-              <span className="text-2xl font-black text-white">{user.xp}</span>
+              <span className="text-2xl font-black text-black dark:text-white">{user.xp}</span>
               <span className="text-[10px] font-bold text-yellow-500/40 italic">PTS</span>
             </div>
           </div>
         </div>
 
         {/* Secondary Stats List */}
-        <div className="bg-white/5 rounded-3xl border border-white/5 p-6 space-y-4">
+        <div className="bg-black/5 dark:bg-white/5 rounded-3xl border border-black/5 dark:border-white/5 p-6 space-y-4">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
               <CheckCircle2 size={16} className="text-green-500" />
-              <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest">Correct Answers</span>
+              <span className="text-[10px] font-bold text-black/60 dark:text-white/60 uppercase tracking-widest">Correct Answers</span>
             </div>
             <span className="font-black text-green-500">{aggregateStats.correct}</span>
           </div>
@@ -119,45 +119,45 @@ export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCoun
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
               <XCircle size={16} className="text-red-500" />
-              <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest">Incorrect Answers</span>
+              <span className="text-[10px] font-bold text-black/60 dark:text-white/60 uppercase tracking-widest">Incorrect Answers</span>
             </div>
             <span className="font-black text-red-500">{incorrect}</span>
           </div>
           
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
-              <HelpCircle size={16} className="text-white/40" />
-              <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest">System Questions</span>
+              <HelpCircle size={16} className="text-black/40 dark:text-white/40" />
+              <span className="text-[10px] font-bold text-black/60 dark:text-white/60 uppercase tracking-widest">System Questions</span>
             </div>
-            <span className="font-black text-white">{totalQuizzesCount}</span>
+            <span className="font-black text-black dark:text-white">{totalQuizzesCount}</span>
           </div>
 
-          <div className="flex justify-between items-center border-t border-white/5 pt-4">
+          <div className="flex justify-between items-center border-t border-black/5 dark:border-white/5 pt-4">
             <div className="flex items-center gap-3">
-              <Target size={16} className="text-white/20" />
-              <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Attempted</span>
+              <Target size={16} className="text-black/20 dark:text-white/20" />
+              <span className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Attempted</span>
             </div>
-            <span className="font-black text-white/40">{aggregateStats.total} / {totalQuizzesCount}</span>
+            <span className="font-black text-black/40 dark:text-white/40">{aggregateStats.total} / {totalQuizzesCount}</span>
           </div>
 
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
               <Award size={16} className="text-[#32befa]" />
-              <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest">Global Rank</span>
+              <span className="text-[10px] font-bold text-black/60 dark:text-white/60 uppercase tracking-widest">Global Rank</span>
             </div>
-            <span className="font-black text-white">#{user.rank}</span>
+            <span className="font-black text-black dark:text-white">#{user.rank}</span>
           </div>
         </div>
 
         {/* Topic Breakdown (Mini) */}
         {Object.entries(user.scores || {}).length > 0 && (
           <div className="space-y-3">
-            <h4 className="text-[8px] font-black text-white/20 uppercase tracking-[0.2em]">Topic Mastery</h4>
+            <h4 className="text-[8px] font-black text-black/20 dark:text-white/20 uppercase tracking-[0.2em]">Topic Mastery</h4>
             <div className="flex flex-wrap gap-2">
               {Object.entries(user.scores || {}).map(([topicId, score]) => (
-                <div key={topicId} className="bg-white/5 px-3 py-2 rounded-full border border-white/10 flex items-center gap-2">
-                  <span className="text-[9px] font-black text-white/80 uppercase">{topicId}</span>
-                  <div className="h-1 w-8 bg-white/10 rounded-full overflow-hidden">
+                <div key={topicId} className="bg-black/5 dark:bg-white/5 px-3 py-2 rounded-full border border-black/5 dark:border-white/10 flex items-center gap-2">
+                  <span className="text-[9px] font-black text-black/80 dark:text-white/80 uppercase">{topicId}</span>
+                  <div className="h-1 w-8 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
                     <div 
                       className="h-full bg-[#32befa]" 
                       style={{ width: `${(score.correct / Math.max(score.total, 1)) * 100}%` }}
@@ -175,8 +175,8 @@ export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCoun
             className={cn(
               "w-full py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all active:scale-95",
               isAdminView 
-                ? "bg-white/5 text-white/40 border border-white/10" 
-                : "bg-white text-black hover:bg-white/90"
+                ? "bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40 border border-black/5 dark:border-white/10" 
+                : "bg-black dark:bg-white text-white dark:text-black hover:opacity-90"
             )}
           >
             {isAdminView ? "Close Stats" : "Back to Rahee Pass"}

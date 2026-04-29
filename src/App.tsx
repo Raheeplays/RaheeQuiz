@@ -26,7 +26,7 @@ function AppContent() {
 
   const containerClass = cn(
     "min-h-screen transition-colors duration-300 font-sans selection:bg-primary selection:text-black",
-    isDark ? "dark bg-[#050505] text-white" : "bg-white text-black"
+    isDark ? "dark bg-black text-white" : "bg-white text-black"
   );
 
   if (loading) {

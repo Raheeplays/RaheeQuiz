@@ -14,15 +14,18 @@ import Leaderboard from './Leaderboard';
 import Shop from './Shop';
 import Settings from './Settings';
 import SocialHub from './SocialHub';
+import Events from './Events';
 import MultiplayerHub from './MultiplayerHub';
 import MultiplayerGame from './MultiplayerGame';
 import AdminPanel from './AdminPanel';
 import ScoreCard from './ScoreCard';
 import History from './History';
 import Chat from './Chat';
+import Feedback from './Feedback';
 import { db } from '../firebase/config';
 import { ref, onValue, update } from 'firebase/database';
-import { User } from '../types';
+import { User, Topic } from '../types';
+import { CLASSES, SUBJECTS } from '../constants';
 import { translations } from '../translations';
 import { cn } from '../lib/utils';
 
@@ -35,6 +38,7 @@ export default function MainMenu() {
   const [showChat, setShowChat] = useState(false);
   const [showRaheePass, setShowRaheePass] = useState(false);
   const [showTopicSelect, setShowTopicSelect] = useState(false);
+  const [selectionPath, setSelectionPath] = useState<Topic[]>([]);
   const [showFeedback, setShowFeedback] = useState(false);
   const [showMultiplayerHub, setShowMultiplayerHub] = useState(false);
   const [multiRoomId, setMultiRoomId] = useState<string | null>(null);
@@ -42,7 +46,9 @@ export default function MainMenu() {
   const [rating, setRating] = useState(0);
   const [showScoreCard, setShowScoreCard] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [topics, setTopics] = useState<Topic[]>([]);
   const [totalQuizzesCount, setTotalQuizzesCount] = useState(0);
 
   useEffect(() => {
@@ -51,6 +57,14 @@ export default function MainMenu() {
       const data = snapshot.val();
       if (data) {
         setAllUsers(Object.values(data));
+      }
+    });
+
+    const topicsRef = ref(db, 'topics');
+    onValue(topicsRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        setTopics(Object.entries(data).map(([id, val]: [string, any]) => ({ id, ...val })));
       }
     });
 
@@ -66,16 +80,11 @@ export default function MainMenu() {
   }, []);
 
   const handleStartQuiz = () => {
+     if (!currentUser?.selectedTopicId) {
+        setShowTopicSelect(true);
+        return;
+     }
      setShowQuiz(true);
-  };
-
-  const resetProgress = async () => {
-    if (!currentUser) return;
-    if (confirm("Reset current round progress?")) {
-        await update(ref(db, `users/${currentUser.id}`), {
-          currentQuizIndex: 0
-        });
-    }
   };
 
   const getUserRank = (userId: string) => {
@@ -103,42 +112,39 @@ export default function MainMenu() {
         animate={{ y: 0, opacity: 1 }}
         className="flex items-center justify-between"
       >
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 bg-primary rounded-2xl flex items-center justify-center text-black font-black text-2xl shadow-[0_0_20px_rgba(var(--primary-color),0.3)]">
+        <div 
+          onClick={() => setShowProfile(true)}
+          className="flex items-center gap-4 cursor-pointer group"
+        >
+          <div className="w-16 h-16 bg-primary rounded-2xl flex items-center justify-center text-black font-black text-2xl shadow-[0_0_20px_rgba(var(--primary-color),0.3)] group-hover:scale-110 transition-transform">
             {currentUser?.name?.[0].toUpperCase()}
           </div>
           <div>
-            <h2 className="text-2xl font-black flex items-center gap-2">
+            <h2 className="text-2xl font-black flex items-center gap-2 text-black dark:text-white group-hover:text-primary transition-colors">
               {currentUser?.name}
               {currentUser?.role === 'admin' && <Shield size={18} className="text-primary" />}
             </h2>
             <div className="flex items-center gap-2 mt-1">
               <button 
-                onClick={toggleLanguage}
+                onClick={(e) => { e.stopPropagation(); toggleLanguage(); }}
                 className="px-2 py-0.5 bg-primary/10 text-primary text-[8px] font-black rounded uppercase tracking-widest border border-primary/20 hover:bg-primary hover:text-black transition-all"
               >
                 {lang === 'en' ? 'English' : 'हिंदी'}
               </button>
-              <span className="text-white/40 text-[10px] font-bold uppercase tracking-widest leading-none">{t.rank} #{userRank}</span>
+              <span className="text-black/30 dark:text-white/40 text-[10px] font-bold uppercase tracking-widest leading-none">{t.rank} #{userRank}</span>
             </div>
           </div>
         </div>
         <div className="flex gap-2">
-          <div className="flex items-center gap-2 px-4 bg-white/5 rounded-xl border border-white/5 mr-2">
+          <div className="flex items-center gap-2 px-4 bg-black/5 dark:bg-white/5 rounded-xl border border-black/5 dark:border-white/5 mr-2">
              <Coins size={16} className="text-primary italic" />
              <span className="text-sm font-black text-primary">{currentUser?.raheeCoins || 0}</span>
           </div>
           <button 
-            onClick={() => setActiveTab('shop')}
-            className="p-3 bg-primary/10 text-primary rounded-xl border border-primary/20 hover:bg-primary hover:text-black transition-colors"
-          >
-            <ShoppingBag size={20} />
-          </button>
-          <button 
             onClick={() => setIsDark(!isDark)}
-            className="p-3 bg-white/5 rounded-xl text-white/40 hover:text-primary transition-colors"
+            className="p-3 bg-black/5 dark:bg-white/5 rounded-xl text-black/40 dark:text-white/40 hover:text-primary transition-colors border border-black/5 dark:border-white/5"
           >
-            {isDark ? <Sun size={20} /> : <Moon size={20} />}
+            {isDark ? <Moon size={20} /> : <Sun size={20} />}
           </button>
         </div>
       </motion.div>
@@ -183,26 +189,23 @@ export default function MainMenu() {
       </motion.div>
 
       {/* Main Actions */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <motion.button 
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.95 }}
           onClick={handleStartQuiz}
-          className="relative aspect-auto sm:aspect-square h-24 sm:h-auto bg-primary rounded-[2rem] md:rounded-[2.5rem] p-6 flex flex-row sm:flex-col items-center justify-center gap-4 text-black shadow-[0_20px_40px_rgba(var(--primary-color),0.2)] active:scale-95 transition-all group overflow-hidden"
+          className="relative h-28 sm:h-32 bg-primary rounded-[2rem] p-4 flex flex-row sm:flex-col items-center justify-center gap-3 sm:gap-4 text-black shadow-[0_20px_40px_rgba(var(--primary-color),0.2)] active:scale-95 transition-all group overflow-hidden"
         >
           <div className="absolute top-0 right-0 p-4 opacity-10">
-            <Play size={80} fill="currentColor" />
+            <Play size={40} className="sm:w-20 sm:h-20" fill="currentColor" />
           </div>
-          <div className="w-12 h-12 sm:w-16 sm:h-16 bg-white/20 rounded-full flex items-center justify-center group-hover:scale-110 transition-all z-10 shrink-0">
-            <Play size={24} className="sm:w-10 sm:h-10" fill="currentColor" />
+          <div className="w-10 h-10 sm:w-14 sm:h-14 bg-white/20 rounded-full flex items-center justify-center group-hover:scale-110 transition-all z-10 shrink-0">
+            <Play size={20} className="sm:w-8 sm:h-8" fill="currentColor" />
           </div>
           <div className="flex flex-col items-start sm:items-center z-10">
-            <span className="font-black text-lg sm:text-xl uppercase tracking-tighter">
-              {(currentUser?.currentQuizIndex || 0) > 0 ? (lang === 'en' ? 'Resume' : 'जारी रखें') : t.startQuiz}
+            <span className="font-black text-sm sm:text-base uppercase tracking-tighter text-center">
+              {(currentUser?.currentQuizIndex || 0) > 0 ? (lang === 'en' ? 'Resume' : 'फिर से शुरू करें') : t.startQuiz}
             </span>
-            {(currentUser?.currentQuizIndex || 0) > 0 && (
-              <span className="text-[10px] font-black uppercase opacity-60">Round {currentUser?.currentRound}</span>
-            )}
           </div>
         </motion.button>
 
@@ -210,60 +213,68 @@ export default function MainMenu() {
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.95 }}
           onClick={() => setShowTopicSelect(true)}
-          className="aspect-auto sm:aspect-square h-24 sm:h-auto bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/10 rounded-[2rem] md:rounded-[2.5rem] p-6 flex flex-row sm:flex-col items-center justify-center gap-4 active:scale-95 transition-all hover:bg-black/10 dark:hover:bg-white/5 group"
+          className="h-28 sm:h-32 bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/10 rounded-[2rem] p-4 flex flex-row sm:flex-col items-center justify-center gap-3 sm:gap-4 active:scale-95 transition-all hover:bg-black/10 dark:hover:bg-white/5 group"
         >
-          <div className="w-12 h-12 sm:w-16 sm:h-16 bg-primary/10 rounded-full flex items-center justify-center text-primary group-hover:rotate-90 transition-all shrink-0">
-            <Grid size={24} className="sm:w-10 sm:h-10" />
+          <div className="w-10 h-10 sm:w-14 sm:h-14 bg-primary/10 rounded-full flex items-center justify-center text-primary group-hover:rotate-90 transition-all shrink-0">
+            <Grid size={20} className="sm:w-8 sm:h-8" />
           </div>
-          <span className="font-black text-lg sm:text-xl uppercase tracking-tighter text-black dark:text-white">{lang === 'en' ? 'New Topic' : 'नया विषय'}</span>
+          <span className="font-black text-sm sm:text-base uppercase tracking-tighter text-black dark:text-white text-center leading-tight">
+            {lang === 'en' ? 'New Topic' : 'नया विषय'}
+          </span>
         </motion.button>
 
         <motion.button 
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.95 }}
           onClick={() => setShowMultiplayerHub(true)}
-          className="aspect-auto sm:aspect-square h-24 sm:h-auto bg-primary/10 dark:bg-[#111] border border-primary/20 dark:border-white/10 rounded-[2rem] md:rounded-[2.5rem] p-6 flex flex-row sm:flex-col items-center justify-center gap-4 active:scale-95 transition-all hover:bg-primary/20 group"
+          className="h-28 sm:h-32 bg-primary/10 dark:bg-[#111] border border-primary/20 dark:border-white/10 rounded-[2rem] p-4 flex flex-row sm:flex-col items-center justify-center gap-3 sm:gap-4 active:scale-95 transition-all hover:bg-primary/20 group"
         >
-          <div className="w-12 h-12 sm:w-16 sm:h-16 bg-primary rounded-2xl flex items-center justify-center text-black shadow-lg shadow-primary/20 group-hover:scale-110 transition-all shrink-0">
-            <Swords size={24} className="sm:w-10 sm:h-10" />
+          <div className="w-10 h-10 sm:w-14 sm:h-14 bg-primary rounded-2xl flex items-center justify-center text-black shadow-lg shadow-primary/20 group-hover:scale-110 transition-all shrink-0">
+            <Swords size={20} className="sm:w-8 sm:h-8" />
           </div>
-          <span className="font-black text-lg sm:text-xl uppercase tracking-tighter text-black dark:text-white">{t.battleHub}</span>
-        </motion.button>
-
-        <motion.button 
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={() => setActiveTab('friends')}
-          className="aspect-auto sm:aspect-square h-24 sm:h-auto bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/10 rounded-[2rem] md:rounded-[2.5rem] p-6 flex flex-row sm:flex-col items-center justify-center gap-4 active:scale-95 transition-all hover:bg-black/10 dark:hover:bg-white/5 group"
-        >
-          <div className="w-12 h-12 sm:w-16 sm:h-16 bg-primary/10 rounded-full flex items-center justify-center text-primary group-hover:scale-110 transition-all shrink-0">
-            <Users size={24} className="sm:w-10 sm:h-10" />
-          </div>
-          <span className="font-black text-lg sm:text-xl uppercase tracking-tighter text-black dark:text-white">{t.friends}</span>
+          <span className="font-black text-sm sm:text-base uppercase tracking-tighter text-black dark:text-white text-center leading-tight">
+            {t.battleHub}
+          </span>
         </motion.button>
       </div>
 
       {/* Stats Summary */}
-      <div className="space-y-4">
-        <h3 className="font-black text-sm uppercase tracking-widest text-white/20">{lang === 'en' ? 'Active Topic' : 'सक्रिय विषय'}</h3>
-        <div className="bg-black/5 dark:bg-[#111] p-5 rounded-[2rem] border border-black/5 dark:border-white/5 flex items-center justify-between">
-           <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-primary/10 rounded-2xl flex items-center justify-center text-primary">
-                 <HelpCircle size={24} />
-              </div>
-              <div>
-                 <h4 className="font-bold text-black dark:text-white capitalize">{currentUser?.selectedTopicId || 'General'}</h4>
-                 <p className="text-black/40 dark:text-white/40 text-xs">Round {currentUser?.currentRound || 1} • {currentUser?.currentQuizIndex || 0} Solved</p>
-              </div>
-           </div>
-           <button 
-             onClick={resetProgress}
-             className="p-3 bg-red-500/10 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"
-           >
-              <RefreshCw size={18} />
-           </button>
+      {(currentUser?.currentRound && currentUser.currentRound > 1 || currentUser?.currentQuizIndex && currentUser.currentQuizIndex > 0) && (
+        <div className="space-y-4">
+          <h3 className="font-black text-[10px] uppercase tracking-[0.2em] text-black/20 dark:text-white/20 ml-2">
+            {lang === 'en' ? 'Active Topic' : 'सक्रिय विषय'}
+          </h3>
+          <div className="bg-black/5 dark:bg-[#111] p-5 rounded-[2rem] border border-black/5 dark:border-white/5 flex items-center justify-between">
+             <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-primary/10 rounded-2xl flex items-center justify-center text-primary">
+                   <HelpCircle size={24} />
+                </div>
+                <div>
+                   <h4 className="font-bold text-black dark:text-white capitalize flex items-center gap-1.5 flex-wrap">
+                      {topics.find(t => t.id === currentUser?.selectedTopicId)?.name || (currentUser?.selectedTopicId ? 'Topic Not Found' : 'Select Topic')}
+                      {currentUser?.selectedSubTopicId && (
+                         <>
+                            <ChevronRight size={10} className="text-black/20 dark:text-white/20" />
+                            <span className="text-[#32befa]">
+                               {topics.find(t => t.id === currentUser?.selectedTopicId)?.subTopics?.[currentUser.selectedSubTopicId]?.name}
+                            </span>
+                         </>
+                      )}
+                      {currentUser?.selectedSubSubTopicId && (
+                         <>
+                            <ChevronRight size={10} className="text-black/20 dark:text-white/20" />
+                            <span className="text-yellow-500">
+                               {topics.find(t => t.id === currentUser?.selectedTopicId)?.subTopics?.[currentUser.selectedSubTopicId!]?.subSubTopics?.[currentUser.selectedSubSubTopicId]?.name}
+                            </span>
+                         </>
+                      )}
+                   </h4>
+                   <p className="text-black/40 dark:text-white/40 text-xs">Round {currentUser?.currentRound || 1} • {currentUser?.currentQuizIndex || 0} Solved</p>
+                </div>
+             </div>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Admin Quick Access */}
       {currentUser?.role === 'admin' && (
@@ -304,17 +315,8 @@ export default function MainMenu() {
         {activeTab === 'leaderboard' && <Leaderboard />}
         {activeTab === 'shop' && <Shop onClose={() => setActiveTab('home')} language={lang} />}
         {activeTab === 'friends' && <SocialHub onClose={() => setActiveTab('home')} allUsers={allUsers} totalQuizzesCount={totalQuizzesCount} />}
+        {activeTab === 'events' && <Events />}
         {activeTab === 'admin' && currentUser?.role === 'admin' && <AdminPanel />}
-        
-        {activeTab === 'event' && (
-          <div className="flex flex-col items-center justify-center h-[70vh] text-center p-8">
-             <div className="w-24 h-24 bg-white/5 rounded-full flex items-center justify-center mb-6">
-                <TrendingUp size={48} className="text-primary/20" />
-             </div>
-             <h2 className="text-2xl font-black uppercase tracking-tighter mb-2">Events Coming Soon</h2>
-             <p className="text-white/40 text-sm max-w-xs text-pretty italic">We are working hard to bring this feature to the community.</p>
-          </div>
-        )}
       </AnimatePresence>
 
       {/* Modals */}
@@ -341,13 +343,13 @@ export default function MainMenu() {
                        <h2 className="text-black font-black text-4xl uppercase tracking-tighter leading-none">{t.raheePass}</h2>
                        <p className="text-black/60 font-black text-sm uppercase tracking-widest">{currentUser?.name}</p>
                     </div>
-                    <div className="bg-black p-6 rounded-3xl shadow-xl">
+                    <div className="bg-white dark:bg-black p-6 rounded-3xl shadow-xl border border-black/5 dark:border-white/5">
                        <div className="flex justify-between items-center mb-1">
-                          <span className="text-white/40 text-[8px] font-black uppercase tracking-widest">Total XP</span>
+                          <span className="text-black/40 dark:text-white/40 text-[8px] font-black uppercase tracking-widest">Total XP</span>
                           <div className="bg-yellow-500 text-black px-2 py-0.5 rounded text-[8px] font-black uppercase">Active</div>
                        </div>
                        <div className="flex items-baseline gap-2">
-                          <span className="text-5xl font-black text-white">{currentUser?.xp}</span>
+                          <span className="text-5xl font-black text-black dark:text-white">{currentUser?.xp}</span>
                        </div>
                     </div>
                  </div>
@@ -362,13 +364,250 @@ export default function MainMenu() {
                           <p className="font-black uppercase text-sm">R-{currentUser?.currentRound || 1}</p>
                        </div>
                     </div>
+                    
+                    <div className="space-y-2">
+                       <p className="text-[10px] font-black uppercase tracking-widest text-black/30 dark:text-white/30 ml-1">Topic Performance</p>
+                       <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
+                          {topics.map(topic => {
+                             const stat = currentUser?.scores?.[topic.id];
+                             const percentage = stat ? Math.round((stat.correct / stat.total) * 100) : 0;
+                             if (!stat) return null;
+                             return (
+                                <div key={topic.id} className="bg-black/5 dark:bg-white/5 p-3 rounded-xl flex items-center justify-between border border-black/5 dark:border-white/5">
+                                   <div className="flex items-center gap-3">
+                                      <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center text-primary">
+                                         <HelpCircle size={14} />
+                                      </div>
+                                      <div>
+                                         <p className="text-[10px] font-black uppercase tracking-tight">{topic.name}</p>
+                                         <p className="text-[10px] text-black/40 dark:text-white/40">{stat.correct}/{stat.total} Correct</p>
+                                      </div>
+                                   </div>
+                                   <div className="text-right">
+                                      <p className="text-xs font-black text-primary">{percentage}%</p>
+                                   </div>
+                                </div>
+                             );
+                          })}
+                       </div>
+                    </div>
+
                     <button onClick={() => setShowRaheePass(false)} className="w-full bg-black dark:bg-white text-white dark:text-black py-4 rounded-2xl font-black uppercase tracking-widest text-[10px]">Close Pass</button>
                  </div>
              </motion.div>
           </div>
         )}
+
+        {showProfile && (
+           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                onClick={() => setShowProfile(false)}
+                className="absolute inset-0 bg-black/90 backdrop-blur-xl"
+              />
+              <motion.div 
+                initial={{ scale: 0.9, y: 20, opacity: 0 }} animate={{ scale: 1, y: 0, opacity: 1 }} exit={{ scale: 0.9, y: 20, opacity: 0 }}
+                className="relative bg-white dark:bg-[#111] w-full max-w-md rounded-[3rem] overflow-hidden border border-black/5 dark:border-white/10 p-8"
+              >
+                 <div className="flex items-center gap-6 mb-8">
+                    <div className="w-24 h-24 bg-primary rounded-[2rem] flex items-center justify-center text-black font-black text-4xl shadow-xl shadow-primary/20">
+                       {currentUser?.name?.[0].toUpperCase()}
+                    </div>
+                    <div>
+                       <h2 className="text-3xl font-black text-black dark:text-white leading-none mb-1">{currentUser?.name}</h2>
+                       <p className="text-primary font-black uppercase tracking-widest text-xs italic">LVL {currentUser?.rank || 0} ELITE PLAYER</p>
+                    </div>
+                 </div>
+
+                 <div className="grid grid-cols-3 gap-4 mb-8">
+                    <div className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl text-center border border-black/5 dark:border-white/5">
+                       <p className="text-black/30 dark:text-white/30 text-[8px] font-black uppercase tracking-widest mb-1">XP</p>
+                       <p className="text-xl font-black text-primary">{currentUser?.xp}</p>
+                    </div>
+                    <div className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl text-center border border-black/5 dark:border-white/5">
+                       <p className="text-black/30 dark:text-white/30 text-[8px] font-black uppercase tracking-widest mb-1">Rank</p>
+                       <p className="text-xl font-black text-black dark:text-white">#{getUserRank(currentUser?.id || '')}</p>
+                    </div>
+                    <div className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl text-center border border-black/5 dark:border-white/5">
+                       <p className="text-black/30 dark:text-white/30 text-[8px] font-black uppercase tracking-widest mb-1">Coins</p>
+                       <p className="text-xl font-black text-yellow-500">{currentUser?.raheeCoins || 0}</p>
+                    </div>
+                 </div>
+
+                 <div className="space-y-4 mb-8">
+                    <h3 className="font-black text-[10px] uppercase tracking-widest text-black/20 dark:text-white/20 ml-2">Lifetime Statistics</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                       <div className="flex items-center gap-4 bg-black/5 dark:bg-white/5 p-5 rounded-3xl border border-black/5 dark:border-white/5">
+                          <div className="w-10 h-10 bg-green-500/20 rounded-2xl flex items-center justify-center text-green-500"><Zap size={20} /></div>
+                          <div>
+                             <p className="text-[8px] font-black text-black/30 dark:text-white/30 uppercase tracking-widest leading-none">Accuracy</p>
+                             <p className="text-lg font-black text-black dark:text-white">
+                                {Math.round((currentUser?.stats?.correctAnswers || 0) / (currentUser?.stats?.totalAttempted || 1) * 100)}%
+                             </p>
+                          </div>
+                       </div>
+                       <div className="flex items-center gap-4 bg-black/5 dark:bg-white/5 p-5 rounded-3xl border border-black/5 dark:border-white/5">
+                          <div className="w-10 h-10 bg-blue-500/20 rounded-2xl flex items-center justify-center text-blue-500"><TrendingUp size={20} /></div>
+                          <div>
+                             <p className="text-[8px] font-black text-black/30 dark:text-white/30 uppercase tracking-widest leading-none">Solved</p>
+                             <p className="text-lg font-black text-black dark:text-white">
+                                {currentUser?.stats?.totalAttempted || 0}
+                             </p>
+                          </div>
+                       </div>
+                    </div>
+                 </div>
+
+                 <div className="space-y-4 mb-8">
+                    <h3 className="font-black text-[10px] uppercase tracking-widest text-black/20 dark:text-white/20 ml-2">Topic Knowledge</h3>
+                    <div className="space-y-3 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
+                       {topics.filter(t => currentUser?.scores?.[t.id]).map(topic => {
+                          const score = currentUser?.scores?.[topic.id];
+                          const percent = Math.round((score?.correct || 0) / (score?.total || 1) * 100);
+                          return (
+                             <div key={topic.id} className="space-y-2">
+                                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-tight">
+                                   <span className="text-black dark:text-white">{topic.name}</span>
+                                   <span className="text-primary">{percent}%</span>
+                                </div>
+                                <div className="h-1.5 bg-black/5 dark:bg-white/5 rounded-full overflow-hidden">
+                                   <motion.div 
+                                     initial={{ width: 0 }}
+                                     animate={{ width: `${percent}%` }}
+                                     className="h-full bg-primary rounded-full"
+                                   />
+                                </div>
+                             </div>
+                          );
+                       })}
+                    </div>
+                 </div>
+
+                 <button 
+                   onClick={() => setShowProfile(false)}
+                   className="w-full bg-black dark:bg-white text-white dark:text-black py-5 rounded-3xl font-black uppercase tracking-widest text-xs hover:scale-[1.02] active:scale-95 transition-all shadow-xl"
+                 >
+                    Close Profile
+                 </button>
+              </motion.div>
+           </div>
+        )}
+
+        {showTopicSelect && (
+           <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                onClick={() => setShowTopicSelect(false)}
+                className="absolute inset-0 bg-black/90 backdrop-blur-md"
+              />
+              <motion.div 
+                initial={{ scale: 0.9, y: 20, opacity: 0 }} animate={{ scale: 1, y: 0, opacity: 1 }} exit={{ scale: 0.9, y: 20, opacity: 0 }}
+                className="relative bg-white dark:bg-[#0a0a0a] w-full max-w-md rounded-[3rem] overflow-hidden border border-black/5 dark:border-white/10 flex flex-col max-h-[85vh]"
+              >
+                 <div className="p-8 border-b border-black/5 dark:border-white/10 shrink-0 text-center relative">
+                    <h2 className="text-2xl font-black text-black dark:text-white uppercase tracking-tighter leading-none mb-1">
+                       {selectionPath.length > 0 ? selectionPath[selectionPath.length - 1].name : 'Select Topic'}
+                    </h2>
+                    <p className="text-black/40 dark:text-white/40 text-[10px] font-black uppercase tracking-widest">
+                       {selectionPath.length > 0 ? 'Select Specialization' : 'Choose your interest'}
+                    </p>
+                    {selectionPath.length > 0 && (
+                       <button 
+                         onClick={() => setSelectionPath(selectionPath.slice(0, -1))}
+                         className="absolute left-6 top-1/2 -translate-y-1/2 p-2 bg-black/5 dark:bg-white/5 rounded-xl text-black/40 dark:text-white/40 hover:text-primary transition-colors"
+                       >
+                          <ChevronRight size={20} className="rotate-180" />
+                       </button>
+                    )}
+                 </div>
+
+                 <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+                    <div className="space-y-4">
+                       <div className="space-y-3">
+                          {(() => {
+                             const currentOptions = selectionPath.length === 0 
+                                ? topics 
+                                : Object.values(selectionPath[selectionPath.length - 1].children || {});
+                             
+                             if (currentOptions.length === 0) {
+                                return (
+                                  <div className="py-12 text-center bg-black/5 dark:bg-white/5 rounded-[2rem] border border-dashed border-black/10 dark:border-white/10">
+                                     <HelpCircle className="mx-auto mb-2 text-black/10 dark:text-white/10" size={32} />
+                                     <p className="text-black/40 dark:text-white/40 font-bold italic tracking-tighter text-sm px-8">No further sub-topics.</p>
+                                  </div>
+                                );
+                             }
+
+                             return currentOptions.map((topic, tIdx) => (
+                                <motion.button 
+                                   key={`${topic.id}-${tIdx}`}
+                                   whileHover={{ scale: 1.02 }}
+                                   whileTap={{ scale: 0.98 }}
+                                   onClick={async () => {
+                                      if (!currentUser) return;
+                                      if (topic.children && Object.keys(topic.children).length > 0) {
+                                         setSelectionPath([...selectionPath, topic]);
+                                      } else {
+                                         // Leaf node selected
+                                         const updateData: any = { 
+                                            selectedTopicId: selectionPath.length > 0 ? selectionPath[0].id : topic.id,
+                                            // Store the full path ID chain or just the leaf?
+                                            // The original code had selectedTopicId, selectedSubTopicId, selectedSubSubTopicId.
+                                            // For arbitrary depth, we might need a different storage pattern, 
+                                            // but for compatibility with existing quiz fetching (which uses these 3), 
+                                            // we'll try to map the first 3 levels if they exist.
+                                            selectedSubTopicId: selectionPath.length > 0 ? (selectionPath[1]?.id || topic.id) : null,
+                                            selectedSubSubTopicId: selectionPath.length > 1 ? (selectionPath[2]?.id || topic.id) : (selectionPath.length === 1 ? topic.id : null)
+                                         };
+                                         
+                                         // Actually, let's just store the leaf ID somewhere or the full path.
+                                         // The quiz system likely needs to know which specific niche was chosen.
+                                         // Let's also store 'lastSelectedTopicId' as the actual niche.
+                                         (updateData as any).selectedNicheId = topic.id;
+
+                                         await update(ref(db, `users/${currentUser.id}`), updateData);
+                                         setSelectionPath([]);
+                                         setShowTopicSelect(false);
+                                      }
+                                   }}
+                                   className={cn(
+                                      "w-full p-5 rounded-3xl flex items-center gap-4 transition-all border",
+                                      currentUser?.selectedTopicId === topic.id 
+                                         ? "bg-primary text-black border-primary shadow-lg shadow-primary/20" 
+                                         : "bg-black/5 dark:bg-white/5 text-black dark:text-white border-black/5 dark:border-white/5 hover:bg-black/10 dark:hover:bg-white/10"
+                                   )}
+                                >
+                                   <div className={cn(
+                                      "w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg shrink-0",
+                                      currentUser?.selectedTopicId === topic.id ? "bg-white/20 text-black" : "bg-primary/20 text-primary"
+                                   )}>
+                                      <HelpCircle size={24} />
+                                   </div>
+                                   <div className="text-left overflow-hidden">
+                                      <h4 className="font-black uppercase tracking-tighter text-lg leading-none mb-1 truncate">{topic.name}</h4>
+                                      <div className="flex gap-1.5 items-center">
+                                         <span className="text-[8px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">
+                                            {topic.children ? `${Object.keys(topic.children).length} Specialties` : 'Explore this topic'}
+                                         </span>
+                                      </div>
+                                   </div>
+                                </motion.button>
+                             ));
+                          })()}
+                       </div>
+                    </div>
+                 </div>
+
+                 <div className="p-6 shrink-0 bg-white/50 dark:bg-[#0a0a0a]/50 backdrop-blur-md border-t border-black/5 dark:border-white/10">
+                    <button onClick={() => setShowTopicSelect(false)} className="w-full bg-[#32befa] text-black py-5 rounded-[1.5rem] font-black uppercase tracking-widest text-xs shadow-xl active:scale-95 transition-all">Close</button>
+                 </div>
+              </motion.div>
+           </div>
+        )}
+
         {showQuiz && <QuizScreen onClose={() => setShowQuiz(false)} language={lang} />}
         {showSettings && <Settings onClose={() => setShowSettings(false)} onShowFeedback={() => setShowFeedback(true)} />}
+        {showFeedback && <Feedback onClose={() => setShowFeedback(false)} />}
         {showChat && <Chat onClose={() => setShowChat(false)} />}
         {showHistory && <History onClose={() => setShowHistory(false)} />}
         {showMultiplayerHub && (

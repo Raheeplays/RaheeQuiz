@@ -54,16 +54,16 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
   };
 
   return (
-    <div className="bg-[#0a0a0a] rounded-[2.5rem] border border-white/5 overflow-hidden flex flex-col h-full max-h-[85vh]">
+    <div className="bg-white dark:bg-[#0a0a0a] rounded-[2.5rem] border border-black/5 dark:border-white/5 overflow-hidden flex flex-col h-full max-h-[85vh]">
       {/* Header */}
-      <div className="p-8 flex items-center justify-between border-b border-white/5 bg-black/40 backdrop-blur-xl">
+      <div className="p-8 flex items-center justify-between border-b border-black/5 dark:border-white/5 bg-white/40 dark:bg-black/40 backdrop-blur-xl">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 bg-primary/20 rounded-2xl flex items-center justify-center text-primary border border-primary/20">
             <ShoppingBag size={24} />
           </div>
-          <div>
-            <h2 className="text-xl font-black tracking-tighter text-white uppercase">{t.shop}</h2>
-            <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest px-1">Upgrade your arsenal</p>
+          <div className="text-left">
+            <h2 className="text-xl font-black tracking-tighter text-black dark:text-white uppercase">{t.shop}</h2>
+            <p className="text-[10px] font-bold text-black/30 dark:text-white/40 uppercase tracking-widest px-1">Upgrade your arsenal</p>
           </div>
         </div>
         
@@ -80,20 +80,20 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: i * 0.1 }}
-            className="p-6 bg-white/5 rounded-3xl border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-6 hover:border-white/10 transition-all group"
+            className="p-6 bg-black/5 dark:bg-white/5 rounded-3xl border border-black/5 dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-6 hover:border-black/10 dark:hover:border-white/10 transition-all group"
           >
             <div className="flex items-center gap-6">
               <div className={cn("w-16 h-16 rounded-2xl flex items-center justify-center shrink-0 shadow-lg transition-transform group-hover:scale-110 duration-500", item.bg, item.color)}>
                  <item.icon size={32} />
               </div>
-              <div>
+              <div className="text-left">
                 <div className="flex items-center gap-2 mb-1">
-                   <h3 className="text-lg font-black text-white">{item.name}</h3>
-                   <span className="text-[8px] font-black uppercase tracking-widest text-white/20 px-1.5 py-0.5 bg-white/5 rounded border border-white/5">
+                   <h3 className="text-lg font-black text-black dark:text-white">{item.name}</h3>
+                   <span className="text-[8px] font-black uppercase tracking-widest text-black/20 dark:text-white/20 px-1.5 py-0.5 bg-black/5 dark:bg-white/5 rounded border border-black/5 dark:border-white/5">
                       {currentUser?.lifelines?.[item.id as 'fiftyFifty' | 'changeQuiz'] || 0} Owned
                    </span>
                 </div>
-                <p className="text-white/40 text-xs font-medium leading-relaxed max-w-sm">{item.desc}</p>
+                <p className="text-black/40 dark:text-white/40 text-xs font-medium leading-relaxed max-w-sm">{item.desc}</p>
               </div>
             </div>
 

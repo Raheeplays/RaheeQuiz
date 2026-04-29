@@ -10,7 +10,7 @@
     @apply bg-white text-black transition-colors duration-300;
   }
   .dark body {
-    @apply bg-[#050505] text-white;
+    @apply bg-black text-white;
   }
   
   ::-webkit-scrollbar {
@@ -21,10 +21,9 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 10px;
+    @apply bg-black/10 dark:bg-white/10 rounded-full;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.2);
+    @apply bg-black/20 dark:bg-white/20;
   }
 }

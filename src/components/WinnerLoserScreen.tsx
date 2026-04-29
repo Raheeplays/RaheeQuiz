@@ -10,14 +10,15 @@ import { cn } from '../lib/utils';
 interface WinnerLoserScreenProps {
   history: QuizHistory[];
   onClose: () => void;
+  total?: number;
 }
 
-export default function WinnerLoserScreen({ history, onClose }: WinnerLoserScreenProps) {
+export default function WinnerLoserScreen({ history, onClose, total }: WinnerLoserScreenProps) {
   const { currentUser } = useUser();
   const [seconds, setSeconds] = useState(86400); // 24 hours
   
   const correctCount = history.filter(h => h.isCorrect).length;
-  const totalCount = 160; // 10 rounds * 16 queries
+  const totalCount = total || 160; 
   const scorePercentage = (correctCount / totalCount) * 100;
   
   const stars = Math.max(1, Math.min(5, Math.ceil(scorePercentage / 20)));

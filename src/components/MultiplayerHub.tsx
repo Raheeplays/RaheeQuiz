@@ -190,7 +190,7 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
                 className="w-16 h-16 border-4 border-primary/20 border-t-primary rounded-full mb-6"
               />
               <h3 className="text-xl font-black mb-2">Finding Opponent...</h3>
-              <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Searching for available players or bots</p>
+              <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Searching for available players</p>
             </div>
           ) : lobbyRoom ? (
             <div className="space-y-8">
@@ -440,7 +440,7 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
                 >
                   <div className="relative z-10 text-left">
                     <h4 className="text-2xl font-black mb-1">Quick Battle</h4>
-                    <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Match with random players or AI</p>
+                    <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Match with global opponents</p>
                   </div>
                   <div className="relative z-10 w-16 h-16 bg-[#32befa]/10 rounded-2xl flex items-center justify-center text-[#32befa] group-hover:scale-110 group-hover:rotate-12 transition-all">
                     <Swords size={32} />

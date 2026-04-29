@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useUser } from '../contexts/UserContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { db } from '../firebase/config';
-import { ref, onValue, set, get, push } from 'firebase/database';
+import { ref, onValue, set, get, push, update } from 'firebase/database';
 import { Quiz, User, QuizHistory } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Volume2, VolumeX, MessageSquare, Globe, ChevronRight, Check, AlertCircle, Clock, Trophy, Settings as SettingsIcon, Zap, RefreshCw } from 'lucide-react';
@@ -13,11 +13,11 @@ import RoundCard from './RoundCard';
 
 import { Skeleton } from './ui/Skeleton';
 
-export default function QuizScreen({ onClose, language: initialLanguage = 'en' }: { onClose: () => void, language?: 'en' | 'hi' }) {
+export default function QuizScreen({ onClose, language: initialLanguage = 'en', eventId, topicId: propTopicId }: { onClose: () => void, language?: 'en' | 'hi', eventId?: string, topicId?: string }) {
   const { currentUser } = useUser();
   const { isDark } = useTheme();
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(currentUser?.currentQuizIndex || 0);
+  const [currentIndex, setCurrentIndex] = useState(eventId ? 0 : (currentUser?.currentQuizIndex || 0));
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [isAnswered, setIsAnswered] = useState(false);
   const [language, setLanguage] = useState<'en' | 'hi'>(initialLanguage);
@@ -30,19 +30,68 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en' }
   const [showSettings, setShowSettings] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [history, setHistory] = useState<QuizHistory[]>([]);
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [eventData, setEventData] = useState<Event | null>(null);
+  
+  const targetTopicId = eventId ? propTopicId : (currentUser?.selectedNicheId || currentUser?.selectedTopicId);
 
   useEffect(() => {
-    if (!currentUser?.selectedTopicId) return;
+    if (eventId) {
+      const eventRef = ref(db, `events/${eventId}`);
+      onValue(eventRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.val();
+          setEventData(data);
+          
+          if (data.type === 'exam') {
+            const timeUntilEnd = Math.floor((data.endTime - Date.now()) / 1000);
+            setTimeLeft(timeUntilEnd);
+          } else if (data.hasTimer && timeLeft === null) {
+            setTimeLeft(data.timerDuration * 60);
+          }
+        }
+      });
+    }
+  }, [eventId]);
 
-    // Use query if indexing was available, but manual filter for now to be safe
-    // but we only fetch THIS topic path if it were structured by topic
-    // Since it's flat quizzes/{id}, we still fetch all but we can optimize by only 
-    // keeping ones we need and clearing others from memory immediately
-    const quizzesRef = ref(db, `topicQuizzes/${currentUser.selectedTopicId}`);
+  useEffect(() => {
+    if (timeLeft !== null && timeLeft > 0 && !showRoundComplete && !showResult) {
+      const timer = setInterval(() => {
+        setTimeLeft(prev => {
+          if (prev === null || prev <= 1) {
+            clearInterval(timer);
+            completeQuiz();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [timeLeft, showRoundComplete, showResult]);
+
+  const completeQuiz = async () => {
+    if (eventId && currentUser) {
+      await update(ref(db, `events/${eventId}/results/${currentUser.id}`), {
+        score: roundStats.correct,
+        total: quizzes.length,
+        completedAt: Date.now()
+      });
+    }
+    setShowResult(true);
+  };
+
+  useEffect(() => {
+    if (!targetTopicId) return;
+
+    const quizzesRef = ref(db, `topicQuizzes/${targetTopicId}`);
     onValue(quizzesRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
         let topicQuizzes = Object.values(data) as Quiz[];
+        
+        // If we are showing all quizzes for a topic (including children), 
+        // we'd need a more complex query, but for now we fetch only from the specific niche bucket.
         
         // Deterministic shuffle
         const seed = currentUser.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
@@ -126,13 +175,19 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en' }
       }
     };
 
-    if (newIndex >= QUESTIONS_PER_ROUND) {
-      updates.currentQuizIndex = 0;
-      updates.currentRound = (currentUser.currentRound || 1) + 1;
+    if (newIndex >= (eventId ? quizzes.length : QUESTIONS_PER_ROUND)) {
+      if (!eventId) {
+        updates.currentQuizIndex = 0;
+        updates.currentRound = (currentUser.currentRound || 1) + 1;
+      }
       
       // Delay to show result of last question
-      setTimeout(() => {
-        setShowRoundComplete(true);
+      setTimeout(async () => {
+        if (eventId) {
+          await completeQuiz();
+        } else {
+          setShowRoundComplete(true);
+        }
       }, 1500);
     } else {
       // Auto next after 2 seconds (giving time for explanation)
@@ -141,7 +196,9 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en' }
       }, 2000);
     }
 
-    await set(ref(db, `users/${currentUser.id}`), { ...currentUser, ...updates });
+    if (!eventId) {
+      await set(ref(db, `users/${currentUser.id}`), { ...currentUser, ...updates });
+    }
   };
 
   const nextQuestion = () => {
@@ -193,28 +250,28 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en' }
 
   if (loading) {
     return (
-      <div className="fixed inset-0 bg-black z-[150] flex flex-col items-center justify-center p-8">
+      <div className="fixed inset-0 bg-white dark:bg-black z-[150] flex flex-col items-center justify-center p-8 transition-colors duration-300">
         <div className="w-full space-y-6 max-w-md">
-           <Skeleton className="h-40 rounded-3xl" />
-           <Skeleton className="h-16 rounded-2xl" />
-           <Skeleton className="h-16 rounded-2xl" />
-           <Skeleton className="h-16 rounded-2xl" />
-           <Skeleton className="h-16 rounded-2xl" />
+           <Skeleton className="h-40 rounded-3xl bg-black/5 dark:bg-white/5" />
+           <Skeleton className="h-16 rounded-2xl bg-black/5 dark:bg-white/5" />
+           <Skeleton className="h-16 rounded-2xl bg-black/5 dark:bg-white/5" />
+           <Skeleton className="h-16 rounded-2xl bg-black/5 dark:bg-white/5" />
+           <Skeleton className="h-16 rounded-2xl bg-black/5 dark:bg-white/5" />
         </div>
       </div>
     );
   }
 
   if (showResult) {
-    return <WinnerLoserScreen history={history} onClose={onClose} />;
+    return <WinnerLoserScreen history={history} onClose={onClose} total={quizzes.length} />;
   }
 
   if (!quizzes.length || absoluteIndex >= quizzes.length) {
      return (
-       <div className="fixed inset-0 bg-black z-[150] flex flex-col items-center justify-center p-8 text-center">
+       <div className="fixed inset-0 bg-white dark:bg-[#050505] z-[150] flex flex-col items-center justify-center p-8 text-center transition-colors duration-300">
           <AlertCircle size={48} className="text-[#32befa] mb-4" />
-          <h2 className="text-xl font-bold mb-2 text-white">No more quizzes found</h2>
-          <p className="text-white/40 mb-6 max-w-xs">Congratulations! You've finished all available quizzes for this topic or it hasn't been populated yet.</p>
+          <h2 className="text-xl font-bold mb-2 text-black dark:text-white">No more quizzes found</h2>
+          <p className="text-black/40 dark:text-white/40 mb-6 max-w-xs">Congratulations! You've finished all available quizzes for this topic or it hasn't been populated yet.</p>
           
           <div className="flex flex-col gap-3 w-full max-w-xs">
             <button onClick={onClose} className="w-full bg-[#32befa] text-black font-black px-8 py-4 rounded-[2rem] uppercase tracking-widest text-[10px]">Return Home</button>
@@ -232,7 +289,7 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en' }
                       // No onClose() here, so it stays in the quiz
                    }
                 }}
-                className="w-full bg-white/5 text-white/40 border border-white/10 font-black px-8 py-4 rounded-[2rem] uppercase tracking-widest text-[10px] hover:bg-white/10"
+                className="w-full bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40 border border-black/10 dark:border-white/10 font-black px-8 py-4 rounded-[2rem] uppercase tracking-widest text-[10px] hover:bg-black/10 dark:hover:bg-white/10 transition-all font-mono"
               >
                 Reset & Restart Test
               </button>
@@ -252,10 +309,19 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en' }
           <button onClick={onClose} className="p-2 -ml-2 text-black/40 dark:text-white/40 hover:text-primary transition-colors"><X size={24} /></button>
           <div>
             <h1 className="text-sm font-black text-primary tracking-tighter uppercase mb-0.5">Rahee Quiz</h1>
-            <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">{currentUser?.selectedTopicId || 'General'} • R{currentUser?.currentRound || 1} • Q{currentIndex}</p>
+            <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">{targetTopicId || 'General'} • {eventId ? 'Special Event' : `R${currentUser?.currentRound || 1} • Q${currentIndex}`}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {timeLeft !== null && (
+            <div className={cn(
+              "px-3 py-1 rounded-full text-[10px] font-black tracking-widest flex items-center gap-2 border",
+              timeLeft < 60 ? "bg-red-500 text-white animate-pulse border-red-400" : "bg-red-500/10 text-red-500 border-red-500/20"
+            )}>
+              <Clock size={12} />
+              {timeLeft < 0 ? '0:00' : `${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, '0')}`}
+            </div>
+          )}
           <button 
             onClick={() => setLanguage(lang => lang === 'en' ? 'hi' : 'en')}
             className="flex items-center gap-1 px-3 py-1 bg-black/5 dark:bg-white/5 rounded-full text-[10px] font-bold border border-black/10 dark:border-white/10 uppercase hover:bg-black/10 dark:hover:bg-white/10 transition-all font-mono"
@@ -388,12 +454,12 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en' }
                   disabled={!currentUser || (currentUser.lifelines?.fiftyFifty || 0) <= 0}
                   className="flex-1 max-w-[120px] flex flex-col items-center gap-2 group disabled:opacity-30"
                 >
-                   <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-[#facc15] group-hover:bg-[#facc15]/10 group-hover:border-[#facc15]/20 group-hover:scale-110 transition-all">
+                   <div className="w-14 h-14 rounded-2xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center text-[#facc15] group-hover:bg-[#facc15]/10 group-hover:border-[#facc15]/20 group-hover:scale-110 transition-all">
                       <Zap size={24} />
                    </div>
                    <div className="flex flex-col items-center">
-                     <span className="text-[10px] font-black uppercase tracking-widest text-white/40 group-hover:text-[#facc15]">50-50</span>
-                     <span className="text-[8px] font-bold text-white/20">{currentUser?.lifelines?.fiftyFifty || 0} left</span>
+                     <span className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 group-hover:text-[#facc15]">50-50</span>
+                     <span className="text-[8px] font-bold text-black/20 dark:text-white/20">{currentUser?.lifelines?.fiftyFifty || 0} left</span>
                    </div>
                 </button>
 
@@ -402,12 +468,12 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en' }
                   disabled={!currentUser || (currentUser.lifelines?.changeQuiz || 0) <= 0}
                   className="flex-1 max-w-[120px] flex flex-col items-center gap-2 group disabled:opacity-30"
                 >
-                   <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-primary group-hover:bg-primary/10 group-hover:border-primary/20 group-hover:scale-110 transition-all">
+                   <div className="w-14 h-14 rounded-2xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center text-primary group-hover:bg-primary/10 group-hover:border-primary/20 group-hover:scale-110 transition-all">
                       <RefreshCw size={24} />
                    </div>
                    <div className="flex flex-col items-center">
-                     <span className="text-[10px] font-black uppercase tracking-widest text-white/40 group-hover:text-primary">{language === 'en' ? 'Skip' : 'छोड़ें'}</span>
-                     <span className="text-[8px] font-bold text-white/20">{currentUser?.lifelines?.changeQuiz || 0} left</span>
+                     <span className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 group-hover:text-primary">{language === 'en' ? 'Skip' : 'छोड़ें'}</span>
+                     <span className="text-[8px] font-bold text-black/20 dark:text-white/20">{currentUser?.lifelines?.changeQuiz || 0} left</span>
                    </div>
                 </button>
              </div>
