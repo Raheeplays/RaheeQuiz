@@ -6,7 +6,7 @@ import { signInAnonymously } from 'firebase/auth';
 import { useUser } from '../contexts/UserContext';
 import { User } from '../types';
 import { cn } from '../lib/utils';
-import { LogIn, UserPlus } from 'lucide-react';
+import { LogIn, UserPlus, Zap, Play } from 'lucide-react';
 // import { CLASSES, SUBJECTS } from '../constants';
 import { translations } from '../translations';
 
@@ -241,6 +241,7 @@ export default function Auth() {
           
           <div className="space-y-3">
             <button
+              type="submit"
               disabled={loading}
               className="w-full bg-[#32befa] text-black font-black p-5 rounded-2xl flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 shadow-lg shadow-[#32befa]/20"
             >
@@ -258,6 +259,27 @@ export default function Auth() {
                 </>
               )}
             </button>
+
+            {!isLogin && (
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-white/5 text-white/80 font-black p-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-white/10 transition-all active:scale-[0.98]"
+              >
+                <Zap size={18} className="text-[#32befa]" />
+                Join as Player
+              </button>
+            )}
+            {isLogin && (
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-white/5 text-white/80 font-black p-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-white/10 transition-all active:scale-[0.98]"
+              >
+                <Play size={18} className="fill-[#32befa] text-[#32befa]" />
+                Start Playing
+              </button>
+            )}
           </div>
         </form>
 
