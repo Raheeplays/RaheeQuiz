@@ -1,27 +1,62 @@
 {
   "rules": {
-    // Global Read/Write only for authenticated users (including anonymous)
-    ".read": "auth != null",
-    ".write": "auth != null",
-    
+    // Global lock for unknowns
+    ".read": false,
+    ".write": false,
+
     "users": {
       // Allow searching users for login
-      ".indexOn": ["username", "name"],
+      ".read": "auth != null",
       
-      "$user_id": {
-        // Individual user data protection
-        // For now, keeping it open to auth != null because the app fetches 'users' as a whole 
-        // to find the user match during login. 
-        // To harden this further, the app structure would need to change.
-        ".read": "auth != null",
-        ".write": "auth != null"
+      "$username": {
+        // Validation for creating/updating user records
+        // A user can create their own record if they store their auth.uid in 'firebaseUid'
+        // For updates, the stored firebaseUid must match the current auth.uid
+        // Status and Role changes are only allowed for admins
+        ".write": "auth != null && ( 
+          (!data.exists() && newData.child('firebaseUid').val() == auth.uid) || 
+          (data.child('firebaseUid').val() == auth.uid && (
+            newData.child('status').val() == data.child('status').val() && 
+            newData.child('role').val() == data.child('role').val()
+          )) || 
+          root.child('users').child(auth.uid).child('role').val() == 'admin' 
+        )"
       }
     },
-    
+
+    "topics": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'active'",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'"
+    },
+
+    "topicQuizzes": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'active'",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'"
+    },
+
+    "events": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'active'",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'"
+    },
+
+    "history": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'active'",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'active'"
+    },
+
+    "feedback": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'active'"
+    },
+
     "leaderboard": {
-      ".indexOn": ["xp"],
+      ".read": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'active'",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'active'"
+    },
+
+    "settings": {
       ".read": "auth != null",
-      ".write": "auth != null"
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'"
     }
   }
 }

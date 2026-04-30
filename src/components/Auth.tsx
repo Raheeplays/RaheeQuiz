@@ -47,10 +47,19 @@ export default function Auth() {
         if (snapshot.exists()) {
           const users = snapshot.val();
           const userMatch = Object.values(users).find(
-            (u: any) => ((u.name || '').toLowerCase() === name.toLowerCase() || (u.id || '').toLowerCase() === name.toLowerCase()) && u.password === password
+            (u: any) => (
+              (u.name || '').toLowerCase() === name.toLowerCase() || 
+              (u.username || '').toLowerCase() === name.toLowerCase() || 
+              (u.id || '').toLowerCase() === name.toLowerCase()
+            ) && u.password === password
           ) as User | undefined;
 
           if (userMatch) {
+            if (userMatch.status === 'pending') {
+              setError('Account pending admin approval. Please wait.');
+              setLoading(false);
+              return;
+            }
             if (userMatch.status === 'revoked' || userMatch.status === 'banned') {
               setError(`Your account has been ${userMatch.status}. Contact Rahee for help.`);
               setLoading(false);
@@ -71,12 +80,21 @@ export default function Auth() {
           return;
         }
         
+        const authUser = auth.currentUser;
+        if (!authUser) {
+          setError('Authentication failed');
+          setLoading(false);
+          return;
+        }
+
         const usersRef = ref(db, 'users');
         const snapshot = await get(usersRef);
         const users = snapshot.val() || {};
-        const cleanId = username.replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
+        const cleanUsername = username.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
         
-        if (users[cleanId]) {
+        const usernameTaken = Object.values(users).some((u: any) => (u.username || '').toLowerCase() === cleanUsername);
+        
+        if (usernameTaken) {
           setError('Username already taken');
           setLoading(false);
           return;
@@ -93,12 +111,20 @@ export default function Auth() {
   };
 
   const completeSignup = async () => {
-    const cleanId = username.replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
+    const authUser = auth.currentUser;
+    if (!authUser) {
+      setError('Internal error: not authenticated');
+      return;
+    }
+
+    const firebaseUid = authUser.uid;
+    const cleanUsername = username.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
     
     const newUser: any = {
-      id: cleanId,
+      id: cleanUsername,
+      firebaseUid: firebaseUid,
       name,
-      username: cleanId,
+      username: cleanUsername,
       password,
       role: 'user',
       status: 'pending',
@@ -108,54 +134,18 @@ export default function Auth() {
       currentQuizIndex: 0,
       selectedTopicId: null,
       language: 'en',
-      raheeCoins: 0,
+      raheeCoins: 100,
       lifelines: {
-        'fiftyFifty': 0,
-        'changeQuiz': 0
+        'fiftyFifty': 1,
+        'changeQuiz': 1
       },
       scores: {}
     };
 
-    await set(ref(db, `users/${cleanId}`), newUser);
+    await set(ref(db, `users/${cleanUsername}`), newUser);
     setCurrentUser(newUser as User);
   };
 
-  const handleAnonymous = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const user = await signInAnonymously(auth);
-      const guestId = `guest_${user.user.uid.slice(0, 8)}`;
-      
-      const newUser: any = {
-        id: guestId,
-        name: 'Guest Player',
-        username: guestId,
-        password: 'anonymous_nopass',
-        role: 'user',
-        status: 'active',
-        xp: 0,
-        rank: 1,
-        currentRound: 1,
-        currentQuizIndex: 0,
-        language: 'en',
-        raheeCoins: 100,
-        lifelines: {
-          'fiftyFifty': 1,
-          'changeQuiz': 1
-        },
-        scores: {}
-      };
-
-      await set(ref(db, `users/${guestId}`), newUser);
-      setCurrentUser(newUser as User);
-    } catch (err) {
-      console.error(err);
-      setError('Anonymous login failed');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
@@ -174,31 +164,28 @@ export default function Auth() {
         <form onSubmit={handleAuth} className="space-y-6">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Display Name</label>
+              <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">
+                {isLogin ? 'Player ID / Name' : 'Display Name'}
+              </label>
               <input
                 type="text"
                 value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  if (!isLogin) {
-                    setUsername(e.target.value.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, ''));
-                  }
-                }}
-                className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-[#32befa] outline-none transition-all"
-                placeholder="Enter your name"
+                onChange={(e) => setName(e.target.value)}
+                className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-[#32befa] outline-none transition-all font-bold"
+                placeholder={isLogin ? "Enter your name or ID" : "Your full name"}
               />
             </div>
             {!isLogin && (
               <div>
-                <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Username (ID)</label>
+                <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Username (UID)</label>
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#32befa] font-black">@</span>
                   <input
                     type="text"
                     value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="w-full bg-black border border-white/10 rounded-2xl p-4 pl-10 text-white focus:border-[#32befa] outline-none transition-all"
-                    placeholder="rahee_rock"
+                    onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, ''))}
+                    className="w-full bg-black border border-white/10 rounded-2xl p-4 pl-10 text-white focus:border-[#32befa] outline-none transition-all font-bold"
+                    placeholder="Rahee"
                   />
                 </div>
               </div>
@@ -233,15 +220,6 @@ export default function Auth() {
                   {t.signup}
                 </>
               )}
-            </button>
-
-            <button
-              type="button"
-              onClick={handleAnonymous}
-              disabled={loading}
-              className="w-full bg-white/5 text-white/60 font-bold p-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-white/10 transition-all active:scale-[0.98]"
-            >
-              Play as Guest (Anonymous)
             </button>
           </div>
         </form>
