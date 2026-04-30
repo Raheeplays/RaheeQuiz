@@ -1,23 +1,22 @@
 {
   "rules": {
-    // Global lock for unknowns (non-authenticated)
+    // Global lock for unknowns
     ".read": false,
     ".write": false,
 
     "users": {
-      // Allow searching users for login (anonymous auth is session-based)
+      // Allows any authenticated user (including anonymous) to read the user index for login
       ".read": "auth != null",
-      
       "$uid": {
-        // Validation for creating/updating user records
-        // A user can create their record if the key is their auth.uid
-        ".write": "auth != null && ( 
+        // Users can only write to their own record matching their Firebase UID
+        // We match by the path key ($uid) which should be the auth.uid
+        ".write": "auth != null && (
           (!data.exists() && $uid == auth.uid) || 
           ($uid == auth.uid && (
             newData.child('status').val() == data.child('status').val() && 
             newData.child('role').val() == data.child('role').val()
           )) || 
-          root.child('users').child(auth.uid).child('role').val() == 'admin' 
+          root.child('users').child(auth.uid).child('role').val() == 'admin'
         )"
       }
     },
@@ -49,7 +48,7 @@
 
     "leaderboard": {
       ".read": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'active'",
-      ".write": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'active'"
+      ".write": "auth != null"
     },
 
     "settings": {

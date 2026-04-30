@@ -23,21 +23,26 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Keep Firebase Auth session alive and ensure at least anonymous
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      console.log("[UserContext] Auth state changed. User:", user ? user.uid : "None");
       setAuthInitialized(true);
       if (!user) {
         try {
-          await signInAnonymously(auth);
+          console.log("[UserContext] No user found. Attempting anonymous sign-in...");
+          const result = await signInAnonymously(auth);
+          console.log("[UserContext] Anonymous sign-in successful. UID:", result.user.uid);
         } catch (err) {
-          console.error("Auth failed:", err);
+          console.error("[UserContext] Auth failed:", err);
         }
       }
     });
 
     if (currentUser?.id) {
+      console.log("[UserContext] Loading user data for UID:", currentUser.id);
       const userRef = ref(db, `users/${currentUser.id}`);
       const unsubscribe = onValue(userRef, (snapshot) => {
         if (snapshot.exists()) {
           const userData = snapshot.val();
+          console.log("[UserContext] User data synced from database.");
           // Ensure structure for existing users and sync to DB if missing
           let needsUpdate = false;
           const updates: any = {};

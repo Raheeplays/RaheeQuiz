@@ -34,18 +34,50 @@ export default function Auth() {
     setLoading(true);
 
     try {
-      // Ensure we are at least signed in anonymously to Firebase for RTDB access
+      console.log("[Auth] Starting authentication process...");
+      
+      // Explicitly call signInAnonymously if no user is currently authenticated
       if (!auth.currentUser) {
-        await signInAnonymously(auth);
+        console.log("[Auth] No current user found. Signing in anonymously...");
+        const result = await signInAnonymously(auth);
+        console.log("[Auth] Anonymous sign-in successful. UID:", result.user.uid);
+      } else {
+        console.log("[Auth] Already signed in. UID:", auth.currentUser.uid);
+      }
+
+      // Check auth state again to be sure
+      if (!auth.currentUser) {
+        console.error("[Auth] Authentication failed after attempt.");
+        setError('Authentication failed. Please check your internet connection.');
+        setLoading(false);
+        return;
       }
 
       if (isLogin) {
-        // Login Logic
+        console.log("[Auth] Proceeding with login lookup...");
         const usersRef = ref(db, 'users');
-        // Note: With auth != null rule, this will work now because we just signed in anonymously
-        const snapshot = await get(usersRef);
+        
+        // Log access attempt
+        console.log("[Auth] Querying /users node...");
+        let snapshot;
+        try {
+          snapshot = await get(usersRef);
+          console.log("[Auth] Database query successful.");
+        } catch (dbErr: any) {
+          console.error("[Auth] Database access denied:", dbErr.message);
+          if (dbErr.message.includes("permission_denied")) {
+            setError("Access denied. Database rules error.");
+          } else {
+            setError("Database error: " + dbErr.message);
+          }
+          setLoading(false);
+          return;
+        }
+
         if (snapshot.exists()) {
           const users = snapshot.val();
+          console.log("[Auth] Users found:", Object.keys(users).length);
+          
           const userMatch = Object.values(users).find(
             (u: any) => (
               (u.name || '').toLowerCase() === name.toLowerCase() || 
@@ -55,24 +87,31 @@ export default function Auth() {
           ) as User | undefined;
 
           if (userMatch) {
+            console.log("[Auth] Login match found for user:", userMatch.username);
+            
             if (userMatch.status === 'pending') {
+              console.warn("[Auth] Account pending approval:", userMatch.username);
               setError('Account pending admin approval. Please wait.');
               setLoading(false);
               return;
             }
             if (userMatch.status === 'revoked' || userMatch.status === 'banned') {
+              console.error("[Auth] Account restricted:", userMatch.status);
               setError(`Your account has been ${userMatch.status}. Contact Rahee for help.`);
               setLoading(false);
               return;
             }
             setCurrentUser(userMatch);
           } else {
+            console.warn("[Auth] No matching user found for provided credentials.");
             setError('Invalid credentials');
           }
         } else {
+          console.warn("[Auth] Users node is empty.");
           setError('User not found');
         }
       } else {
+        console.log("[Auth] Proceeding with signup...");
         // Signup logic
         if (!username || !name || !password) {
           setError('Please fill all fields');
@@ -81,11 +120,7 @@ export default function Auth() {
         }
         
         const authUser = auth.currentUser;
-        if (!authUser) {
-          setError('Authentication failed');
-          setLoading(false);
-          return;
-        }
+        console.log("[Auth] Current Auth User for signup:", authUser.uid);
 
         const usersRef = ref(db, 'users');
         const snapshot = await get(usersRef);
@@ -95,16 +130,19 @@ export default function Auth() {
         const usernameTaken = Object.values(users).some((u: any) => (u.username || '').toLowerCase() === cleanUsername);
         
         if (usernameTaken) {
+          console.warn("[Auth] Username already taken:", cleanUsername);
           setError('Username already taken');
           setLoading(false);
           return;
         }
         
+        console.log("[Auth] Completing signup...");
         await completeSignup();
+        console.log("[Auth] Signup complete.");
       }
-    } catch (err) {
-      console.error(err);
-      setError('Something went wrong');
+    } catch (err: any) {
+      console.error("[Auth] Critical error during authentication:", err);
+      setError('Something went wrong: ' + (err.message || 'Unknown error'));
     } finally {
       setLoading(false);
     }
