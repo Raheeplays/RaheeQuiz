@@ -7,5 +7,5 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
-  base: '/RaheeCards/', // GitHub repository ka naam yahan hona chahiye
+  base: '/RaheeQuiz/', // GitHub repository ka naam yahan hona chahiye
 })
