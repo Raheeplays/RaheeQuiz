@@ -1,21 +1,19 @@
 {
   "rules": {
-    // Global lock for unknowns
+    // Global lock for unknowns (non-authenticated)
     ".read": false,
     ".write": false,
 
     "users": {
-      // Allow searching users for login
+      // Allow searching users for login (anonymous auth is session-based)
       ".read": "auth != null",
       
-      "$username": {
+      "$uid": {
         // Validation for creating/updating user records
-        // A user can create their own record if they store their auth.uid in 'firebaseUid'
-        // For updates, the stored firebaseUid must match the current auth.uid
-        // Status and Role changes are only allowed for admins
+        // A user can create their record if the key is their auth.uid
         ".write": "auth != null && ( 
-          (!data.exists() && newData.child('firebaseUid').val() == auth.uid) || 
-          (data.child('firebaseUid').val() == auth.uid && (
+          (!data.exists() && $uid == auth.uid) || 
+          ($uid == auth.uid && (
             newData.child('status').val() == data.child('status').val() && 
             newData.child('role').val() == data.child('role').val()
           )) || 

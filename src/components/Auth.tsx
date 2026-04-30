@@ -121,8 +121,7 @@ export default function Auth() {
     const cleanUsername = username.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
     
     const newUser: any = {
-      id: cleanUsername,
-      firebaseUid: firebaseUid,
+      id: firebaseUid,
       name,
       username: cleanUsername,
       password,
@@ -142,7 +141,7 @@ export default function Auth() {
       scores: {}
     };
 
-    await set(ref(db, `users/${cleanUsername}`), newUser);
+    await set(ref(db, `users/${firebaseUid}`), newUser);
     setCurrentUser(newUser as User);
   };
 
@@ -196,8 +195,8 @@ export default function Auth() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-[#32befa] outline-none transition-all"
-                placeholder="Enter raheekey"
+                className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-[#32befa] outline-none transition-all font-bold"
+                placeholder="Enter RaheeKey"
               />
             </div>
           </div>
