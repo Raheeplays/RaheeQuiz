@@ -1,0 +1,27 @@
+{
+  "rules": {
+    // Global Read/Write only for authenticated users (including anonymous)
+    ".read": "auth != null",
+    ".write": "auth != null",
+    
+    "users": {
+      // Allow searching users for login
+      ".indexOn": ["username", "name"],
+      
+      "$user_id": {
+        // Individual user data protection
+        // For now, keeping it open to auth != null because the app fetches 'users' as a whole 
+        // to find the user match during login. 
+        // To harden this further, the app structure would need to change.
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    
+    "leaderboard": {
+      ".indexOn": ["xp"],
+      ".read": "auth != null",
+      ".write": "auth != null"
+    }
+  }
+}

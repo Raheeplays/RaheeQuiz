@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types';
-import { db } from '../firebase/config';
-import { ref, onValue, get } from 'firebase/database';
+import { db, auth } from '../firebase/config';
+import { ref, onValue, get, update } from 'firebase/database';
+import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 
 interface UserContextType {
   currentUser: User | null;
@@ -17,8 +18,21 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     return saved ? JSON.parse(saved) : null;
   });
   const [loading, setLoading] = useState(true);
+  const [authInitialized, setAuthInitialized] = useState(false);
 
   useEffect(() => {
+    // Keep Firebase Auth session alive and ensure at least anonymous
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      setAuthInitialized(true);
+      if (!user) {
+        try {
+          await signInAnonymously(auth);
+        } catch (err) {
+          console.error("Auth failed:", err);
+        }
+      }
+    });
+
     if (currentUser?.id) {
       const userRef = ref(db, `users/${currentUser.id}`);
       const unsubscribe = onValue(userRef, (snapshot) => {
@@ -57,9 +71,13 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         }
         setLoading(false);
       });
-      return () => unsubscribe();
+      return () => {
+        unsubscribeAuth();
+        unsubscribe();
+      };
     } else {
       setLoading(false);
+      return () => unsubscribeAuth();
     }
   }, [currentUser?.id]);
 
@@ -72,7 +90,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   }, [currentUser]);
 
   return (
-    <UserContext.Provider value={{ currentUser, setCurrentUser, loading }}>
+    <UserContext.Provider value={{ currentUser, setCurrentUser, loading: loading || !authInitialized }}>
       {children}
     </UserContext.Provider>
   );

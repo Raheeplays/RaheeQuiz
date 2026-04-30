@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { db } from '../firebase/config';
+import { db, auth } from '../firebase/config';
 import { ref, set, get, push } from 'firebase/database';
+import { signInAnonymously } from 'firebase/auth';
 import { useUser } from '../contexts/UserContext';
 import { User } from '../types';
 import { cn } from '../lib/utils';
@@ -25,7 +26,7 @@ export default function Auth() {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !password) {
+    if (!name || (!isLogin && !username) || !password) {
       setError('Please fill all fields');
       return;
     }
@@ -33,9 +34,15 @@ export default function Auth() {
     setLoading(true);
 
     try {
+      // Ensure we are at least signed in anonymously to Firebase for RTDB access
+      if (!auth.currentUser) {
+        await signInAnonymously(auth);
+      }
+
       if (isLogin) {
         // Login Logic
         const usersRef = ref(db, 'users');
+        // Note: With auth != null rule, this will work now because we just signed in anonymously
         const snapshot = await get(usersRef);
         if (snapshot.exists()) {
           const users = snapshot.val();
@@ -113,6 +120,43 @@ export default function Auth() {
     setCurrentUser(newUser as User);
   };
 
+  const handleAnonymous = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const user = await signInAnonymously(auth);
+      const guestId = `guest_${user.user.uid.slice(0, 8)}`;
+      
+      const newUser: any = {
+        id: guestId,
+        name: 'Guest Player',
+        username: guestId,
+        password: 'anonymous_nopass',
+        role: 'user',
+        status: 'active',
+        xp: 0,
+        rank: 1,
+        currentRound: 1,
+        currentQuizIndex: 0,
+        language: 'en',
+        raheeCoins: 100,
+        lifelines: {
+          'fiftyFifty': 1,
+          'changeQuiz': 1
+        },
+        scores: {}
+      };
+
+      await set(ref(db, `users/${guestId}`), newUser);
+      setCurrentUser(newUser as User);
+    } catch (err) {
+      console.error(err);
+      setError('Anonymous login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <motion.div
@@ -170,24 +214,36 @@ export default function Auth() {
               />
             </div>
           </div>
-          <button
-            disabled={loading}
-            className="w-full bg-[#32befa] text-black font-black p-5 rounded-2xl flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 shadow-lg shadow-[#32befa]/20"
-          >
-            {loading ? (
-              <div className="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin" />
-            ) : isLogin ? (
-              <>
-                <LogIn size={20} />
-                {t.login}
-              </>
-            ) : (
-              <>
-                <UserPlus size={20} />
-                {t.signup}
-              </>
-            )}
-          </button>
+          
+          <div className="space-y-3">
+            <button
+              disabled={loading}
+              className="w-full bg-[#32befa] text-black font-black p-5 rounded-2xl flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 shadow-lg shadow-[#32befa]/20"
+            >
+              {loading ? (
+                <div className="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin" />
+              ) : isLogin ? (
+                <>
+                  <LogIn size={20} />
+                  {t.login}
+                </>
+              ) : (
+                <>
+                  <UserPlus size={20} />
+                  {t.signup}
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleAnonymous}
+              disabled={loading}
+              className="w-full bg-white/5 text-white/60 font-bold p-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-white/10 transition-all active:scale-[0.98]"
+            >
+              Play as Guest (Anonymous)
+            </button>
+          </div>
         </form>
 
         <div className="mt-6 text-center">

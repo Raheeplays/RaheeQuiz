@@ -56,6 +56,20 @@ export interface Event {
   certificateSubtitle?: string;
   certificateFooter?: string;
   certificateColor?: string;
+  certificateLayout?: {
+    borderWidth?: number;
+    headerFontSize?: number;
+    headerStyle?: 'normal' | 'bold' | 'italic' | 'bolditalic';
+    subtitleFontSize?: number;
+    subtitleStyle?: 'normal' | 'bold' | 'italic' | 'bolditalic';
+    nameFontSize?: number;
+    nameStyle?: 'normal' | 'bold' | 'italic' | 'bolditalic';
+    bodyFontSize?: number;
+    footerFontSize?: number;
+    footerStyle?: 'normal' | 'bold' | 'italic' | 'bolditalic';
+    showBackgroundPattern?: boolean;
+    borderPadding?: number;
+  };
   results?: {
     [userId: string]: {
       score: number;

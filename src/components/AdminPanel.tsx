@@ -11,6 +11,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { SKINS, Event } from '../types';
 import { CLASSES, SUBJECTS } from '../constants';
 
+import { generateCertificate } from '../utils/certificate';
+import CertificatePreview from './CertificatePreview';
+
 export default function AdminPanel() {
   const { isDark, setIsDark } = useTheme();
   const [activeSubTab, setActiveSubTab] = useState('users');
@@ -33,6 +36,12 @@ export default function AdminPanel() {
   const [quizTopicPath, setQuizTopicPath] = useState<Topic[]>([]); 
   const [newNode, setNewNode] = useState({ id: '', name: '', description: '' });
   const [nodeEditMode, setNodeEditMode] = useState<string | null>(null);
+  const [certPreviewData, setCertPreviewData] = useState({
+    name: 'Student Name',
+    topic: 'Quiz Mastery',
+    score: 100,
+    total: 100,
+  });
   
   // Create state
   const [newTopic, setNewTopic] = useState({
@@ -51,7 +60,21 @@ export default function AdminPanel() {
     certificateTitle: 'CERTIFICATE OF ACHIEVEMENT',
     certificateSubtitle: 'This is to certify that',
     certificateFooter: 'Rahee Quiz Team',
-    certificateColor: '#32befa'
+    certificateColor: '#32befa',
+    certificateLayout: {
+      borderWidth: 2,
+      headerFontSize: 40,
+      headerStyle: 'bold' as const,
+      subtitleFontSize: 18,
+      subtitleStyle: 'normal' as const,
+      nameFontSize: 32,
+      nameStyle: 'bold italic' as const,
+      bodyFontSize: 16,
+      footerFontSize: 14,
+      footerStyle: 'bold' as const,
+      showBackgroundPattern: true,
+      borderPadding: 10
+    }
   });
   const [newQuiz, setNewQuiz] = useState({
     questionEn: '', questionHi: '',
@@ -1359,6 +1382,7 @@ export default function AdminPanel() {
             certificateSubtitle: newEvent.certificateSubtitle,
             certificateFooter: newEvent.certificateFooter,
             certificateColor: newEvent.certificateColor || '#32befa',
+            certificateLayout: newEvent.certificateLayout,
             createdAt: Date.now()
           };
           
@@ -1366,9 +1390,39 @@ export default function AdminPanel() {
           setNewEvent({ 
             title: '', description: '', topicId: '', startTime: '', durationHours: '1', type: 'test',
             hasTimer: false, timerDuration: '30', certificateTitle: 'CERTIFICATE OF ACHIEVEMENT',
-            certificateSubtitle: 'This is to certify that', certificateFooter: 'Rahee Quiz Team'
+            certificateSubtitle: 'This is to certify that', certificateFooter: 'Rahee Quiz Team',
+            certificateColor: '#32befa',
+            certificateLayout: {
+              borderWidth: 2,
+              headerFontSize: 40,
+              headerStyle: 'bold',
+              subtitleFontSize: 18,
+              subtitleStyle: 'normal',
+              nameFontSize: 32,
+              nameStyle: 'bold italic',
+              bodyFontSize: 16,
+              footerFontSize: 14,
+              footerStyle: 'bold',
+              showBackgroundPattern: true,
+              borderPadding: 10
+            }
           });
           alert('Event created!');
+        };
+
+        const previewCertificate = () => {
+          generateCertificate({
+            userName: 'Sample Name',
+            score: 9,
+            total: 10,
+            date: new Date().toLocaleDateString(),
+            topicName: 'Sample Topic Name',
+            certificateTitle: newEvent.certificateTitle,
+            certificateSubtitle: newEvent.certificateSubtitle,
+            certificateFooter: newEvent.certificateFooter,
+            certificateColor: newEvent.certificateColor,
+            certificateLayout: newEvent.certificateLayout
+          });
         };
 
         return (
@@ -1440,7 +1494,7 @@ export default function AdminPanel() {
                                         {opt.name}
                                      </button>
                                   ));
-                               })()}
+                                })()}
                             </div>
                          </div>
                       </div>
@@ -1493,41 +1547,188 @@ export default function AdminPanel() {
                              <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Timer Duration (Minutes)</label>
                              <input 
                                type="number"
-                               value={newEvent.timerDuration}
-                               onChange={e => setNewEvent({...newEvent, timerDuration: e.target.value})}
-                               className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary"
+                                value={newEvent.timerDuration}
+                                onChange={e => setNewEvent({...newEvent, timerDuration: e.target.value})}
+                                className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary"
                              />
                           </div>
                         )}
 
-                        <div className="space-y-3">
-                           <span className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 px-2 block mb-2">Certificate Customization</span>
-                           <input 
-                             type="text"
-                             value={newEvent.certificateTitle}
-                             onChange={e => setNewEvent({...newEvent, certificateTitle: e.target.value})}
-                             placeholder="Certificate Header"
-                             className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-xl p-3 text-xs text-black dark:text-white font-bold"
-                           />
-                           <input 
-                             type="text"
-                             value={newEvent.certificateSubtitle}
-                             onChange={e => setNewEvent({...newEvent, certificateSubtitle: e.target.value})}
-                             placeholder="Certificate Subtitle"
-                             className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-xl p-3 text-xs text-black dark:text-white font-bold"
-                           />
-                           <input 
-                             type="text"
-                             value={newEvent.certificateFooter}
-                             onChange={e => setNewEvent({...newEvent, certificateFooter: e.target.value})}
-                             placeholder="Signature/Footer Name"
-                             className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-xl p-3 text-xs text-black dark:text-white font-bold"
-                           />
+                        <div className="space-y-4 pt-4 border-t border-black/5 dark:border-white/5">
+                           <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 px-2 block">Certificate Editor</span>
+                              <button 
+                                onClick={previewCertificate}
+                                className="px-3 py-1 bg-primary/10 text-primary rounded-lg text-[10px] font-black uppercase hover:bg-primary hover:text-black transition-all"
+                              >
+                                Preview Layout
+                              </button>
+                           </div>
+                           
+                           <div className="space-y-2">
+                              <label className="text-[8px] font-black uppercase text-black/20 dark:text-white/20 ml-2">Labels</label>
+                              <div className="grid grid-cols-1 gap-2">
+                                <input 
+                                  type="text"
+                                  value={newEvent.certificateTitle}
+                                  onChange={e => setNewEvent({...newEvent, certificateTitle: e.target.value})}
+                                  placeholder="Header (e.g. CERTIFICATE OF EXCELLENCE)"
+                                  className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-xl p-3 text-xs text-black dark:text-white font-bold"
+                                />
+                                <input 
+                                  type="text"
+                                  value={newEvent.certificateSubtitle}
+                                  onChange={e => setNewEvent({...newEvent, certificateSubtitle: e.target.value})}
+                                  placeholder="Subtitle (This is to certify that)"
+                                  className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-xl p-3 text-xs text-black dark:text-white font-bold"
+                                />
+                                <input 
+                                  type="text"
+                                  value={newEvent.certificateFooter}
+                                  onChange={e => setNewEvent({...newEvent, certificateFooter: e.target.value})}
+                                  placeholder="Footer / Authorized Signature Name"
+                                  className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-xl p-3 text-xs text-black dark:text-white font-bold"
+                                />
+                                <div className="flex items-center gap-2 px-2">
+                                  <label className="text-[10px] font-bold text-black/40 dark:text-white/40">Theme Color:</label>
+                                  <input 
+                                    type="color" 
+                                    value={newEvent.certificateColor} 
+                                    onChange={e => setNewEvent({...newEvent, certificateColor: e.target.value})}
+                                    className="w-8 h-8 rounded-lg cursor-pointer bg-transparent border-none"
+                                  />
+                                </div>
+                              </div>
+                           </div>
+
+                           <div className="space-y-3 bg-black/5 dark:bg-white/5 p-4 rounded-2xl">
+                              <p className="text-[8px] font-black uppercase text-black/30 dark:text-white/30 tracking-widest mb-2">Detailed Layout Options</p>
+                              
+                              <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-bold text-black/40 dark:text-white/40">Border Width ({newEvent.certificateLayout?.borderWidth}mm)</label>
+                                  <input 
+                                    type="range" min="0.5" max="10" step="0.5"
+                                    value={newEvent.certificateLayout?.borderWidth}
+                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, borderWidth: parseFloat(e.target.value) }})}
+                                    className="w-full accent-primary"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-bold text-black/40 dark:text-white/40">Border Padding ({newEvent.certificateLayout?.borderPadding}mm)</label>
+                                  <input 
+                                    type="range" min="0" max="30" step="1"
+                                    value={newEvent.certificateLayout?.borderPadding}
+                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, borderPadding: parseInt(e.target.value) }})}
+                                    className="w-full accent-primary"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-bold text-black/40 dark:text-white/40">Header Size ({newEvent.certificateLayout?.headerFontSize}px)</label>
+                                  <input 
+                                    type="range" min="20" max="80" step="1"
+                                    value={newEvent.certificateLayout?.headerFontSize}
+                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, headerFontSize: parseInt(e.target.value) }})}
+                                    className="w-full accent-primary"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-bold text-black/40 dark:text-white/40">Name Size ({newEvent.certificateLayout?.nameFontSize}px)</label>
+                                  <input 
+                                    type="range" min="20" max="60" step="1"
+                                    value={newEvent.certificateLayout?.nameFontSize}
+                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, nameFontSize: parseInt(e.target.value) }})}
+                                    className="w-full accent-primary"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="flex items-center justify-between px-1">
+                                <span className="text-[9px] font-bold text-black/40 dark:text-white/40">Show Background Pattern</span>
+                                <input 
+                                  type="checkbox" 
+                                  checked={newEvent.certificateLayout?.showBackgroundPattern}
+                                  onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, showBackgroundPattern: e.target.checked }})}
+                                  className="accent-primary"
+                                />
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-bold text-black/40 dark:text-white/40">Header Style</label>
+                                  <select 
+                                    value={newEvent.certificateLayout?.headerStyle}
+                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, headerStyle: e.target.value as any }})}
+                                    className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-2 rounded-lg text-[10px]"
+                                  >
+                                    <option value="normal">Normal</option>
+                                    <option value="bold">Bold</option>
+                                    <option value="italic">Italic</option>
+                                    <option value="bolditalic">Bold Italic</option>
+                                  </select>
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-bold text-black/40 dark:text-white/40">Name Style</label>
+                                  <select 
+                                    value={newEvent.certificateLayout?.nameStyle}
+                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, nameStyle: e.target.value as any }})}
+                                    className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-2 rounded-lg text-[10px]"
+                                  >
+                                    <option value="normal">Normal</option>
+                                    <option value="bold">Bold</option>
+                                    <option value="italic">Italic</option>
+                                    <option value="bolditalic">Bold Italic</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-bold text-black/40 dark:text-white/40">Subtitle Style</label>
+                                  <select 
+                                    value={newEvent.certificateLayout?.subtitleStyle}
+                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, subtitleStyle: e.target.value as any }})}
+                                    className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-2 rounded-lg text-[10px]"
+                                  >
+                                    <option value="normal">Normal</option>
+                                    <option value="bold">Bold</option>
+                                    <option value="italic">Italic</option>
+                                    <option value="bolditalic">Bold Italic</option>
+                                  </select>
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-bold text-black/40 dark:text-white/40">Footer Style</label>
+                                  <select 
+                                    value={newEvent.certificateLayout?.footerStyle}
+                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, footerStyle: e.target.value as any }})}
+                                    className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-2 rounded-lg text-[10px]"
+                                  >
+                                    <option value="normal">Normal</option>
+                                    <option value="bold">Bold</option>
+                                    <option value="italic">Italic</option>
+                                    <option value="bolditalic">Bold Italic</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-black/40 dark:text-white/40">Body Font Size ({newEvent.certificateLayout?.bodyFontSize}px)</label>
+                                <input 
+                                  type="range" min="8" max="32" step="1"
+                                  value={newEvent.certificateLayout?.bodyFontSize}
+                                  onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, bodyFontSize: parseInt(e.target.value) }})}
+                                  className="w-full accent-primary"
+                                />
+                              </div>
+                           </div>
                         </div>
                       </div>
 
                       <button 
-                        onClick={addEvent}
+                         onClick={addEvent}
                         className="w-full bg-primary text-black font-black uppercase tracking-widest py-4 rounded-2xl mt-2 shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
                       >
                         Launch Event
@@ -1567,6 +1768,304 @@ export default function AdminPanel() {
              </div>
           </div>
         );
+      case 'certificate': {
+        const generateStandalone = () => {
+          generateCertificate({
+            userName: certPreviewData.name,
+            score: certPreviewData.score,
+            total: certPreviewData.total,
+            date: new Date().toLocaleDateString(),
+            topicName: certPreviewData.topic,
+            certificateTitle: newEvent.certificateTitle,
+            certificateSubtitle: newEvent.certificateSubtitle,
+            certificateFooter: newEvent.certificateFooter,
+            certificateColor: newEvent.certificateColor,
+            certificateLayout: newEvent.certificateLayout
+          });
+        };
+
+        return (
+          <div className="space-y-8 pb-32">
+             <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[2.5rem] border border-black/5 dark:border-white/5">
+                <h3 className="text-2xl font-black mb-6 uppercase tracking-tighter text-black dark:text-white flex items-center gap-3">
+                   <Shield className="text-primary" size={32} />
+                   Professional Certificate Editor
+                </h3>
+
+                {/* Live Preview Section */}
+                <div className="mb-10 sticky top-0 z-20 bg-black/5 dark:bg-[#111] py-4 rounded-3xl border border-black/5 dark:border-white/5 shadow-2xl backdrop-blur-xl">
+                   <h4 className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 tracking-[0.2em] mb-4 text-center">Live Production Preview</h4>
+                   <div className="max-w-2xl mx-auto px-4">
+                      <CertificatePreview 
+                        data={{
+                          userName: certPreviewData.name,
+                          score: certPreviewData.score,
+                          total: certPreviewData.total,
+                          date: new Date().toLocaleDateString(),
+                          topicName: certPreviewData.topic,
+                          certificateTitle: newEvent.certificateTitle,
+                          certificateSubtitle: newEvent.certificateSubtitle,
+                          certificateFooter: newEvent.certificateFooter,
+                          certificateColor: newEvent.certificateColor,
+                          certificateLayout: newEvent.certificateLayout
+                        }} 
+                      />
+                   </div>
+                </div>
+                
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                   {/* Left Col: Preview Content */}
+                   <div className="space-y-6">
+                      <div className="bg-white dark:bg-black/40 border border-black/5 dark:border-white/5 p-6 rounded-3xl space-y-4">
+                         <h4 className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 tracking-widest px-2">Preview Content</h4>
+                         <div className="space-y-3">
+                            <div className="space-y-1">
+                               <label className="text-[10px] font-bold text-black/40 dark:text-white/40 ml-2">Recipient Name</label>
+                               <input 
+                                 type="text"
+                                 value={certPreviewData.name}
+                                 onChange={e => setCertPreviewData({...certPreviewData, name: e.target.value})}
+                                 className="w-full bg-black/5 dark:bg-black border border-black/10 dark:border-white/10 rounded-xl p-3 text-sm font-bold"
+                               />
+                            </div>
+                            <div className="space-y-1">
+                               <label className="text-[10px] font-bold text-black/40 dark:text-white/40 ml-2">Topic Name</label>
+                               <input 
+                                 type="text"
+                                 value={certPreviewData.topic}
+                                 onChange={e => setCertPreviewData({...certPreviewData, topic: e.target.value})}
+                                 className="w-full bg-black/5 dark:bg-black border border-black/10 dark:border-white/10 rounded-xl p-3 text-sm font-bold"
+                               />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                               <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-black/40 dark:text-white/40 ml-2">Score</label>
+                                  <input 
+                                    type="number"
+                                    value={certPreviewData.score}
+                                    onChange={e => setCertPreviewData({...certPreviewData, score: parseInt(e.target.value)})}
+                                    className="w-full bg-black/5 dark:bg-black border border-black/10 dark:border-white/10 rounded-xl p-3 text-sm font-bold"
+                                  />
+                               </div>
+                               <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-black/40 dark:text-white/40 ml-2">Total</label>
+                                  <input 
+                                    type="number"
+                                    value={certPreviewData.total}
+                                    onChange={e => setCertPreviewData({...certPreviewData, total: parseInt(e.target.value)})}
+                                    className="w-full bg-black/5 dark:bg-black border border-black/10 dark:border-white/10 rounded-xl p-3 text-sm font-bold"
+                                  />
+                               </div>
+                            </div>
+                         </div>
+                      </div>
+
+                      <div className="bg-primary/5 border border-primary/10 p-6 rounded-3xl space-y-4">
+                         <h4 className="text-[10px] font-black uppercase text-primary tracking-widest px-2">Master Labels</h4>
+                         <div className="space-y-3">
+                            <input 
+                              type="text"
+                              value={newEvent.certificateTitle}
+                              onChange={e => setNewEvent({...newEvent, certificateTitle: e.target.value})}
+                              placeholder="Header Title"
+                              className="w-full bg-white dark:bg-black/60 border border-primary/20 rounded-xl p-3 text-sm font-bold"
+                            />
+                            <input 
+                              type="text"
+                              value={newEvent.certificateSubtitle}
+                              onChange={e => setNewEvent({...newEvent, certificateSubtitle: e.target.value})}
+                              placeholder="Subtitle"
+                              className="w-full bg-white dark:bg-black/60 border border-primary/20 rounded-xl p-3 text-sm font-bold"
+                            />
+                            <input 
+                              type="text"
+                              value={newEvent.certificateFooter}
+                              onChange={e => setNewEvent({...newEvent, certificateFooter: e.target.value})}
+                              placeholder="Authorized Signature"
+                              className="w-full bg-white dark:bg-black/60 border border-primary/20 rounded-xl p-3 text-sm font-bold"
+                            />
+                            <div className="flex items-center gap-3 px-2">
+                               <span className="text-[10px] font-black uppercase text-primary tracking-widest">Theme Color</span>
+                               <input 
+                                 type="color"
+                                 value={newEvent.certificateColor}
+                                 onChange={e => setNewEvent({...newEvent, certificateColor: e.target.value})}
+                                 className="w-10 h-10 rounded-xl cursor-pointer bg-transparent border-none"
+                               />
+                            </div>
+                         </div>
+                      </div>
+
+                      <button 
+                        onClick={generateStandalone}
+                        className="w-full bg-primary text-black font-black uppercase tracking-widest py-6 rounded-3xl shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all text-lg"
+                      >
+                         Generate & Export Certificate
+                      </button>
+                   </div>
+
+                   {/* Right Col: Layout Controls */}
+                   <div className="bg-black/5 dark:bg-black/40 border border-black/5 dark:border-white/5 p-8 rounded-[2.5rem] space-y-8">
+                      <div>
+                         <h4 className="text-xs font-black uppercase tracking-widest text-black/60 dark:text-white/60 mb-6 flex items-center gap-2">
+                            <Palette size={16} className="text-primary" />
+                            Layout Configuration
+                         </h4>
+                         
+                         <div className="space-y-6">
+                            <div className="grid grid-cols-2 gap-6">
+                               <div className="space-y-2">
+                                  <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40">Border Thickness ({newEvent.certificateLayout?.borderWidth}mm)</label>
+                                  <input 
+                                    type="range" min="0.5" max="15" step="0.5"
+                                    value={newEvent.certificateLayout?.borderWidth}
+                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, borderWidth: parseFloat(e.target.value) }})}
+                                    className="w-full accent-primary"
+                                  />
+                               </div>
+                               <div className="space-y-2">
+                                  <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40">Edge Padding ({newEvent.certificateLayout?.borderPadding}mm)</label>
+                                  <input 
+                                    type="range" min="0" max="40" step="1"
+                                    value={newEvent.certificateLayout?.borderPadding}
+                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, borderPadding: parseInt(e.target.value) }})}
+                                    className="w-full accent-primary"
+                                  />
+                               </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-6 pt-4 border-t border-black/5 dark:border-white/5">
+                               <div className="space-y-2">
+                                  <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40">Header Font Size ({newEvent.certificateLayout?.headerFontSize}px)</label>
+                                  <input 
+                                    type="range" min="20" max="100" step="1"
+                                    value={newEvent.certificateLayout?.headerFontSize}
+                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, headerFontSize: parseInt(e.target.value) }})}
+                                    className="w-full accent-primary"
+                                  />
+                               </div>
+                               <div className="space-y-2">
+                                  <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40">Name Font Size ({newEvent.certificateLayout?.nameFontSize}px)</label>
+                                  <input 
+                                    type="range" min="20" max="100" step="1"
+                                    value={newEvent.certificateLayout?.nameFontSize}
+                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, nameFontSize: parseInt(e.target.value) }})}
+                                    className="w-full accent-primary"
+                                  />
+                               </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-6">
+                               <div className="space-y-2">
+                                  <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40">Subtitle Size ({newEvent.certificateLayout?.subtitleFontSize}px)</label>
+                                  <input 
+                                    type="range" min="10" max="40" step="1"
+                                    value={newEvent.certificateLayout?.subtitleFontSize}
+                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, subtitleFontSize: parseInt(e.target.value) }})}
+                                    className="w-full accent-primary"
+                                  />
+                               </div>
+                               <div className="space-y-2">
+                                  <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40">Footer Size ({newEvent.certificateLayout?.footerFontSize}px)</label>
+                                  <input 
+                                    type="range" min="10" max="40" step="1"
+                                    value={newEvent.certificateLayout?.footerFontSize}
+                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, footerFontSize: parseInt(e.target.value) }})}
+                                    className="w-full accent-primary"
+                                  />
+                               </div>
+                            </div>
+
+                            <div className="space-y-4 pt-4 border-t border-black/5 dark:border-white/5">
+                               <div className="grid grid-cols-2 gap-4">
+                                  <div className="space-y-1">
+                                     <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40">Header Style</label>
+                                     <select 
+                                       value={newEvent.certificateLayout?.headerStyle}
+                                       onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, headerStyle: e.target.value as any }})}
+                                       className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-3 rounded-xl text-xs font-bold"
+                                     >
+                                        <option value="normal">Normal</option>
+                                        <option value="bold">Bold</option>
+                                        <option value="italic">Italic</option>
+                                        <option value="bolditalic">Bold Italic</option>
+                                     </select>
+                                  </div>
+                                  <div className="space-y-1">
+                                     <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40">Name Style</label>
+                                     <select 
+                                       value={newEvent.certificateLayout?.nameStyle}
+                                       onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, nameStyle: e.target.value as any }})}
+                                       className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-3 rounded-xl text-xs font-bold"
+                                     >
+                                        <option value="normal">Normal</option>
+                                        <option value="bold">Bold</option>
+                                        <option value="italic">Italic</option>
+                                        <option value="bolditalic">Bold Italic</option>
+                                     </select>
+                                  </div>
+                               </div>
+
+                               <div className="grid grid-cols-2 gap-4">
+                                  <div className="space-y-1">
+                                     <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40">Subtitle Style</label>
+                                     <select 
+                                       value={newEvent.certificateLayout?.subtitleStyle}
+                                       onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, subtitleStyle: e.target.value as any }})}
+                                       className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-3 rounded-xl text-xs font-bold"
+                                     >
+                                        <option value="normal">Normal</option>
+                                        <option value="bold">Bold</option>
+                                        <option value="italic">Italic</option>
+                                        <option value="bolditalic">Bold Italic</option>
+                                     </select>
+                                  </div>
+                                  <div className="space-y-1">
+                                     <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40">Footer Style</label>
+                                     <select 
+                                       value={newEvent.certificateLayout?.footerStyle}
+                                       onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, footerStyle: e.target.value as any }})}
+                                       className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-3 rounded-xl text-xs font-bold"
+                                     >
+                                        <option value="normal">Normal</option>
+                                        <option value="bold">Bold</option>
+                                        <option value="italic">Italic</option>
+                                        <option value="bolditalic">Bold Italic</option>
+                                     </select>
+                                  </div>
+                               </div>
+
+                               <div className="space-y-2">
+                                  <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40">Body Font Size ({newEvent.certificateLayout?.bodyFontSize}px)</label>
+                                  <input 
+                                    type="range" min="8" max="32" step="1"
+                                    value={newEvent.certificateLayout?.bodyFontSize}
+                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, bodyFontSize: parseInt(e.target.value) }})}
+                                    className="w-full accent-primary"
+                                  />
+                               </div>
+
+                               <div className="flex items-center justify-between p-4 bg-white dark:bg-black/20 rounded-2xl border border-black/5 dark:border-white/5">
+                                  <span className="text-xs font-black uppercase text-black/40 dark:text-white/40 tracking-widest">Background Pattern</span>
+                                  <label className="relative inline-flex items-center cursor-pointer">
+                                     <input 
+                                       type="checkbox" 
+                                       className="sr-only peer" 
+                                       checked={newEvent.certificateLayout?.showBackgroundPattern}
+                                       onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, showBackgroundPattern: e.target.checked }})}
+                                     />
+                                     <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+                                  </label>
+                               </div>
+                            </div>
+                         </div>
+                      </div>
+                   </div>
+                </div>
+             </div>
+          </div>
+        );
+      }
       case 'quizzes':
         return (
           <div className="space-y-8 pb-32">
@@ -1987,6 +2486,7 @@ export default function AdminPanel() {
              {[
                { id: 'users', label: 'Players', icon: Users },
                { id: 'events', label: 'Events', icon: Calendar },
+               { id: 'certificate', label: 'Cert Editor', icon: Shield },
                { id: 'topics', label: 'Topics', icon: HelpCircle },
                { id: 'quizzes', label: 'Quizzes', icon: FileText },
                { id: 'bots', label: 'Bots', icon: Bot },
