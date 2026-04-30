@@ -5,6 +5,7 @@ import { User, Topic, Quiz, Feedback, QuizHistory } from '../types';
 import ScoreCard from './ScoreCard';
 import { Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2, Coins, TrendingUp, Calendar, Sun, Moon, Star } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
+import { useDialog } from '../contexts/DialogContext';
 import { cn } from '../lib/utils';
 import Papa from 'papaparse';
 import { motion, AnimatePresence } from 'motion/react';
@@ -16,6 +17,7 @@ import CertificatePreview from './CertificatePreview';
 
 export default function AdminPanel() {
   const { isDark, setIsDark } = useTheme();
+  const { alert, confirm } = useDialog();
   const [activeSubTab, setActiveSubTab] = useState('users');
   const [users, setUsers] = useState<User[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -157,17 +159,31 @@ export default function AdminPanel() {
 
   const deleteHistoryItem = async (historyId: string) => {
     if (!historyId) return;
-    if (!confirm("Delete this history entry?")) return;
+    const verified = await confirm({
+      title: "Delete History",
+      description: "Are you sure you want to delete this history entry?",
+      type: 'confirm'
+    });
+    if (!verified) return;
     try {
       await remove(ref(db, `history/${historyId}`));
     } catch (error) {
       console.error("Failed to delete history item:", error);
-      alert('Failed to delete history item.');
+      await alert({
+        title: "Error",
+        description: 'Failed to delete history item.',
+        type: 'error'
+      });
     }
   };
 
   const clearUserHistory = async (userId: string) => {
-    if (!confirm("Are you sure you want to delete ALL history for this player? This cannot be undone.")) return;
+    const verified = await confirm({
+      title: "Clear All History",
+      description: "Are you sure you want to delete ALL history for this player? This cannot be undone.",
+      type: 'confirm'
+    });
+    if (!verified) return;
     
     try {
       const historyRef = ref(db, 'history');
@@ -183,14 +199,26 @@ export default function AdminPanel() {
         
         if (Object.keys(updates).length > 0) {
           await update(historyRef, updates);
-          alert('Player history cleared!');
+          await alert({
+            title: "Success",
+            description: 'Player history cleared!',
+            type: 'success'
+          });
         } else {
-          alert('No history found to clear.');
+          await alert({
+            title: "Info",
+            description: 'No history found to clear.',
+            type: 'info'
+          });
         }
       }
     } catch (error) {
       console.error("Failed to clear history:", error);
-      alert('Failed to clear player history.');
+      await alert({
+        title: "Error",
+        description: 'Failed to clear player history.',
+        type: 'error'
+      });
     }
   };
 
@@ -223,7 +251,13 @@ export default function AdminPanel() {
     setNewTopic({ name: '' });
     setEditingTopicId(null);
     setTopicPath([]);
-    if (editingTopicId) alert('Topic updated!');
+    if (editingTopicId) {
+      await alert({
+        title: "Success",
+        description: 'Topic updated!',
+        type: 'success'
+      });
+    }
   };
 
   const getCurrentNode = () => {
@@ -271,7 +305,12 @@ export default function AdminPanel() {
 
   const removeNode = async (nodeId: string) => {
     if (!editingTopicId) return;
-    if (!confirm("Remove this child node and all its descendants?")) return;
+    const verified = await confirm({
+      title: "Remove Node",
+      description: "Remove this child node and all its descendants?",
+      type: 'confirm'
+    });
+    if (!verified) return;
     
     let dbPath = `topics/${editingTopicId}`;
     topicPath.forEach(pid => {
@@ -290,7 +329,12 @@ export default function AdminPanel() {
   };
 
   const reindexQuizzes = async () => {
-    if (!confirm("This will permanently rename all Quiz IDs to 1, 2, 3... Proceed?")) return;
+    const verified = await confirm({
+      title: "Re-index Quizzes",
+      description: "This will permanently rename all Quiz IDs to 1, 2, 3... Proceed?",
+      type: 'confirm'
+    });
+    if (!verified) return;
     
     try {
       const allQuizzes = [...quizzes];
@@ -305,10 +349,18 @@ export default function AdminPanel() {
 
       // We overwrite the entire quizzes node to ensure clean numeric IDs
       await set(ref(db, 'quizzes'), newQuizzes);
-      alert("Quizzes re-indexed successfully to sequential numbers!");
+      await alert({
+        title: "Success",
+        description: "Quizzes re-indexed successfully to sequential numbers!",
+        type: 'success'
+      });
     } catch (error) {
       console.error("Re-index failed:", error);
-      alert("Failed to re-index quizzes.");
+      await alert({
+        title: "Error",
+        description: "Failed to re-index quizzes.",
+        type: 'error'
+      });
     }
   };
 
@@ -345,7 +397,13 @@ export default function AdminPanel() {
       explanationEn: '', explanationHi: ''
     });
     setEditingQuizId(null);
-    if (editingQuizId) alert('Quiz updated!');
+    if (editingQuizId) {
+      await alert({
+        title: "Success",
+        description: 'Quiz updated!',
+        type: 'success'
+      });
+    }
   };
 
   const editQuizInForm = (q: Quiz) => {
@@ -372,7 +430,7 @@ export default function AdminPanel() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const loadAllForBulkEdit = () => {
+  const loadAllForBulkEdit = async () => {
     const csvContent = quizzes.map(q => {
       const parts = [
         q.id,
@@ -396,7 +454,11 @@ export default function AdminPanel() {
       return parts.join(', ');
     }).join('\n');
     setBulkText(csvContent);
-    alert('Loaded all quizzes. Format: ID, Q_EN, Q_HI, O1_EN, O1_HI, O2_EN, O2_HI, O3_EN, O3_HI, O4_EN, O4_HI, Correct, Topic, SubTopic, SubSubTopic, Exp_EN, Exp_HI');
+    await alert({
+      title: "Data Loaded",
+      description: 'Loaded all quizzes. Format: ID, Q_EN, Q_HI, O1_EN, O1_HI, O2_EN, O2_HI, O3_EN, O3_HI, O4_EN, O4_HI, Correct, Topic, SubTopic, SubSubTopic, Exp_EN, Exp_HI',
+      type: 'info'
+    });
   };
 
   const addBulkQuizzes = async () => {
@@ -449,7 +511,11 @@ export default function AdminPanel() {
       }
     }
     setBulkText('');
-    alert(`Successfully processed ${count} quizzes!`);
+    await alert({
+      title: "Bulk Process Complete",
+      description: `Successfully processed ${count} quizzes!`,
+      type: 'success'
+    });
   };
 
   const handleCsvUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'quizzes' | 'bots') => {
@@ -532,7 +598,11 @@ export default function AdminPanel() {
             await set(bRef, bot);
           }
         }
-        alert(`Imported ${results.data.length} items`);
+        await alert({
+          title: "Import Complete",
+          description: `Imported ${results.data.length} items`,
+          type: 'success'
+        });
       }
     });
   };
@@ -545,7 +615,12 @@ export default function AdminPanel() {
   };
 
   const fullResetPlayer = async (userId: string) => {
-    if (!confirm("Are you sure? This will reset ALL stats (XP, Rank, Round, Progress) to zero. This cannot be undone.")) return;
+    const verified = await confirm({
+      title: "Master Reset",
+      description: "Are you sure? This will reset ALL stats (XP, Rank, Round, Progress) to zero. This cannot be undone.",
+      type: 'error'
+    });
+    if (!verified) return;
     await update(ref(db, `users/${userId}`), {
       xp: 0,
       rank: 1,
@@ -553,7 +628,11 @@ export default function AdminPanel() {
       currentQuizIndex: 0,
       scores: {}
     });
-    alert('Player data fully reset!');
+    await alert({
+      title: "Reset Successful",
+      description: 'Player data fully reset!',
+      type: 'success'
+    });
   };
 
   const renameUser = async (u: User, newName: string, newId: string) => {
@@ -561,7 +640,11 @@ export default function AdminPanel() {
     const cleanId = newId.replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
     
     if (cleanId !== u.id && users.some(user => user.id === cleanId)) {
-        alert('This ID is already taken');
+        await alert({
+          title: "Error",
+          description: 'This ID is already taken',
+          type: 'error'
+        });
         return;
     }
 
@@ -586,7 +669,11 @@ export default function AdminPanel() {
     }
     
     setSelectedUser(null);
-    alert('User updated successfully');
+    await alert({
+      title: "Success",
+      description: 'User updated successfully',
+      type: 'success'
+    });
   };
 
   const exportSampleCsv = () => {
@@ -622,8 +709,15 @@ export default function AdminPanel() {
     document.body.removeChild(link);
   };
 
-  const exportQuizzesCsv = () => {
-    if (quizzes.length === 0) return alert('No quizzes to export');
+  const exportQuizzesCsv = async () => {
+    if (quizzes.length === 0) {
+      await alert({
+        title: "No Data",
+        description: 'No quizzes to export',
+        type: 'info'
+      });
+      return;
+    }
 
     const csvData = quizzes.map(q => ({
       id: q.id,
@@ -1354,7 +1448,14 @@ export default function AdminPanel() {
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     <button onClick={() => { setEditingTopicId(t.id); setTopicPath([]); }} className="bg-[#32befa]/10 text-[#32befa] px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all">Manage</button>
-                    <button onClick={() => { if(confirm('Delete entire topic and its configuration?')) remove(ref(db, `topics/${t.id}`)); }} className="text-red-500/20 group-hover:text-red-500 transition-all p-2"><Trash2 size={16} /></button>
+                    <button onClick={async () => { 
+                      const verified = await confirm({
+                        title: "Delete Topic",
+                        description: 'Delete entire topic and its configuration?',
+                        type: 'error'
+                      });
+                      if(verified) remove(ref(db, `topics/${t.id}`)); 
+                    }} className="text-red-500/20 group-hover:text-red-500 transition-all p-2"><Trash2 size={16} /></button>
                   </div>
                 </div>
               ))}
@@ -1363,7 +1464,14 @@ export default function AdminPanel() {
         );
       case 'events':
         const addEvent = async () => {
-          if (!newEvent.title || !newEvent.topicId || !newEvent.startTime) return alert('Fill all fields');
+          if (!newEvent.title || !newEvent.topicId || !newEvent.startTime) {
+            await alert({
+              title: "Incomplete Fields",
+              description: 'Fill all fields',
+              type: 'error'
+            });
+            return;
+          }
           const eventId = `event-${Date.now()}`;
           const startTime = new Date(newEvent.startTime).getTime();
           const endTime = startTime + (parseInt(newEvent.durationHours) * 60 * 60 * 1000);
@@ -1407,7 +1515,11 @@ export default function AdminPanel() {
               borderPadding: 10
             }
           });
-          alert('Event created!');
+          await alert({
+            title: "Success",
+            description: 'Event created!',
+            type: 'success'
+          });
         };
 
         const previewCertificate = () => {
@@ -2217,7 +2329,12 @@ export default function AdminPanel() {
                         <div className="flex gap-2">
                            <button onClick={() => editQuizInForm(q)} className="text-black/10 dark:text-white/10 hover:text-primary transition-colors"><Edit2 size={16} /></button>
                            <button onClick={async () => {
-                             if(confirm('Delete this quiz?')) {
+                             const verified = await confirm({
+                               title: "Delete Quiz",
+                               description: 'Delete this quiz?',
+                               type: 'error'
+                             });
+                             if(verified) {
                                await remove(ref(db, `topicQuizzes/${q.topicId}/${q.id}`));
                              }
                            }} className="text-black/10 dark:text-white/10 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
@@ -2371,9 +2488,14 @@ export default function AdminPanel() {
                          </span>
                          <button 
                            onClick={async () => {
-                              if (confirm("Dismiss this feedback?")) {
-                                 await remove(ref(db, `feedback/${f.id}`));
-                              }
+                             const verified = await confirm({
+                               title: "Dismiss Feedback",
+                               description: "Dismiss this feedback?",
+                               type: 'confirm'
+                             });
+                             if (verified) {
+                                await remove(ref(db, `feedback/${f.id}`));
+                             }
                            }}
                            className="text-red-500/30 hover:text-red-500 transition-colors p-2"
                          >
