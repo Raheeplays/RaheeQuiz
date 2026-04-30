@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserProvider, useUser } from './contexts/UserContext';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
+import { DialogProvider } from './contexts/DialogContext';
 import Splash from './components/Splash';
 import Auth from './components/Auth';
 import WaitingRoom from './components/WaitingRoom';
@@ -66,7 +67,9 @@ export default function App() {
   return (
     <ThemeProvider>
       <UserProvider>
-        <AppContent />
+        <DialogProvider>
+          <AppContent />
+        </DialogProvider>
       </UserProvider>
     </ThemeProvider>
   );

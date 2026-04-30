@@ -1,8 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types';
-import { db, auth } from '../firebase/config';
-import { ref, onValue, get, update } from 'firebase/database';
-import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import { db } from '../firebase/config';
+import { ref, onValue, get } from 'firebase/database';
 
 interface UserContextType {
   currentUser: User | null;
@@ -18,31 +17,13 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     return saved ? JSON.parse(saved) : null;
   });
   const [loading, setLoading] = useState(true);
-  const [authInitialized, setAuthInitialized] = useState(false);
 
   useEffect(() => {
-    // Keep Firebase Auth session alive and ensure at least anonymous
-    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-      console.log("[UserContext] Auth state changed. User:", user ? user.uid : "None");
-      setAuthInitialized(true);
-      if (!user) {
-        try {
-          console.log("[UserContext] No user found. Attempting anonymous sign-in...");
-          const result = await signInAnonymously(auth);
-          console.log("[UserContext] Anonymous sign-in successful. UID:", result.user.uid);
-        } catch (err) {
-          console.error("[UserContext] Auth failed:", err);
-        }
-      }
-    });
-
     if (currentUser?.id) {
-      console.log("[UserContext] Loading user data for UID:", currentUser.id);
       const userRef = ref(db, `users/${currentUser.id}`);
       const unsubscribe = onValue(userRef, (snapshot) => {
         if (snapshot.exists()) {
           const userData = snapshot.val();
-          console.log("[UserContext] User data synced from database.");
           // Ensure structure for existing users and sync to DB if missing
           let needsUpdate = false;
           const updates: any = {};
@@ -76,13 +57,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         }
         setLoading(false);
       });
-      return () => {
-        unsubscribeAuth();
-        unsubscribe();
-      };
+      return () => unsubscribe();
     } else {
       setLoading(false);
-      return () => unsubscribeAuth();
     }
   }, [currentUser?.id]);
 
@@ -95,7 +72,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   }, [currentUser]);
 
   return (
-    <UserContext.Provider value={{ currentUser, setCurrentUser, loading: loading || !authInitialized }}>
+    <UserContext.Provider value={{ currentUser, setCurrentUser, loading }}>
       {children}
     </UserContext.Provider>
   );

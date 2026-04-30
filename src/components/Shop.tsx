@@ -1,7 +1,8 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { ShoppingBag, Coins, Zap, RefreshCw, X, CheckCircle } from 'lucide-react';
+import { Coins, Zap, RefreshCw, X, CheckCircle, ShoppingBag } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
+import { useDialog } from '../contexts/DialogContext';
 import { db } from '../firebase/config';
 import { ref, update } from 'firebase/database';
 import { translations } from '../translations';
@@ -9,6 +10,7 @@ import { cn } from '../lib/utils';
 
 export default function Shop({ onClose, language }: { onClose: () => void, language: string }) {
   const { currentUser } = useUser();
+  const { alert } = useDialog();
   const t = translations[language as 'en' | 'hi'] || translations.en;
 
   const items = [
@@ -35,7 +37,11 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
   const buyItem = async (itemId: string, cost: number) => {
     if (!currentUser) return;
     if ((currentUser.raheeCoins || 0) < cost) {
-      alert(t.notEnoughCoins);
+      await alert({
+        title: "Insufficient Coins",
+        description: t.notEnoughCoins,
+        type: 'error'
+      });
       return;
     }
 
@@ -50,7 +56,11 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
       lifelines: newLifelines
     });
     
-    alert(t.purchased);
+    await alert({
+      title: "Purchase Successful",
+      description: t.purchased,
+      type: 'success'
+    });
   };
 
   return (

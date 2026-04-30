@@ -4,6 +4,7 @@ import { db } from '../firebase/config';
 import { ref, set, update } from 'firebase/database';
 import { User } from '../types';
 import { useUser } from '../contexts/UserContext';
+import { useDialog } from '../contexts/DialogContext';
 import { Search, UserPlus, UserCheck, UserMinus, X, Users, Clock, Shield, Search as SearchIcon } from 'lucide-react';
 import { cn } from '../lib/utils';
 import ScoreCard from './ScoreCard';
@@ -17,6 +18,7 @@ interface SocialHubProps {
 
 export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: SocialHubProps) {
   const { currentUser } = useUser();
+  const { confirm } = useDialog();
   const [activeTab, setActiveTab] = useState<'search' | 'friends' | 'pending'>('search');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -71,7 +73,13 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
   };
 
   const removeFriend = async (targetUserId: string) => {
-    if (confirm("Remove this friend?")) {
+    const verified = await confirm({
+      title: "Remove Friend",
+      description: "Are you sure you want to remove this friend? You'll have to search for them again if you want to reconnect.",
+      type: 'confirm'
+    });
+    
+    if (verified) {
       await set(ref(db, `users/${currentUser.id}/friends/${targetUserId}`), null);
       await set(ref(db, `users/${targetUserId}/friends/${currentUser.id}`), null);
     }

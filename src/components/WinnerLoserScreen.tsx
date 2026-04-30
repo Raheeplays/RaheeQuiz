@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Trophy, Star, Clock, Home, RotateCcw, MessageCircle, AlertTriangle } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
+import { useDialog } from '../contexts/DialogContext';
 import { db } from '../firebase/config';
 import { ref, set } from 'firebase/database';
 import { QuizHistory } from '../types';
@@ -15,6 +16,7 @@ interface WinnerLoserScreenProps {
 
 export default function WinnerLoserScreen({ history, onClose, total }: WinnerLoserScreenProps) {
   const { currentUser } = useUser();
+  const { alert } = useDialog();
   const [seconds, setSeconds] = useState(86400); // 24 hours
   
   const correctCount = history.filter(h => h.isCorrect).length;
@@ -40,7 +42,11 @@ export default function WinnerLoserScreen({ history, onClose, total }: WinnerLos
   const handleRequestMore = async () => {
     if (!currentUser) return;
     await set(ref(db, `users/${currentUser.id}/extraTriesRequested`), true);
-    alert('Request sent to Rahee! Please wait for approval.');
+    await alert({
+      title: "Request Sent",
+      description: "Request sent to Rahee! Please wait for approval to get extra tries.",
+      type: 'success'
+    });
   };
 
   return (

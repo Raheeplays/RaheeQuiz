@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { db, auth } from '../firebase/config';
+import { db } from '../firebase/config';
 import { ref, set, get, push } from 'firebase/database';
-import { signInAnonymously } from 'firebase/auth';
 import { useUser } from '../contexts/UserContext';
 import { User } from '../types';
 import { cn } from '../lib/utils';
-import { LogIn, UserPlus, Zap, Play } from 'lucide-react';
+import { LogIn, UserPlus } from 'lucide-react';
 // import { CLASSES, SUBJECTS } from '../constants';
 import { translations } from '../translations';
 
@@ -26,7 +25,7 @@ export default function Auth() {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || (!isLogin && !username) || !password) {
+    if (!name || !password) {
       setError('Please fill all fields');
       return;
     }
@@ -34,84 +33,30 @@ export default function Auth() {
     setLoading(true);
 
     try {
-      console.log("[Auth] Starting authentication process...");
-      
-      // Explicitly call signInAnonymously if no user is currently authenticated
-      if (!auth.currentUser) {
-        console.log("[Auth] No current user found. Signing in anonymously...");
-        const result = await signInAnonymously(auth);
-        console.log("[Auth] Anonymous sign-in successful. UID:", result.user.uid);
-      } else {
-        console.log("[Auth] Already signed in. UID:", auth.currentUser.uid);
-      }
-
-      // Check auth state again to be sure
-      if (!auth.currentUser) {
-        console.error("[Auth] Authentication failed after attempt.");
-        setError('Authentication failed. Please check your internet connection.');
-        setLoading(false);
-        return;
-      }
-
       if (isLogin) {
-        console.log("[Auth] Proceeding with login lookup...");
+        // Login Logic
         const usersRef = ref(db, 'users');
-        
-        // Log access attempt
-        console.log("[Auth] Querying /users node...");
-        let snapshot;
-        try {
-          snapshot = await get(usersRef);
-          console.log("[Auth] Database query successful.");
-        } catch (dbErr: any) {
-          console.error("[Auth] Database access denied:", dbErr.message);
-          if (dbErr.message.includes("permission_denied")) {
-            setError("Access denied. Database rules error.");
-          } else {
-            setError("Database error: " + dbErr.message);
-          }
-          setLoading(false);
-          return;
-        }
-
+        const snapshot = await get(usersRef);
         if (snapshot.exists()) {
           const users = snapshot.val();
-          console.log("[Auth] Users found:", Object.keys(users).length);
-          
           const userMatch = Object.values(users).find(
-            (u: any) => (
-              (u.name || '').toLowerCase() === name.toLowerCase() || 
-              (u.username || '').toLowerCase() === name.toLowerCase() || 
-              (u.id || '').toLowerCase() === name.toLowerCase()
-            ) && u.password === password
+            (u: any) => ((u.name || '').toLowerCase() === name.toLowerCase() || (u.id || '').toLowerCase() === name.toLowerCase()) && u.password === password
           ) as User | undefined;
 
           if (userMatch) {
-            console.log("[Auth] Login match found for user:", userMatch.username);
-            
-            if (userMatch.status === 'pending') {
-              console.warn("[Auth] Account pending approval:", userMatch.username);
-              setError('Account pending admin approval. Please wait.');
-              setLoading(false);
-              return;
-            }
             if (userMatch.status === 'revoked' || userMatch.status === 'banned') {
-              console.error("[Auth] Account restricted:", userMatch.status);
               setError(`Your account has been ${userMatch.status}. Contact Rahee for help.`);
               setLoading(false);
               return;
             }
             setCurrentUser(userMatch);
           } else {
-            console.warn("[Auth] No matching user found for provided credentials.");
             setError('Invalid credentials');
           }
         } else {
-          console.warn("[Auth] Users node is empty.");
           setError('User not found');
         }
       } else {
-        console.log("[Auth] Proceeding with signup...");
         // Signup logic
         if (!username || !name || !password) {
           setError('Please fill all fields');
@@ -119,49 +64,34 @@ export default function Auth() {
           return;
         }
         
-        const authUser = auth.currentUser;
-        console.log("[Auth] Current Auth User for signup:", authUser.uid);
-
         const usersRef = ref(db, 'users');
         const snapshot = await get(usersRef);
         const users = snapshot.val() || {};
-        const cleanUsername = username.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
+        const cleanId = username.replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
         
-        const usernameTaken = Object.values(users).some((u: any) => (u.username || '').toLowerCase() === cleanUsername);
-        
-        if (usernameTaken) {
-          console.warn("[Auth] Username already taken:", cleanUsername);
+        if (users[cleanId]) {
           setError('Username already taken');
           setLoading(false);
           return;
         }
         
-        console.log("[Auth] Completing signup...");
         await completeSignup();
-        console.log("[Auth] Signup complete.");
       }
-    } catch (err: any) {
-      console.error("[Auth] Critical error during authentication:", err);
-      setError('Something went wrong: ' + (err.message || 'Unknown error'));
+    } catch (err) {
+      console.error(err);
+      setError('Something went wrong');
     } finally {
       setLoading(false);
     }
   };
 
   const completeSignup = async () => {
-    const authUser = auth.currentUser;
-    if (!authUser) {
-      setError('Internal error: not authenticated');
-      return;
-    }
-
-    const firebaseUid = authUser.uid;
-    const cleanUsername = username.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
+    const cleanId = username.replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
     
     const newUser: any = {
-      id: firebaseUid,
+      id: cleanId,
       name,
-      username: cleanUsername,
+      username: cleanId,
       password,
       role: 'user',
       status: 'pending',
@@ -171,18 +101,17 @@ export default function Auth() {
       currentQuizIndex: 0,
       selectedTopicId: null,
       language: 'en',
-      raheeCoins: 100,
+      raheeCoins: 0,
       lifelines: {
-        'fiftyFifty': 1,
-        'changeQuiz': 1
+        'fiftyFifty': 0,
+        'changeQuiz': 0
       },
       scores: {}
     };
 
-    await set(ref(db, `users/${firebaseUid}`), newUser);
+    await set(ref(db, `users/${cleanId}`), newUser);
     setCurrentUser(newUser as User);
   };
-
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
@@ -201,28 +130,31 @@ export default function Auth() {
         <form onSubmit={handleAuth} className="space-y-6">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">
-                {isLogin ? 'Player ID / Name' : 'Display Name'}
-              </label>
+              <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Display Name</label>
               <input
                 type="text"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-[#32befa] outline-none transition-all font-bold"
-                placeholder={isLogin ? "Enter your name or ID" : "Your full name"}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  if (!isLogin) {
+                    setUsername(e.target.value.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, ''));
+                  }
+                }}
+                className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-[#32befa] outline-none transition-all"
+                placeholder="Enter your name"
               />
             </div>
             {!isLogin && (
               <div>
-                <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Username (UID)</label>
+                <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Username (ID)</label>
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#32befa] font-black">@</span>
                   <input
                     type="text"
                     value={username}
-                    onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, ''))}
-                    className="w-full bg-black border border-white/10 rounded-2xl p-4 pl-10 text-white focus:border-[#32befa] outline-none transition-all font-bold"
-                    placeholder="Rahee"
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="w-full bg-black border border-white/10 rounded-2xl p-4 pl-10 text-white focus:border-[#32befa] outline-none transition-all"
+                    placeholder="rahee_rock"
                   />
                 </div>
               </div>
@@ -233,54 +165,29 @@ export default function Auth() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-[#32befa] outline-none transition-all font-bold"
-                placeholder="Enter RaheeKey"
+                className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-[#32befa] outline-none transition-all"
+                placeholder="Enter raheekey"
               />
             </div>
           </div>
-          
-          <div className="space-y-3">
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-[#32befa] text-black font-black p-5 rounded-2xl flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 shadow-lg shadow-[#32befa]/20"
-            >
-              {loading ? (
-                <div className="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin" />
-              ) : isLogin ? (
-                <>
-                  <LogIn size={20} />
-                  {t.login}
-                </>
-              ) : (
-                <>
-                  <UserPlus size={20} />
-                  {t.signup}
-                </>
-              )}
-            </button>
-
-            {!isLogin && (
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-white/5 text-white/80 font-black p-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-white/10 transition-all active:scale-[0.98]"
-              >
-                <Zap size={18} className="text-[#32befa]" />
-                Join as Player
-              </button>
+          <button
+            disabled={loading}
+            className="w-full bg-[#32befa] text-black font-black p-5 rounded-2xl flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 shadow-lg shadow-[#32befa]/20"
+          >
+            {loading ? (
+              <div className="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin" />
+            ) : isLogin ? (
+              <>
+                <LogIn size={20} />
+                {t.login}
+              </>
+            ) : (
+              <>
+                <UserPlus size={20} />
+                {t.signup}
+              </>
             )}
-            {isLogin && (
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-white/5 text-white/80 font-black p-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-white/10 transition-all active:scale-[0.98]"
-              >
-                <Play size={18} className="fill-[#32befa] text-[#32befa]" />
-                Start Playing
-              </button>
-            )}
-          </div>
+          </button>
         </form>
 
         <div className="mt-6 text-center">

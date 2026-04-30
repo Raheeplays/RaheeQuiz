@@ -514,7 +514,7 @@ export default function AdminPanel() {
               name: row.name,
               username: (row.name || '').toLowerCase().replace(/\s+/g, '_'),
               role: 'user',
-              status: 'active',
+              status: 'approved',
               isBot: true,
               xp: parseInt(row.xp) || 0,
               rank: Math.floor((parseInt(row.xp) || 0) / 1600) + 1,
@@ -556,21 +556,35 @@ export default function AdminPanel() {
     alert('Player data fully reset!');
   };
 
-  const renameUser = async (u: User, newName: string, newUsername: string) => {
-    if (!newName || !newUsername) return;
-    const cleanUsername = newUsername.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
+  const renameUser = async (u: User, newName: string, newId: string) => {
+    if (!newName || !newId) return;
+    const cleanId = newId.replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
     
-    if (users.some(user => user.id !== u.id && (user.username || '').toLowerCase() === cleanUsername)) {
-        alert('This username is already taken');
+    if (cleanId !== u.id && users.some(user => user.id === cleanId)) {
+        alert('This ID is already taken');
         return;
     }
 
-    await update(ref(db, `users/${u.id}`), {
-      name: newName,
-      username: cleanUsername
-    });
+    const updatedUser = { ...u, name: newName, id: cleanId };
+
+    if (cleanId === u.id) {
+        await set(ref(db, `users/${u.id}/name`), newName);
+    } else {
+        await set(ref(db, `users/${cleanId}`), updatedUser);
+        await remove(ref(db, `users/${u.id}`));
+        
+        // Update history references
+        const historySnapshot = await get(ref(db, 'history'));
+        if (historySnapshot.exists()) {
+            const historyData = historySnapshot.val();
+            for (const key in historyData) {
+                if (historyData[key].userId === u.id) {
+                    await set(ref(db, `history/${key}/userId`), cleanId);
+                }
+            }
+        }
+    }
     
-    setIsEditingUser(false);
     setSelectedUser(null);
     alert('User updated successfully');
   };
@@ -720,7 +734,7 @@ export default function AdminPanel() {
                          />
                       </div>
                       <div className="space-y-1">
-                         <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Username</label>
+                         <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Username (ID)</label>
                          <div className="relative">
                             <span className="absolute left-4 top-1/2 -translate-y-1/2 text-primary font-black">@</span>
                             <input 
@@ -749,8 +763,7 @@ export default function AdminPanel() {
                 ) : (
                    <>
                       <h3 className="text-3xl font-black mb-1 uppercase tracking-tighter text-black dark:text-white">{u.name}</h3>
-                      <p className="text-black/40 dark:text-white/40 font-bold uppercase tracking-widest text-xs mb-1">Username: @{u.username || u.id.slice(0,8)}</p>
-                      <p className="text-black/20 dark:text-white/20 font-mono text-[8px] mb-4">Internal ID: {u.id}</p>
+                      <p className="text-black/40 dark:text-white/40 font-bold uppercase tracking-widest text-xs mb-4">Player ID: @{u.id}</p>
                       <div className="flex flex-wrap justify-center md:justify-start gap-3">
                          <div className="px-4 py-2 bg-black/5 dark:bg-white/5 rounded-xl border border-black/5 dark:border-white/5">
                             <p className="text-[10px] text-black/30 dark:text-white/30 uppercase font-black">Global Rank</p>
@@ -869,7 +882,7 @@ export default function AdminPanel() {
                            <span className="text-black/40 dark:text-white/40 text-[10px] font-black uppercase tracking-widest">Status</span>
                            <span className={cn(
                              "text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded",
-                             u.status === 'active' ? "bg-green-500/10 text-green-500" : 
+                             u.status === 'approved' ? "bg-green-500/10 text-green-500" : 
                              u.status === 'pending' ? "bg-yellow-500/10 text-yellow-500" :
                              "bg-red-500/10 text-red-500"
                            )}>{u.status}</span>
@@ -880,13 +893,13 @@ export default function AdminPanel() {
                         <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-3 ml-1">Update Access</p>
                         <div className="grid grid-cols-2 gap-2">
                            <button 
-                             onClick={() => changeUserStatus(u.id, u.status === 'active' ? 'pending' : 'active')}
+                             onClick={() => changeUserStatus(u.id, u.status === 'approved' ? 'pending' : 'approved')}
                              className={cn(
                                "px-3 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all",
-                               u.status === 'active' ? "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20" : "bg-green-500 text-black"
+                               u.status === 'approved' ? "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20" : "bg-green-500 text-black"
                              )}
                            >
-                             {u.status === 'active' ? 'Suspend' : 'Approve'}
+                             {u.status === 'approved' ? 'Suspend' : 'Approve'}
                            </button>
                            <select 
                              onChange={(e) => changeUserStatus(u.id, e.target.value as any)}
@@ -894,7 +907,6 @@ export default function AdminPanel() {
                              value={u.status}
                            >
                              <option value="" disabled>Restrict</option>
-                             <option value="active">Active</option>
                              <option value="banned">Ban User</option>
                              <option value="revoked">Revoke Access</option>
                              <option value="rejected">Reject</option>
@@ -1644,7 +1656,7 @@ export default function AdminPanel() {
                                 />
                               </div>
 
-                              <div className="grid grid-cols-2 gap-4">
+                              <div className="grid grid-cols-2 gap-2">
                                 <div className="space-y-1">
                                   <label className="text-[9px] font-bold text-black/40 dark:text-white/40">Header Style</label>
                                   <select 
@@ -1671,45 +1683,6 @@ export default function AdminPanel() {
                                     <option value="bolditalic">Bold Italic</option>
                                   </select>
                                 </div>
-                              </div>
-
-                              <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-1">
-                                  <label className="text-[9px] font-bold text-black/40 dark:text-white/40">Subtitle Style</label>
-                                  <select 
-                                    value={newEvent.certificateLayout?.subtitleStyle}
-                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, subtitleStyle: e.target.value as any }})}
-                                    className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-2 rounded-lg text-[10px]"
-                                  >
-                                    <option value="normal">Normal</option>
-                                    <option value="bold">Bold</option>
-                                    <option value="italic">Italic</option>
-                                    <option value="bolditalic">Bold Italic</option>
-                                  </select>
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="text-[9px] font-bold text-black/40 dark:text-white/40">Footer Style</label>
-                                  <select 
-                                    value={newEvent.certificateLayout?.footerStyle}
-                                    onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, footerStyle: e.target.value as any }})}
-                                    className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-2 rounded-lg text-[10px]"
-                                  >
-                                    <option value="normal">Normal</option>
-                                    <option value="bold">Bold</option>
-                                    <option value="italic">Italic</option>
-                                    <option value="bolditalic">Bold Italic</option>
-                                  </select>
-                                </div>
-                              </div>
-
-                              <div className="space-y-1">
-                                <label className="text-[9px] font-bold text-black/40 dark:text-white/40">Body Font Size ({newEvent.certificateLayout?.bodyFontSize}px)</label>
-                                <input 
-                                  type="range" min="8" max="32" step="1"
-                                  value={newEvent.certificateLayout?.bodyFontSize}
-                                  onChange={e => setNewEvent({...newEvent, certificateLayout: { ...newEvent.certificateLayout!, bodyFontSize: parseInt(e.target.value) }})}
-                                  className="w-full accent-primary"
-                                />
                               </div>
                            </div>
                         </div>

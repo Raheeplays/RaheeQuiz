@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useUser } from '../contexts/UserContext';
 import { useTheme } from '../contexts/ThemeContext';
+import { useDialog } from '../contexts/DialogContext';
 import { db } from '../firebase/config';
 import { ref, onValue, set, get, push, update } from 'firebase/database';
 import { Quiz, User, QuizHistory } from '../types';
@@ -10,12 +11,14 @@ import { cn } from '../lib/utils';
 import WinnerLoserScreen from './WinnerLoserScreen';
 import Settings from './Settings';
 import RoundCard from './RoundCard';
+import Dialog from './ui/Dialog';
 
 import { Skeleton } from './ui/Skeleton';
 
 export default function QuizScreen({ onClose, language: initialLanguage = 'en', eventId, topicId: propTopicId }: { onClose: () => void, language?: 'en' | 'hi', eventId?: string, topicId?: string }) {
   const { currentUser } = useUser();
   const { isDark } = useTheme();
+  const { confirm } = useDialog();
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [currentIndex, setCurrentIndex] = useState(eventId ? 0 : (currentUser?.currentQuizIndex || 0));
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
@@ -278,16 +281,21 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
             {currentUser?.role === 'admin' && (
               <button 
                 onClick={async () => {
-                   if (confirm("Reset your admin progress for testing?")) {
-                      await set(ref(db, `users/${currentUser.id}/currentRound`), 1);
-                      await set(ref(db, `users/${currentUser.id}/currentQuizIndex`), 0);
-                      // Reset local states to immediately show the first quiz
-                      setCurrentIndex(0);
-                      setIsAnswered(false);
-                      setSelectedOption(null);
-                      setHistory([]);
-                      // No onClose() here, so it stays in the quiz
-                   }
+                  const verified = await confirm({
+                    title: "Reset Progress",
+                    description: "Are you sure you want to reset your admin progress for testing? This will restart the quiz from the beginning.",
+                    confirmLabel: "Reset & Restart",
+                    cancelLabel: "Stay Here"
+                  });
+                  
+                  if (verified) {
+                    await set(ref(db, `users/${currentUser.id}/currentRound`), 1);
+                    await set(ref(db, `users/${currentUser.id}/currentQuizIndex`), 0);
+                    setCurrentIndex(0);
+                    setIsAnswered(false);
+                    setSelectedOption(null);
+                    setHistory([]);
+                  }
                 }}
                 className="w-full bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40 border border-black/10 dark:border-white/10 font-black px-8 py-4 rounded-[2rem] uppercase tracking-widest text-[10px] hover:bg-black/10 dark:hover:bg-white/10 transition-all font-mono"
               >
