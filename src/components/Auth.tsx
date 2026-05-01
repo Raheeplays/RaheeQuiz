@@ -13,36 +13,50 @@ import { translations } from '../translations';
 export default function Auth() {
   const { setCurrentUser } = useUser();
   const [isLogin, setIsLogin] = useState(true);
+  const [useEmail, setUseEmail] = useState(false);
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
+  const [emailInput, setEmailInput] = useState('');
   const [password, setPassword] = useState('');
   
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const RaheeKey = 'RaheeKey';
   const lang = 'en'; 
   const t = translations[lang];
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username || (!isLogin && !name) || !password) {
-      setError('Please fill all fields');
+    
+    const cleanUsername = username.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
+    const finalEmail = useEmail ? emailInput : `${cleanUsername}@RaheeGames.in`;
+
+    if (useEmail && !emailInput) {
+      setError('Please enter your email');
       return;
     }
+    if (!useEmail && !username) {
+      setError('Please enter your username');
+      return;
+    }
+    if (!isLogin && !name) {
+      setError('Please enter your display name');
+      return;
+    }
+    if (!password) {
+      setError('Please enter your password');
+      return;
+    }
+
     setError('');
     setLoading(true);
 
     try {
-      const cleanId = username.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
-      const email = `${cleanId}@Rahee.in`;
-
       if (isLogin) {
-        // Step 1: Sign in with derived email/password
+        // Login Logic
         try {
-          const authResult = await signInWithEmailAndPassword(auth, email, password);
+          const authResult = await signInWithEmailAndPassword(auth, finalEmail, password);
           const fbUid = authResult.user.uid;
 
-          // Step 2: Get user data from RTDB using fbUid as key
           const userRef = ref(db, `users/${fbUid}`);
           const snapshot = await get(userRef);
           if (snapshot.exists()) {
@@ -58,16 +72,17 @@ export default function Auth() {
           }
         } catch (err: any) {
           if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-            setError('Invalid username or password');
+            setError('Invalid credentials');
           } else {
             setError('Login failed: ' + err.message);
           }
         }
       } else {
-        // Signup logic - we check availability by searching the users node for the username
+        // Signup logic
         try {
+          // Check if username is taken in users node
           const usersRef = ref(db, 'users');
-          const usernameQuery = query(usersRef, orderByChild('username'), equalTo(cleanId));
+          const usernameQuery = query(usersRef, orderByChild('username'), equalTo(cleanUsername));
           const nameCheck = await get(usernameQuery);
           
           if (nameCheck.exists()) {
@@ -76,11 +91,11 @@ export default function Auth() {
             return;
           }
 
-          const authResult = await createUserWithEmailAndPassword(auth, email, password);
-          await completeSignup(authResult.user.uid, cleanId);
+          const authResult = await createUserWithEmailAndPassword(auth, finalEmail, password);
+          await completeSignup(authResult.user.uid, cleanUsername);
         } catch (err: any) {
           if (err.code === 'auth/email-already-in-use') {
-            setError('Username already taken');
+            setError(useEmail ? 'Email already in use' : 'Username already taken');
           } else {
             setError('Signup failed: ' + err.message);
           }
@@ -100,6 +115,7 @@ export default function Auth() {
       fbUid: fbUid,
       name,
       username: cleanId,
+      email: useEmail ? emailInput : null,
       password: password,
       role: 'user',
       status: 'pending',
@@ -119,9 +135,7 @@ export default function Auth() {
       scores: {}
     };
 
-    // Store in users indexed by UID
     await set(ref(db, `users/${fbUid}`), newUser);
-    
     setCurrentUser(newUser as User);
   };
 
@@ -133,44 +147,97 @@ export default function Auth() {
         className="w-full max-w-md bg-[#111] p-8 rounded-3xl border border-white/5 shadow-2xl"
       >
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-black text-[#32befa] mb-2 font-mono">RAHEE</h1>
+          <h1 className="text-4xl font-black text-[#32befa] mb-2 font-mono text-center">RAHEE</h1>
           <p className="text-white/60">
             {isLogin ? 'Welcome back, let\'s quiz!' : 'Create an account to play'}
           </p>
         </div>
 
+        {/* Auth Toggle */}
+        <div className="flex bg-black/50 p-1 rounded-2xl mb-8 border border-white/5">
+          <button
+            onClick={() => setUseEmail(false)}
+            className={cn(
+              "flex-1 py-3 rounded-xl text-sm font-bold transition-all",
+              !useEmail ? "bg-[#32befa] text-black shadow-lg" : "text-white/40 hover:text-white"
+            )}
+          >
+            Username
+          </button>
+          <button
+            onClick={() => setUseEmail(true)}
+            className={cn(
+              "flex-1 py-3 rounded-xl text-sm font-bold transition-all",
+              useEmail ? "bg-[#32befa] text-black shadow-lg" : "text-white/40 hover:text-white"
+            )}
+          >
+            Email
+          </button>
+        </div>
+
         <form onSubmit={handleAuth} className="space-y-6">
           <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">
-                {isLogin ? 'Name (Optional)' : 'Display Name'}
-              </label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  if (!isLogin) {
-                    setUsername(e.target.value.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, ''));
-                  }
-                }}
-                className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-[#32befa] outline-none transition-all"
-                placeholder={isLogin ? "Enter your name" : "Enter your display name"}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Username (ID)</label>
-              <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#32befa] font-black">@</span>
+            {!isLogin && (
+              <div>
+                <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Display Name</label>
                 <input
                   type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="w-full bg-black border border-white/10 rounded-2xl p-4 pl-10 text-white focus:border-[#32befa] outline-none transition-all"
-                  placeholder="rahee_rock"
+                  value={name}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    if (!useEmail) {
+                      setUsername(e.target.value.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, ''));
+                    }
+                  }}
+                  className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-[#32befa] outline-none transition-all"
+                  placeholder="Enter your name"
                 />
               </div>
-            </div>
+            )}
+
+            {useEmail ? (
+              <div>
+                <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Email Address</label>
+                <input
+                  type="email"
+                  value={emailInput}
+                  onChange={(e) => setEmailInput(e.target.value)}
+                  className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-[#32befa] outline-none transition-all"
+                  placeholder="your@email.com"
+                />
+              </div>
+            ) : (
+              <div>
+                <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Username (ID)</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#34d399] font-black">@</span>
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="w-full bg-black border border-white/10 rounded-2xl p-4 pl-10 text-white focus:border-[#32befa] outline-none transition-all"
+                    placeholder="rahee_rock"
+                  />
+                </div>
+              </div>
+            )}
+
+            {!isLogin && useEmail && (
+              <div>
+                <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Unique Username</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#34d399] font-black">@</span>
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="w-full bg-black border border-white/10 rounded-2xl p-4 pl-10 text-white focus:border-[#32befa] outline-none transition-all"
+                    placeholder="choose_username"
+                  />
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Password</label>
               <input
@@ -178,10 +245,20 @@ export default function Auth() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-[#32befa] outline-none transition-all"
-                placeholder="Enter password"
+                placeholder="••••••••"
               />
             </div>
           </div>
+
+          {error && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              className="bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-2xl text-sm font-medium"
+            >
+              {error}
+            </motion.div>
+          )}
           <button
             disabled={loading}
             className="w-full bg-[#32befa] text-black font-black p-5 rounded-2xl flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 shadow-lg shadow-[#32befa]/20"
