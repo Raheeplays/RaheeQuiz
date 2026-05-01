@@ -34,6 +34,14 @@
     "settings": {
        ".read": "auth != null",
        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'"
+    },
+    "topicQuizzes": {
+       ".read": "auth != null",
+       ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'"
+    },
+    "matches": {
+       ".read": "auth != null",
+       ".write": "auth != null"
     }
   }
 }

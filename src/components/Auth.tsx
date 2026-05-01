@@ -80,18 +80,22 @@ export default function Auth() {
       } else {
         // Signup logic
         try {
-          // Check if username is taken in users node
+          const authResult = await createUserWithEmailAndPassword(auth, finalEmail, password);
+          // Now we ARE authenticated, we can check the 'users' node for username conflicts
+          // If using derived email, Auth would have already failed if email is in use (which is 1:1 with username)
+
           const usersRef = ref(db, 'users');
           const usernameQuery = query(usersRef, orderByChild('username'), equalTo(cleanUsername));
           const nameCheck = await get(usernameQuery);
           
           if (nameCheck.exists()) {
+            // Someone else has this username
+            await authResult.user.delete();
             setError('Username already taken');
             setLoading(false);
             return;
           }
 
-          const authResult = await createUserWithEmailAndPassword(auth, finalEmail, password);
           await completeSignup(authResult.user.uid, cleanUsername);
         } catch (err: any) {
           if (err.code === 'auth/email-already-in-use') {
