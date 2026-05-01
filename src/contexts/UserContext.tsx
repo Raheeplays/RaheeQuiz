@@ -30,30 +30,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        // Try to get username from mapping
-        const mappingRef = ref(db, `uidToUsername/${user.uid}`);
-        const mappingSnap = await get(mappingRef);
-        
-        if (mappingSnap.exists()) {
-          const username = mappingSnap.val();
-          const unsubscribeUser = syncUserData(username);
-          return () => unsubscribeUser();
-        } else {
-           // No mapping found yet (might be halfway through signup or legacy)
-           const saved = localStorage.getItem('rahee_quiz_user');
-           if (saved) {
-             const parsed = JSON.parse(saved);
-             if (parsed.id) {
-               syncUserData(parsed.id);
-             }
-           } else {
-             setLoading(false);
-           }
-        }
-      } else {
+      // We don't auto-login users here anymore to ensure they see the "Portal" every time.
+      // We just ensure loading is set to false so the Auth screen can show.
+      setLoading(false);
+      if (!user) {
         setCurrentUser(null);
-        setLoading(false);
       }
     });
 

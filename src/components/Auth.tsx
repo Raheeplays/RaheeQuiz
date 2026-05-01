@@ -15,6 +15,7 @@ export default function Auth() {
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [isAdminRequest, setIsAdminRequest] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -22,33 +23,87 @@ export default function Auth() {
   const t = translations[lang];
 
   useEffect(() => {
-    const bootstrapAdmin = async () => {
-      const adminId = 'admin';
+    const bootstrapAuth = async () => {
+      // Silent background guest login to ensure we have an auth session for rules
+      if (!auth.currentUser) {
+        try {
+          await signInAnonymously(auth);
+        } catch (err) {
+          console.error("Silent login failed:", err);
+          return; // Can't proceed without auth
+        }
+      }
+
+      // Create admin if not exists
+      const adminId = 'rahee';
+      const adminUid = 'uSSd2PFd8UUJSH4xmWpVs9pKKpm1';
       const adminRef = ref(db, `users/${adminId}`);
-      const snapshot = await get(adminRef);
-      if (!snapshot.exists()) {
-        await set(adminRef, {
-          id: adminId,
-          name: 'Rahee Admin',
-          username: adminId,
-          password: 'RaheeQuiz_Admin',
-          role: 'admin',
-          status: 'approved',
-          xp: 1000000,
-          rank: 1,
-          currentRound: 1,
-          currentQuizIndex: 0,
-          raheeCoins: 999999,
-          lifelines: { 'fiftyFifty': 99, 'changeQuiz': 99 },
-          language: 'en',
-          fbUid: 'bootstrap-admin'
-        });
+      
+      try {
+        const snapshot = await get(adminRef);
+        if (!snapshot.exists()) {
+          await set(adminRef, {
+            id: adminId,
+            name: 'Rahee',
+            username: adminId,
+            password: '786',
+            role: 'admin',
+            status: 'approved',
+            xp: 1000000,
+            rank: 1,
+            currentRound: 1,
+            currentQuizIndex: 0,
+            raheeCoins: 999999,
+            lifelines: { 'fiftyFifty': 99, 'changeQuiz': 99 },
+            language: 'en',
+            fbUid: adminUid,
+            scores: {}
+          });
+
+          // Also bootstrap the mapping for rules if we are the admin
+          if (auth.currentUser?.uid === adminUid) {
+            await set(ref(db, `uidToUsername/${adminUid}`), adminId);
+          }
+        }
+      } catch (e) {
+        console.warn("Bootstrap admin check skipped due to permissions");
+      }
+
+      // Create aiza admin if not exists
+      const aizaId = 'aiza';
+      const aizaRef = ref(db, `users/${aizaId}`);
+      
+      try {
+        const aizaSnap = await get(aizaRef);
+        if (!aizaSnap.exists()) {
+          await set(aizaRef, {
+            id: aizaId,
+            name: 'Aiza',
+            username: aizaId,
+            password: '78692',
+            role: 'admin',
+            status: 'approved',
+            xp: 1000000,
+            rank: 2,
+            currentRound: 1,
+            currentQuizIndex: 0,
+            raheeCoins: 999999,
+            lifelines: { 'fiftyFifty': 99, 'changeQuiz': 99 },
+            language: 'en',
+            fbUid: 'bootstrap-aiza', // Will be updated on first login
+            scores: {}
+          });
+        }
+      } catch (e) {
+        console.warn("Bootstrap aiza check skipped due to permissions");
       }
     };
-    bootstrapAdmin();
+    bootstrapAuth();
   }, []);
 
   const handleGuestLogin = async () => {
+    // This is now purely internal or can be removed. 
+    // We'll keep it as a fallback function if needed but remove the button.
     setLoading(true);
     setError('');
     try {
@@ -87,7 +142,7 @@ export default function Auth() {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || (!isLogin && !username) || !password) {
+    if ((!isLogin && !name) || !username || !password) {
       setError('Please fill all fields');
       return;
     }
@@ -165,7 +220,7 @@ export default function Auth() {
       name,
       username: cleanId,
       password,
-      role: 'user',
+      role: isAdminRequest ? 'admin' : 'user',
       status: 'approved',
       xp: 0,
       rank: 0,
@@ -212,16 +267,7 @@ export default function Auth() {
           </p>
         </div>
 
-        <div className="space-y-3 mb-8 relative z-10">
-          <button
-            onClick={handleGuestLogin}
-            disabled={loading}
-            className="w-full bg-[#32befa]/10 text-white font-black p-5 rounded-2xl flex items-center justify-center gap-3 border border-[#32befa]/20 hover:bg-[#32befa]/20 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50"
-          >
-            <UserCircle size={24} className="text-[#32befa]" />
-            <span className="uppercase tracking-[0.2em] text-sm">Quick Guest Play</span>
-          </button>
-        </div>
+        {/* Removed Quick Guest Play button per user request */}
 
         <div className="relative mb-8 z-10">
           <div className="absolute inset-0 flex items-center">
@@ -276,6 +322,26 @@ export default function Auth() {
                 placeholder="••••••••"
               />
             </div>
+
+            {!isLogin && (
+              <div 
+                onClick={() => setIsAdminRequest(!isAdminRequest)}
+                className="flex items-center gap-3 p-4 bg-black/20 rounded-2xl border border-white/5 cursor-pointer hover:bg-black/40 transition-all"
+              >
+                <div className={cn(
+                  "w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all",
+                  isAdminRequest ? "bg-[#32befa] border-[#32befa]" : "bg-transparent border-white/10"
+                )}>
+                  {isAdminRequest && <Shield size={12} className="text-black" />}
+                </div>
+                <span className={cn(
+                  "text-[10px] font-black uppercase tracking-widest transition-all",
+                  isAdminRequest ? "text-[#32befa]" : "text-white/20"
+                )}>
+                  Request Admin Access
+                </span>
+              </div>
+            )}
           </div>
 
           {error && (
