@@ -1,59 +1,39 @@
 {
   "rules": {
-    "uidToUsername": {
-      ".read": "auth != null",
-      "$uid": {
-         ".write": "auth != null && (auth.uid == $uid)"
-      }
-    },
     "users": {
-       ".read": "auth != null",
-       "$username": {
-          ".read": "auth != null",
-          ".write": "auth != null && (!data.exists() || data.child('fbUid').val() == auth.uid || root.child('users').child(root.child('uidToUsername').child(auth.uid).val()).child('role').val() == 'admin')",
-          "pendingRequests": {
-             ".write": "auth != null"
-          },
-          "friends": {
-             ".write": "auth != null"
-          }
-       }
+        ".read": "auth != null",
+        ".indexOn": ["username"],
+        "$uid": {
+           ".write": "auth != null && (!data.exists() || $uid == auth.uid || root.child('users').child(auth.uid).child('role').val() == 'admin')"
+        }
     },
     "history": {
        "$historyId": {
-          ".read": "auth != null && (data.child('userId').val() == root.child('uidToUsername').child(auth.uid).val() || root.child('users').child(root.child('uidToUsername').child(auth.uid).val()).child('role').val() == 'admin')",
-          ".write": "auth != null && (!data.exists() || data.child('userId').val() == root.child('uidToUsername').child(auth.uid).val() || root.child('users').child(root.child('uidToUsername').child(auth.uid).val()).child('role').val() == 'admin')"
+          ".read": "auth != null && (data.child('userId').val() == auth.uid || root.child('users').child(auth.uid).child('role').val() == 'admin')",
+          ".write": "auth != null && (!data.exists() || data.child('userId').val() == auth.uid || root.child('users').child(auth.uid).child('role').val() == 'admin')"
        }
     },
     "feedback": {
-       ".read": "auth != null && root.child('users').child(root.child('uidToUsername').child(auth.uid).val()).child('role').val() == 'admin'",
+       ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'",
        "$feedbackId": {
           ".write": "auth != null"
        }
     },
     "topics": {
        ".read": "auth != null",
-       ".write": "auth != null && root.child('users').child(root.child('uidToUsername').child(auth.uid).val()).child('role').val() == 'admin'"
-    },
-    "topicQuizzes": {
-       ".read": "auth != null",
-       ".write": "auth != null && root.child('users').child(root.child('uidToUsername').child(auth.uid).val()).child('role').val() == 'admin'"
+       ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'"
     },
     "quizzes": {
        ".read": "auth != null",
-       ".write": "auth != null && root.child('users').child(root.child('uidToUsername').child(auth.uid).val()).child('role').val() == 'admin'"
+       ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'"
     },
     "events": {
        ".read": "auth != null",
-       ".write": "auth != null && root.child('users').child(root.child('uidToUsername').child(auth.uid).val()).child('role').val() == 'admin'"
-    },
-    "matches": {
-       ".read": "auth != null",
-       ".write": "auth != null"
+       ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'"
     },
     "settings": {
        ".read": "auth != null",
-       ".write": "auth != null && root.child('users').child(root.child('uidToUsername').child(auth.uid).val()).child('role').val() == 'admin'"
+       ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'"
     }
   }
 }

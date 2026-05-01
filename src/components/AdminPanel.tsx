@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { ref, onValue, set, push, remove, get, update } from 'firebase/database';
+import { ref, onValue, set, push, remove, get, update, query, orderByChild, equalTo } from 'firebase/database';
 import { User, Topic, Quiz, Feedback, QuizHistory } from '../types';
 import ScoreCard from './ScoreCard';
 import { Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2, Coins, TrendingUp, Calendar, Sun, Moon, Star } from 'lucide-react';
@@ -227,8 +227,23 @@ export default function AdminPanel() {
   };
 
   const deleteUser = async (userId: string) => {
-    await remove(ref(db, `users/${userId}`));
-    if (selectedUser?.id === userId) setSelectedUser(null);
+    const user = users.find(u => u.id === userId);
+    if (!user) return;
+
+    const verified = await confirm({
+      title: "Delete Player",
+      description: `Target: ${user.name}. All data will be lost. Proceed?`,
+      type: 'confirm'
+    });
+    if (!verified) return;
+
+    try {
+      await remove(ref(db, `users/${userId}`));
+      if (selectedUser?.id === userId) setSelectedUser(null);
+    } catch (error: any) {
+      console.error("Delete failed:", error);
+      await alert({ title: "Error", description: 'Failed to delete user: ' + error.message, type: 'error' });
+    }
   };
 
   const addTopic = async () => {
@@ -635,45 +650,54 @@ export default function AdminPanel() {
     });
   };
 
-  const renameUser = async (u: User, newName: string, newId: string) => {
-    if (!newName || !newId) return;
-    const cleanId = newId.replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
+  const renameUser = async (u: User, newName: string, newUsername: string) => {
+    if (!newName || !newUsername) return;
+    const cleanUsername = newUsername.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
+    const oldUsername = (u.username || '').toLowerCase();
     
-    if (cleanId !== u.id && users.some(user => user.id === cleanId)) {
-        await alert({
-          title: "Error",
-          description: 'This ID is already taken',
-          type: 'error'
-        });
-        return;
-    }
-
-    const updatedUser = { ...u, name: newName, id: cleanId };
-
-    if (cleanId === u.id) {
-        await set(ref(db, `users/${u.id}/name`), newName);
-    } else {
-        await set(ref(db, `users/${cleanId}`), updatedUser);
-        await remove(ref(db, `users/${u.id}`));
+    // Check if new username is taken by a DIFFERENT user
+    if (cleanUsername !== oldUsername) {
+        const usersRef = ref(db, 'users');
+        const usernameQuery = query(usersRef, orderByChild('username'), equalTo(cleanUsername));
+        const usernameCheck = await get(usernameQuery);
         
-        // Update history references
-        const historySnapshot = await get(ref(db, 'history'));
-        if (historySnapshot.exists()) {
-            const historyData = historySnapshot.val();
-            for (const key in historyData) {
-                if (historyData[key].userId === u.id) {
-                    await set(ref(db, `history/${key}/userId`), cleanId);
-                }
+        if (usernameCheck.exists()) {
+            const data = usernameCheck.val();
+            const existingUids = Object.keys(data);
+            if (existingUids.some(uid => uid !== u.id)) {
+                await alert({
+                  title: "Error",
+                  description: 'This username is already taken',
+                  type: 'error'
+                });
+                return;
             }
         }
     }
+
+    const updates: any = {};
+    updates[`users/${u.id}/name`] = newName;
     
-    setSelectedUser(null);
-    await alert({
-      title: "Success",
-      description: 'User updated successfully',
-      type: 'success'
-    });
+    if (cleanUsername !== oldUsername) {
+        updates[`users/${u.id}/username`] = cleanUsername;
+    }
+
+    try {
+      await update(ref(db), updates);
+      setSelectedUser(null);
+      await alert({
+        title: "Success",
+        description: 'User updated successfully',
+        type: 'success'
+      });
+    } catch (error: any) {
+      console.error("Rename failed:", error);
+      await alert({
+        title: "Error",
+        description: 'Update failed: ' + error.message,
+        type: 'error'
+      });
+    }
   };
 
   const exportSampleCsv = () => {
