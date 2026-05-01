@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../firebase/config';
+import { initializeApp, deleteApp } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import { db, firebaseConfig } from '../firebase/config';
 import { ref, onValue, set, push, remove, get, update, query, orderByChild, equalTo } from 'firebase/database';
 import { User, Topic, Quiz, Feedback, QuizHistory } from '../types';
 import ScoreCard from './ScoreCard';
@@ -78,6 +80,13 @@ export default function AdminPanel() {
       borderPadding: 10
     }
   });
+
+  // Player creation state
+  const [isAddingUser, setIsAddingUser] = useState(false);
+  const [newPlayerName, setNewPlayerName] = useState('');
+  const [newPlayerUsername, setNewPlayerUsername] = useState('');
+  const [newPlayerPassword, setNewPlayerPassword] = useState('');
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [newQuiz, setNewQuiz] = useState({
     questionEn: '', questionHi: '',
     opt1En: '', opt1Hi: '',
@@ -243,6 +252,67 @@ export default function AdminPanel() {
     } catch (error: any) {
       console.error("Delete failed:", error);
       await alert({ title: "Error", description: 'Failed to delete user: ' + error.message, type: 'error' });
+    }
+  };
+
+  const createPlayerAccount = async () => {
+    if (!newPlayerName || !newPlayerUsername || !newPlayerPassword) {
+      await alert({ title: 'Error', description: 'All fields are required', type: 'error' });
+      return;
+    }
+
+    const cleanUsername = newPlayerUsername.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
+    const finalEmail = `${cleanUsername}@RaheeGames.in`;
+    
+    setIsCreatingUser(true);
+    try {
+      // 1. Create secondary auth instance to avoid signing out the admin
+      const secondaryApp = initializeApp(firebaseConfig, `SecondaryApp_${Date.now()}`);
+      const secondaryAuth = getAuth(secondaryApp);
+      
+      // 2. Create Auth User
+      const authResult = await createUserWithEmailAndPassword(secondaryAuth, finalEmail, newPlayerPassword);
+      const uid = authResult.user.uid;
+
+      // 3. Create DB User profile
+      const userRef = ref(db, `users/${uid}`);
+      const newUser: User = {
+        id: uid,
+        name: newPlayerName,
+        username: cleanUsername,
+        password: newPlayerPassword,
+        role: 'user',
+        status: 'approved', // Auto-approve admin-created players
+        xp: 0,
+        rank: 1,
+        raheeCoins: 100,
+        currentRound: 1,
+        currentQuizIndex: 0,
+        lifelines: { fiftyFifty: 1, changeQuiz: 1 },
+        language: 'en',
+        scores: {},
+        selectedTopicId: null
+      };
+
+      await set(userRef, newUser);
+      
+      // 4. Cleanup secondary app
+      await signOut(secondaryAuth);
+      await deleteApp(secondaryApp);
+
+      await alert({ title: 'Success', description: 'Player account created successfully!', type: 'success' });
+      setIsAddingUser(false);
+      setNewPlayerName('');
+      setNewPlayerUsername('');
+      setNewPlayerPassword('');
+
+    } catch (err: any) {
+      console.error("Failed to create user:", err);
+      let msg = err.message;
+      if (err.code === 'auth/email-already-in-use') msg = "Username already taken";
+      await alert({ title: 'Error', description: msg, type: 'error' });
+    } finally {
+      setIsCreatingUser(false);
     }
   };
 
@@ -1298,8 +1368,61 @@ export default function AdminPanel() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                <div className="space-y-4">
                   <div className="flex items-center justify-between px-2">
-                     <h3 className="text-xl font-black uppercase tracking-tighter">Real Players ({realPlayers.length})</h3>
+                     <h3 className="text-xl font-black uppercase tracking-tighter text-black dark:text-white">Real Players ({realPlayers.length})</h3>
+                     <button 
+                       onClick={() => setIsAddingUser(true)}
+                       className="flex items-center gap-2 px-4 py-2 bg-primary text-black rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 transition-all shadow-lg shadow-primary/20"
+                     >
+                       <Plus size={14} />
+                       Add Player
+                     </button>
                   </div>
+
+                  {isAddingUser && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 p-6 rounded-[2rem] space-y-4"
+                    >
+                       <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-xs font-black uppercase tracking-widest text-primary">New Player Form</h4>
+                          <button onClick={() => setIsAddingUser(false)} className="text-black/30 dark:text-white/30 hover:text-red-500">
+                             <CloseIcon size={16} />
+                          </button>
+                       </div>
+                       <div className="space-y-3">
+                          <input 
+                            value={newPlayerName}
+                            onChange={e => setNewPlayerName(e.target.value)}
+                            placeholder="Display Name"
+                            className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary text-sm"
+                          />
+                          <div className="relative">
+                             <span className="absolute left-4 top-1/2 -translate-y-1/2 text-primary font-black">@</span>
+                             <input 
+                               value={newPlayerUsername}
+                               onChange={e => setNewPlayerUsername(e.target.value)}
+                               placeholder="Username"
+                               className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 pl-10 rounded-2xl font-bold outline-none focus:border-primary text-sm"
+                             />
+                          </div>
+                          <input 
+                            type="password"
+                            value={newPlayerPassword}
+                            onChange={e => setNewPlayerPassword(e.target.value)}
+                            placeholder="Password"
+                            className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary text-sm"
+                          />
+                       </div>
+                       <button 
+                         disabled={isCreatingUser}
+                         onClick={createPlayerAccount}
+                         className="w-full bg-primary text-black font-black uppercase tracking-widest py-4 rounded-2xl hover:opacity-90 disabled:opacity-50 transition-all text-xs"
+                       >
+                         {isCreatingUser ? 'Creating Account...' : 'Create Account'}
+                       </button>
+                    </motion.div>
+                  )}
                   <div className="space-y-2">
                     {realPlayers.length === 0 ? (
                       <p className="text-white/20 italic p-4 text-center">No real players found</p>
