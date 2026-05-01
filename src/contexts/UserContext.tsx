@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types';
-import { db } from '../firebase/config';
+import { db, auth } from '../firebase/config';
 import { ref, onValue, get } from 'firebase/database';
+import { onAuthStateChanged } from 'firebase/auth';
 
 interface UserContextType {
   currentUser: User | null;
@@ -12,56 +13,52 @@ interface UserContextType {
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('rahee_quiz_user');
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (currentUser?.id) {
-      const userRef = ref(db, `users/${currentUser.id}`);
-      const unsubscribe = onValue(userRef, (snapshot) => {
-        if (snapshot.exists()) {
-          const userData = snapshot.val();
-          // Ensure structure for existing users and sync to DB if missing
-          let needsUpdate = false;
-          const updates: any = {};
-
-          if (!userData.lifelines) {
-            userData.lifelines = { fiftyFifty: 1, changeQuiz: 1 };
-            updates.lifelines = userData.lifelines;
-            needsUpdate = true;
-          }
-          if (userData.raheeCoins === undefined) {
-            userData.raheeCoins = 0;
-            updates.raheeCoins = 0;
-            needsUpdate = true;
-          }
-          if (!userData.language) {
-            userData.language = 'en';
-            updates.language = 'en';
-            needsUpdate = true;
-          }
-
-          const syncData = async () => {
-            if (needsUpdate) {
-              const { update } = await import('firebase/database');
-              await update(userRef, updates);
-            }
-          };
-          syncData();
-
-          setCurrentUser(prev => ({ ...prev, ...userData }));
-          localStorage.setItem('rahee_quiz_user', JSON.stringify({ ...currentUser, ...userData }));
-        }
-        setLoading(false);
-      });
-      return () => unsubscribe();
-    } else {
+  // Helper to sync user data from Firebase
+  const syncUserData = (username: string) => {
+    const userRef = ref(db, `users/${username}`);
+    return onValue(userRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const userData = snapshot.val();
+        setCurrentUser(prev => ({ ...prev, ...userData, id: username }));
+      }
       setLoading(false);
-    }
-  }, [currentUser?.id]);
+    });
+  };
+
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        // Try to get username from mapping
+        const mappingRef = ref(db, `uidToUsername/${user.uid}`);
+        const mappingSnap = await get(mappingRef);
+        
+        if (mappingSnap.exists()) {
+          const username = mappingSnap.val();
+          const unsubscribeUser = syncUserData(username);
+          return () => unsubscribeUser();
+        } else {
+           // No mapping found yet (might be halfway through signup or legacy)
+           const saved = localStorage.getItem('rahee_quiz_user');
+           if (saved) {
+             const parsed = JSON.parse(saved);
+             if (parsed.id) {
+               syncUserData(parsed.id);
+             }
+           } else {
+             setLoading(false);
+           }
+        }
+      } else {
+        setCurrentUser(null);
+        setLoading(false);
+      }
+    });
+
+    return () => unsubscribeAuth();
+  }, []);
 
   useEffect(() => {
     if (currentUser) {

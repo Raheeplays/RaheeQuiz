@@ -3,6 +3,7 @@ export type UserStatus = 'pending' | 'approved' | 'rejected' | 'banned' | 'revok
 
 export interface User {
   id: string;
+  fbUid?: string; // Firebase Auth UID for security
   name: string;
   username: string; // Added for searching
   password?: string;
