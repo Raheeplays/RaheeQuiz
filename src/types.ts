@@ -18,6 +18,8 @@ export interface User {
   selectedTopicId: string | null;
   selectedSubTopicId?: string;
   selectedSubSubTopicId?: string;
+  fixedTopicId?: string | null; // Locked topic ID
+  canSwitchTopic?: boolean; // Admin flag to allow switching
   language: 'en' | 'hi';
   raheeCoins: number;
   lifelines: {

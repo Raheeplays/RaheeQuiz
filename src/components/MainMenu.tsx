@@ -80,6 +80,15 @@ export default function MainMenu() {
   }, []);
 
   const handleStartQuiz = () => {
+     if (currentUser?.fixedTopicId && !currentUser?.canSwitchTopic) {
+        // If fixed topic but different from selected, force sync (should be handled at login/update)
+        if (currentUser.selectedTopicId !== currentUser.fixedTopicId) {
+           update(ref(db, `users/${currentUser.id}`), { selectedTopicId: currentUser.fixedTopicId });
+        }
+        setShowQuiz(true);
+        return;
+     }
+
      if (!currentUser?.selectedTopicId) {
         setShowTopicSelect(true);
         return;
@@ -212,14 +221,23 @@ export default function MainMenu() {
         <motion.button 
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.95 }}
-          onClick={() => setShowTopicSelect(true)}
-          className="h-28 sm:h-32 bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/10 rounded-[2rem] p-4 flex flex-row sm:flex-col items-center justify-center gap-3 sm:gap-4 active:scale-95 transition-all hover:bg-black/10 dark:hover:bg-white/5 group"
+          onClick={() => {
+            if (currentUser?.fixedTopicId && !currentUser?.canSwitchTopic) {
+                // Topic is fixed
+                return;
+            }
+            setShowTopicSelect(true);
+          }}
+          className={cn(
+             "h-28 sm:h-32 bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/10 rounded-[2rem] p-4 flex flex-row sm:flex-col items-center justify-center gap-3 sm:gap-4 active:scale-95 transition-all hover:bg-black/10 dark:hover:bg-white/5 group",
+             (currentUser?.fixedTopicId && !currentUser?.canSwitchTopic) && "opacity-50 grayscale cursor-not-allowed"
+          )}
         >
           <div className="w-10 h-10 sm:w-14 sm:h-14 bg-primary/10 rounded-full flex items-center justify-center text-primary group-hover:rotate-90 transition-all shrink-0">
             <Grid size={20} className="sm:w-8 sm:h-8" />
           </div>
           <span className="font-black text-sm sm:text-base uppercase tracking-tighter text-black dark:text-white text-center leading-tight">
-            {lang === 'en' ? 'New Topic' : 'नया विषय'}
+            {lang === 'en' ? (currentUser?.fixedTopicId && !currentUser?.canSwitchTopic ? 'Topic Locked' : 'New Topic') : (currentUser?.fixedTopicId && !currentUser?.canSwitchTopic ? 'विषय लॉक है' : 'नया विषय')}
           </span>
         </motion.button>
 

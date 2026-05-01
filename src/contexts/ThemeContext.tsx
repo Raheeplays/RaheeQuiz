@@ -8,6 +8,8 @@ interface ThemeContextType {
   setIsDark: (val: boolean) => void;
   soundEnabled: boolean;
   setSoundEnabled: (val: boolean) => void;
+  vibrationEnabled: boolean;
+  setVibrationEnabled: (val: boolean) => void;
   activeSkin: keyof typeof SKINS;
 }
 
@@ -21,6 +23,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   const [soundEnabled, setSoundEnabled] = useState(() => {
     const saved = localStorage.getItem('sound_enabled');
+    return saved ? JSON.parse(saved) : true;
+  });
+
+  const [vibrationEnabled, setVibrationEnabled] = useState(() => {
+    const saved = localStorage.getItem('vibration_enabled');
     return saved ? JSON.parse(saved) : true;
   });
   
@@ -42,6 +49,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, [soundEnabled]);
 
   useEffect(() => {
+    localStorage.setItem('vibration_enabled', JSON.stringify(vibrationEnabled));
+  }, [vibrationEnabled]);
+
+  useEffect(() => {
     const settingsRef = ref(db, 'settings/activeSkin');
     const unsub = onValue(settingsRef, (snapshot) => {
       if (snapshot.exists()) {
@@ -59,7 +70,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, [activeSkin]);
 
   return (
-    <ThemeContext.Provider value={{ isDark, setIsDark, soundEnabled, setSoundEnabled, activeSkin }}>
+    <ThemeContext.Provider value={{ isDark, setIsDark, soundEnabled, setSoundEnabled, vibrationEnabled, setVibrationEnabled, activeSkin }}>
       <div className={activeSkin}>
         {children}
       </div>

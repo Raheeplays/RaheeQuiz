@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { db } from '../firebase/config';
+import { db, auth } from '../firebase/config';
 import { ref, set, get, push } from 'firebase/database';
+import { signInAnonymously } from 'firebase/auth';
 import { useUser } from '../contexts/UserContext';
 import { User } from '../types';
 import { cn } from '../lib/utils';
@@ -25,7 +26,7 @@ export default function Auth() {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !password) {
+    if (!name || (!isLogin && !username) || !password) {
       setError('Please fill all fields');
       return;
     }
@@ -33,8 +34,12 @@ export default function Auth() {
     setLoading(true);
 
     try {
+      // Step 1: Sign in anonymously to Firebase
+      const authResult = await signInAnonymously(auth);
+      const fbUid = authResult.user.uid;
+
       if (isLogin) {
-        // Login Logic
+        // Login Logic (Check custom username/password)
         const usersRef = ref(db, 'users');
         const snapshot = await get(usersRef);
         if (snapshot.exists()) {
@@ -49,6 +54,7 @@ export default function Auth() {
               setLoading(false);
               return;
             }
+            // Link custom ID to this anonymous session if needed or just set current user
             setCurrentUser(userMatch);
           } else {
             setError('Invalid credentials');
@@ -58,12 +64,6 @@ export default function Auth() {
         }
       } else {
         // Signup logic
-        if (!username || !name || !password) {
-          setError('Please fill all fields');
-          setLoading(false);
-          return;
-        }
-        
         const usersRef = ref(db, 'users');
         const snapshot = await get(usersRef);
         const users = snapshot.val() || {};
@@ -75,21 +75,22 @@ export default function Auth() {
           return;
         }
         
-        await completeSignup();
+        await completeSignup(fbUid);
       }
     } catch (err) {
       console.error(err);
-      setError('Something went wrong');
+      setError('Connection failed. Check if Anonymous Auth is enabled in Firebase.');
     } finally {
       setLoading(false);
     }
   };
 
-  const completeSignup = async () => {
+  const completeSignup = async (fbUid: string) => {
     const cleanId = username.replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
     
     const newUser: any = {
       id: cleanId,
+      fbUid: fbUid, // Store the anonymous UID
       name,
       username: cleanId,
       password,
@@ -100,6 +101,8 @@ export default function Auth() {
       currentRound: 1,
       currentQuizIndex: 0,
       selectedTopicId: null,
+      fixedTopicId: null,
+      canSwitchTopic: false,
       language: 'en',
       raheeCoins: 0,
       lifelines: {

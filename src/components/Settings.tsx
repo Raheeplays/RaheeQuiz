@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { X, Volume2, VolumeX, Globe, LogOut, Shield, Moon, Sun, MessageSquare, ChevronRight } from 'lucide-react';
+import { X, Volume2, VolumeX, Globe, LogOut, Shield, Moon, Sun, MessageSquare, ChevronRight, Zap } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { cn } from '../lib/utils';
@@ -10,7 +10,7 @@ import { ref, update } from 'firebase/database';
 
 export default function Settings({ onClose, onShowFeedback }: { onClose: () => void, onShowFeedback: () => void }) {
   const { currentUser, setCurrentUser } = useUser();
-  const { isDark, setIsDark, soundEnabled, setSoundEnabled } = useTheme();
+  const { isDark, setIsDark, soundEnabled, setSoundEnabled, vibrationEnabled, setVibrationEnabled } = useTheme();
   
   const lang = currentUser?.language || 'en';
   const t = translations[lang] || translations.en;
@@ -53,6 +53,25 @@ export default function Settings({ onClose, onShowFeedback }: { onClose: () => v
                 className={cn("w-12 h-6 rounded-full transition-all relative", soundEnabled ? "bg-primary" : "bg-black/10 dark:bg-white/10")}
               >
                 <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white dark:bg-black transition-all", soundEnabled ? "left-7" : "left-1")} />
+              </button>
+           </div>
+
+           {/* Vibration */}
+           <div className="flex items-center justify-between p-4 bg-black/5 dark:bg-black border border-black/5 dark:border-white/5 rounded-2xl">
+              <div className="flex items-center gap-4">
+                 <div className={cn("p-3 rounded-xl", vibrationEnabled ? "bg-primary/20 text-primary" : "bg-black/10 dark:bg-white/5 text-black/40 dark:text-white/40")}>
+                    <Zap size={24} />
+                 </div>
+                 <div>
+                    <p className="font-bold text-sm">Haptic Feedback</p>
+                    <p className="text-[10px] opacity-40 uppercase font-black">Vibrate on answer</p>
+                 </div>
+              </div>
+              <button 
+                onClick={() => setVibrationEnabled(!vibrationEnabled)}
+                className={cn("w-12 h-6 rounded-full transition-all relative", vibrationEnabled ? "bg-primary" : "bg-black/10 dark:bg-white/10")}
+              >
+                <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white dark:bg-black transition-all", vibrationEnabled ? "left-7" : "left-1")} />
               </button>
            </div>
 

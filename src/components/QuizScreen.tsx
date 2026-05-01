@@ -17,7 +17,7 @@ import { Skeleton } from './ui/Skeleton';
 
 export default function QuizScreen({ onClose, language: initialLanguage = 'en', eventId, topicId: propTopicId }: { onClose: () => void, language?: 'en' | 'hi', eventId?: string, topicId?: string }) {
   const { currentUser } = useUser();
-  const { isDark } = useTheme();
+  const { isDark, soundEnabled, vibrationEnabled } = useTheme();
   const { confirm } = useDialog();
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [currentIndex, setCurrentIndex] = useState(eventId ? 0 : (currentUser?.currentQuizIndex || 0));
@@ -123,6 +123,20 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
     const isCorrect = index === quizzes[absoluteIndex].correctAnswerIndex;
     const xpGain = isCorrect ? 100 : 0;
     
+    // Play feedback
+    if (soundEnabled) {
+      const audio = new Audio(isCorrect 
+        ? 'https://assets.mixkit.co/active_storage/sfx/2013/2013-preview.mp3' 
+        : 'https://assets.mixkit.co/active_storage/sfx/2014/2014-preview.mp3'
+      );
+      audio.volume = 0.5;
+      audio.play().catch(e => console.log('Audio playback failed', e));
+    }
+    
+    if (vibrationEnabled && navigator.vibrate) {
+      navigator.vibrate(isCorrect ? [50] : [200, 100, 200]);
+    }
+
     // Update round stats
     setRoundStats(prev => ({
       correct: prev.correct + (isCorrect ? 1 : 0),

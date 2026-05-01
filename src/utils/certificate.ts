@@ -120,6 +120,38 @@ export const generateCertificate = (data: CertificateData) => {
   const percentage = Math.round((data.score / data.total) * 100);
   doc.text(`accuracy: ${percentage}%`, pageWidth / 2, 150, { align: 'center' });
 
+  // Metadata Encryption (Simple XOR)
+  const xorEncrypt = (text: string, key: string) => {
+    let result = '';
+    for (let i = 0; i < text.length; i++) {
+      result += String.fromCharCode(text.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+    }
+    return btoa(result); // Base64 encode for metadata safety
+  };
+
+  const encryptionKey = 'RaheeQuiz';
+  const metaName = data.userName;
+  const encryptedName = xorEncrypt(metaName, encryptionKey);
+  const encryptedKey = xorEncrypt(encryptionKey, encryptionKey); // Self-encrypted key for proof of process
+
+  // Add Metadata
+  doc.setProperties({
+    title: `Rahee Quiz Certificate - ${data.userName}`,
+    subject: `Topic: ${data.topicName}`,
+    author: 'Rahee Quiz Enterprise',
+    keywords: `rahee, quiz, ${data.topicName}, verified, ${metaName}`,
+    creator: 'Rahee Quiz Engine'
+  });
+
+  // Custom metadata strings in PDF info dictionaries aren't always accessible via setProperties, 
+  // but we can add them as hidden text or just standard properties.
+  // Most PDF viewers show "Subject" and "Keywords".
+  // We'll put the "Human Readable" info in Keywords and the "Encrypted" info in specialized fields if possible, 
+  // or just append to keywords.
+  doc.setProperties({
+    keywords: `Player: ${metaName}, Key: ${encryptionKey}, Encrypted: ${encryptedName}|${encryptedKey}`
+  });
+
   // Date
   doc.setFontSize(12);
   doc.text(`Issued on: ${data.date}`, 30, pageHeight - 30);

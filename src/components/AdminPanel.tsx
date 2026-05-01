@@ -1018,6 +1018,38 @@ export default function AdminPanel() {
                          </div>
                       )}
 
+                      <div className="mt-6 border-t border-black/5 dark:border-white/5 pt-6">
+                        <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-3 ml-1">Topic Lock Settings</p>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between p-4 bg-white dark:bg-black rounded-2xl border border-black/5 dark:border-white/5">
+                             <span className="text-black/40 dark:text-white/40 text-[10px] font-black uppercase tracking-widest">Allow Topic Switch</span>
+                             <button 
+                                onClick={() => update(ref(db, `users/${u.id}`), { canSwitchTopic: !u.canSwitchTopic })}
+                                className={cn(
+                                   "w-12 h-6 rounded-full transition-colors relative",
+                                   u.canSwitchTopic ? "bg-green-500" : "bg-black/20 dark:bg-white/10"
+                                )}
+                             >
+                                <div className={cn(
+                                   "absolute top-1 w-4 h-4 rounded-full bg-white transition-all shadow-sm",
+                                   u.canSwitchTopic ? "left-7" : "left-1"
+                                )} />
+                             </button>
+                          </div>
+                          <div className="flex flex-col gap-1 p-4 bg-white dark:bg-black rounded-2xl border border-black/5 dark:border-white/5">
+                             <span className="text-black/40 dark:text-white/40 text-[10px] font-black uppercase tracking-widest mb-2">Fixed Topic</span>
+                             <select 
+                                value={u.fixedTopicId || ''}
+                                onChange={(e) => update(ref(db, `users/${u.id}`), { fixedTopicId: e.target.value === '' ? null : e.target.value })}
+                                className="w-full bg-black/5 dark:bg-white/5 border-none rounded-lg p-2 text-[10px] font-bold uppercase tracking-widest outline-none text-black dark:text-white"
+                             >
+                                <option value="">NO FIXED TOPIC</option>
+                                {topics.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                             </select>
+                          </div>
+                        </div>
+                      </div>
+
                       <div className="pt-2 border-t border-white/5 mt-4">
                          <button 
                            onClick={() => fullResetPlayer(u.id)}
@@ -1474,7 +1506,8 @@ export default function AdminPanel() {
           }
           const eventId = `event-${Date.now()}`;
           const startTime = new Date(newEvent.startTime).getTime();
-          const endTime = startTime + (parseInt(newEvent.durationHours) * 60 * 60 * 1000);
+          // Use end time if provided, otherwise fallback to duration calculation
+          let endTime = newEvent.endTime ? new Date(newEvent.endTime).getTime() : (startTime + (parseInt(newEvent.durationHours) * 60 * 60 * 1000));
           
           const event: Event = {
             id: eventId,
@@ -1496,7 +1529,7 @@ export default function AdminPanel() {
           
           await set(ref(db, `events/${eventId}`), event);
           setNewEvent({ 
-            title: '', description: '', topicId: '', startTime: '', durationHours: '1', type: 'test',
+            title: '', description: '', topicId: '', startTime: '', endTime: '', durationHours: '1', type: 'test',
             hasTimer: false, timerDuration: '30', certificateTitle: 'CERTIFICATE OF ACHIEVEMENT',
             certificateSubtitle: 'This is to certify that', certificateFooter: 'Rahee Quiz Team',
             certificateColor: '#32befa',
@@ -1612,14 +1645,25 @@ export default function AdminPanel() {
                       </div>
                    </div>
                    <div className="space-y-4">
-                      <div className="space-y-1">
-                         <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Start Date & Time</label>
-                         <input 
-                           type="datetime-local"
-                           value={newEvent.startTime}
-                           onChange={e => setNewEvent({...newEvent, startTime: e.target.value})}
-                           className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary"
-                         />
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                         <div className="space-y-1">
+                            <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Start Date & Time</label>
+                            <input 
+                              type="datetime-local"
+                              value={newEvent.startTime}
+                              onChange={e => setNewEvent({...newEvent, startTime: e.target.value})}
+                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary"
+                            />
+                         </div>
+                         <div className="space-y-1">
+                            <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">End Date & Time</label>
+                            <input 
+                              type="datetime-local"
+                              value={newEvent.endTime}
+                              onChange={e => setNewEvent({...newEvent, endTime: e.target.value})}
+                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary"
+                            />
+                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1">
