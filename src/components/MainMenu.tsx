@@ -163,7 +163,10 @@ export default function MainMenu() {
     const unsubscribe = onValue(usersRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        setAllUsers(Object.values(data));
+        setAllUsers(Object.entries(data).map(([id, val]: [string, any]) => ({
+          id,
+          ...val
+        })));
       }
     });
 

@@ -24,23 +24,22 @@ export default function Auth() {
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!emailInput) {
-      setError('Please enter your email');
-      return;
-    }
-    if (!isLogin && !name) {
-      setError('Please enter your display name');
+    if (!name) {
+      setError('Please enter your Name');
       return;
     }
     if (!password) {
-      setError('Please enter your password');
+      setError('Please enter your Rahee Key');
       return;
     }
 
     if (!isLogin && password.length < 6) {
-      setError('Password must be at least 6 characters');
+      setError('Rahee Key must be at least 6 characters');
       return;
     }
+
+    const cleanName = name.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
+    const email = `${cleanName}@Rahee.in`;
 
     setError('');
     setLoading(true);
@@ -48,13 +47,18 @@ export default function Auth() {
     try {
       if (isLogin) {
         try {
-          const authResult = await signInWithEmailAndPassword(auth, emailInput.trim(), password);
+          const authResult = await signInWithEmailAndPassword(auth, email, password);
           const fbUid = authResult.user.uid;
 
           const userRef = ref(db, `users/${fbUid}`);
           const snapshot = await get(userRef);
           if (snapshot.exists()) {
             const userMatch = snapshot.val();
+            if (userMatch.status === 'pending') {
+              setError(`Your account is waiting for approval by Rahee.`);
+              setLoading(false);
+              return;
+            }
             if (userMatch.status === 'revoked' || userMatch.status === 'banned') {
               setError(`Your account has been ${userMatch.status}. Contact Rahee for help.`);
               setLoading(false);
@@ -73,11 +77,11 @@ export default function Auth() {
         }
       } else {
         try {
-          const authResult = await createUserWithEmailAndPassword(auth, emailInput.trim(), password);
-          await completeSignup(authResult.user.uid, emailInput.trim());
+          const authResult = await createUserWithEmailAndPassword(auth, email, password);
+          await completeSignup(authResult.user.uid, email);
         } catch (err: any) {
           if (err.code === 'auth/email-already-in-use') {
-            setError('Email already in use');
+            setError('Name already taken. Choose another.');
           } else {
             setError('Signup failed: ' + err.message);
           }
@@ -97,7 +101,7 @@ export default function Auth() {
       name,
       email: email,
       role: 'user',
-      status: 'approved',
+      status: 'pending',
       xp: 0,
       dailyXP: 0,
       weeklyXP: 0,
@@ -115,7 +119,9 @@ export default function Auth() {
     };
 
     await set(ref(db, `users/${fbUid}`), newUser);
-    setCurrentUser(newUser);
+    await auth.signOut(); // Sign out immediately after signup so they can't log in yet
+    setError('Signup successful! Waiting for Approval by Rahee.');
+    setLoading(false);
   };
 
   return (
@@ -135,32 +141,19 @@ export default function Auth() {
 
         <form onSubmit={handleAuth} className="space-y-6">
           <div className="space-y-4">
-            {!isLogin && (
-              <div>
-                <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Display Name</label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-primary outline-none transition-all font-bold"
-                  placeholder="Enter your name"
-                />
-              </div>
-            )}
-
             <div>
-              <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Email Address</label>
+              <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Name</label>
               <input
-                type="email"
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
                 className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-primary outline-none transition-all font-bold"
-                placeholder="your@email.com"
+                placeholder={isLogin ? "Enter your Name" : "Choose a Name"}
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Password</label>
+              <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Rahee Key</label>
               <input
                 type="password"
                 value={password}

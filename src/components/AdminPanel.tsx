@@ -380,8 +380,12 @@ export default function AdminPanel() {
       if (s.exists()) {
         const allTopicsData = s.val();
         let flatQuizzes: Quiz[] = [];
-        Object.values(allTopicsData).forEach((topicData: any) => {
-          flatQuizzes = [...flatQuizzes, ...(Object.values(topicData) as Quiz[])];
+        Object.entries(allTopicsData).forEach(([topicId, topicData]: [string, any]) => {
+          const quizzesWithId = Object.entries(topicData).map(([qId, qVal]: [string, any]) => ({
+            ...qVal,
+            id: qId
+          }));
+          flatQuizzes = [...flatQuizzes, ...quizzesWithId];
         });
         setQuizzes(flatQuizzes);
       }
@@ -560,7 +564,7 @@ export default function AdminPanel() {
     }
 
     const cleanUsername = newPlayerUsername.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
-    const finalEmail = `${cleanUsername}@RaheeGames.in`;
+    const finalEmail = `${cleanUsername}@Rahee.in`;
     
     setIsCreatingUser(true);
     try {
@@ -592,7 +596,7 @@ export default function AdminPanel() {
         username: cleanUsername,
         password: newPlayerPassword,
         role: 'user',
-        status: 'approved', // Auto-approve admin-created players
+        status: 'pending', // Manual admin creation also starts as pending
         xp: 0,
         rank: 1,
         raheeCoins: 100,
@@ -3911,7 +3915,7 @@ export default function AdminPanel() {
 
                     <div className="aspect-square w-full rounded-2xl overflow-hidden border border-black/5 dark:border-white/5 bg-black/10 flex items-center justify-center relative group">
                       <img 
-                        src={u.pendingAvatarUrl} 
+                        src={u.pendingAvatarUrl || ''} 
                         alt="Pending" 
                         className="w-full h-full object-cover"
                         onError={(e) => {
@@ -3921,7 +3925,7 @@ export default function AdminPanel() {
                       />
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                         <button 
-                          onClick={() => window.open(u.pendingAvatarUrl, '_blank')}
+                          onClick={() => window.open(u.pendingAvatarUrl || '', '_blank')}
                           className="px-4 py-2 bg-white text-black rounded-xl font-black text-[10px] uppercase tracking-widest shadow-xl"
                         >
                           View Full
@@ -3953,6 +3957,80 @@ export default function AdminPanel() {
                              pendingAvatarUrl: null
                            });
                            await alert({ title: 'Rejected', description: 'Request removed.', type: 'info' });
+                         }}
+                         className="px-6 bg-red-500 text-white font-black uppercase tracking-widest text-[10px] py-4 rounded-2xl shadow-lg shadow-red-500/20 active:scale-95 transition-all"
+                      >
+                         <XCircle size={14} />
+                      </button>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      case 'requests':
+        const unapprovedUsers = users.filter(u => u.status === 'pending');
+        return (
+          <div className="space-y-8 pb-32">
+            <div className="flex items-center justify-between px-2">
+               <div>
+                  <h2 className="text-2xl font-black uppercase tracking-tighter text-black dark:text-white">Approval Requests</h2>
+                  <p className="text-[10px] font-bold text-black/30 dark:text-white/30 uppercase tracking-[0.2em]">Users waiting for arena access</p>
+               </div>
+               <div className="bg-primary/10 text-primary px-4 py-2 rounded-xl border border-primary/20 text-xs font-black uppercase tracking-widest">
+                  {unapprovedUsers.length} Pending
+               </div>
+            </div>
+
+            {unapprovedUsers.length === 0 ? (
+              <div className="bg-black/5 dark:bg-[#111] p-20 rounded-[3rem] border border-black/5 dark:border-white/5 text-center">
+                <Shield size={64} className="mx-auto mb-4 text-black/10 dark:text-white/10" />
+                <p className="font-black uppercase tracking-widest text-black/20 dark:text-white/20">All users are approved</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {unapprovedUsers.map(u => (
+                  <motion.div 
+                    key={u.id}
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5 space-y-6 flex flex-col"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-primary/20 rounded-full flex items-center justify-center text-primary font-black">
+                        {u.name?.[0]?.toUpperCase() || 'P'}
+                      </div>
+                      <div>
+                        <p className="font-black text-sm text-black dark:text-white uppercase leading-none">{u.name}</p>
+                        <p className="text-[8px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mt-1">@{u.id}</p>
+                      </div>
+                    </div>
+
+                    <div className="bg-white/5 dark:bg-black/20 p-4 rounded-2xl border border-black/10 dark:border-white/5 flex-1">
+                       <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mb-1">Email</p>
+                       <p className="text-xs text-black/70 dark:text-white/70 truncate">{u.email}</p>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button 
+                         onClick={async () => {
+                           const v = await confirm({ title: 'Approve User?', description: `Allow ${u.name} to play Rahee Quiz?`, type: 'confirm' });
+                           if (!v) return;
+                           await update(ref(db, `users/${u.id}`), { status: 'approved' });
+                           await alert({ title: 'User Approved', description: `${u.name} can now login.`, type: 'success' });
+                         }}
+                         className="flex-1 bg-green-500 text-white font-black uppercase tracking-widest text-[10px] py-4 rounded-2xl shadow-lg shadow-green-500/20 active:scale-95 transition-all flex items-center justify-center gap-2"
+                      >
+                         <CheckCircle size={14} />
+                         Approve
+                      </button>
+                      <button 
+                         onClick={async () => {
+                           const v = await confirm({ title: 'Reject User?', description: `Reject ${u.name}'s registration?`, type: 'error' });
+                           if (!v) return;
+                           await remove(ref(db, `users/${u.id}`));
+                           await alert({ title: 'Rejected', description: 'User registration removed.', type: 'info' });
                          }}
                          className="px-6 bg-red-500 text-white font-black uppercase tracking-widest text-[10px] py-4 rounded-2xl shadow-lg shadow-red-500/20 active:scale-95 transition-all"
                       >
@@ -4021,6 +4099,7 @@ export default function AdminPanel() {
           <nav className="flex-1 space-y-2">
              {[
                { id: 'users', label: 'Players', icon: Users },
+               { id: 'requests', label: 'Requests', icon: Clock },
                { id: 'events', label: 'Events', icon: Calendar },
                { id: 'certificate', label: 'Cert Editor', icon: Shield },
                { id: 'topics', label: 'Topics', icon: HelpCircle },
