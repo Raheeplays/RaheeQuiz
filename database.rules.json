@@ -1,9 +1,9 @@
 {
   "rules": {
     "users": {
-        ".read": "auth != null",
         ".indexOn": ["username"],
         "$uid": {
+           ".read": "auth != null && ($uid == auth.uid || root.child('users').child(auth.uid).child('role').val() == 'admin')",
            ".write": "auth != null && (!data.exists() || $uid == auth.uid || root.child('users').child(auth.uid).child('role').val() == 'admin')"
         }
     },
@@ -40,8 +40,20 @@
        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'"
     },
     "matches": {
+       "$matchId": {
+          ".read": "auth != null && (data.child('participants').hasChild(auth.uid) || root.child('users').child(auth.uid).child('role').val() == 'admin')",
+          ".write": "auth != null && (data.child('participants').hasChild(auth.uid) || !data.exists() || root.child('users').child(auth.uid).child('role').val() == 'admin')"
+       }
+    },
+    "adminConfig": {
+       ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'",
+       ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'"
+    },
+    "fcmTokens": {
        ".read": "auth != null",
-       ".write": "auth != null"
+       "$uid": {
+          ".write": "auth != null && ($uid == auth.uid || root.child('users').child(auth.uid).child('role').val() == 'admin')"
+       }
     }
   }
 }

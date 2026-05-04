@@ -4,8 +4,8 @@ export type UserStatus = 'pending' | 'approved' | 'rejected' | 'banned' | 'revok
 export interface User {
   id: string;
   name: string;
-  username: string; // Added for searching
-  email?: string;
+  email: string;
+  username?: string; // Optional for searching
   password?: string;
   role: UserRole;
   status: UserStatus;
@@ -15,7 +15,17 @@ export interface User {
   currentQuizIndex: number;
   isBot?: boolean;
   avatar?: string;
+  avatarUrl?: string;
+  pendingAvatarUrl?: string | null;
   lastPlayed?: number;
+  lastLoginDate?: string; // YYYY-MM-DD
+  lastPlayedDate?: string; // YYYY-MM-DD
+  streak?: number;
+  lives?: {
+    count: number;
+    lastRefill: number; // timestamp
+    enabled: boolean;
+  };
   selectedTopicId: string | null;
   selectedSubTopicId?: string;
   selectedSubSubTopicId?: string;
@@ -41,6 +51,34 @@ export interface User {
     totalAttempted: number;
     correctAnswers: number;
     incorrectAnswers: number;
+  };
+  dailyXP?: number;
+  weeklyXP?: number;
+}
+
+export interface Settings {
+  livesEnabledForAll: boolean;
+  quizTimerEnabled?: boolean;
+  quizTimerSeconds?: number;
+  customization?: {
+    correctSound: string;
+    incorrectSound: string;
+    vibrationEnabled: boolean;
+    correctVibration: number;
+    incorrectVibration: number;
+    primaryColor: string;
+    accentColor: string;
+    animationIntensity: number; // 0 to 1
+  };
+  notificationTemplates?: {
+    challenge: { title: string; body: string };
+    dailyReset: { title: string; body: string };
+    weeklyReset: { title: string; body: string };
+    rankUp: { title: string; body: string };
+  };
+  resetTimes?: {
+    lastDailyReset: number;
+    lastWeeklyReset: number;
   };
 }
 
@@ -137,6 +175,7 @@ export interface Topic {
   id: string;
   name: string;
   description?: string;
+  order?: number;
   children?: { [childId: string]: Topic };
 }
 

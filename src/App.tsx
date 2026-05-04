@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { UserProvider, useUser } from './contexts/UserContext';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { DialogProvider } from './contexts/DialogContext';
+import { NotificationProvider } from './contexts/NotificationContext';
 import Splash from './components/Splash';
 import Auth from './components/Auth';
 import WaitingRoom from './components/WaitingRoom';
 import MainMenu from './components/MainMenu';
+import NotificationManager from './components/NotificationManager';
 import { AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 
@@ -58,6 +60,7 @@ function AppContent() {
 
   return (
     <div className={containerClass}>
+      <NotificationManager />
       <MainMenu />
     </div>
   );
@@ -66,11 +69,13 @@ function AppContent() {
 export default function App() {
   return (
     <ThemeProvider>
-      <UserProvider>
-        <DialogProvider>
-          <AppContent />
-        </DialogProvider>
-      </UserProvider>
+      <DialogProvider>
+        <UserProvider>
+          <NotificationProvider>
+            <AppContent />
+          </NotificationProvider>
+        </UserProvider>
+      </DialogProvider>
     </ThemeProvider>
   );
 }

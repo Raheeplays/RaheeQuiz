@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../firebase/config';
-import { ref, set, update } from 'firebase/database';
+import { ref, set, update, push, get } from 'firebase/database';
 import { User } from '../types';
 import { useUser } from '../contexts/UserContext';
+import { useNotifications } from '../contexts/NotificationContext';
 import { useDialog } from '../contexts/DialogContext';
-import { Search, UserPlus, UserCheck, UserMinus, X, Users, Clock, Shield, Search as SearchIcon } from 'lucide-react';
+import { Search, UserPlus, UserCheck, UserMinus, X, Users, Clock, Shield, Search as SearchIcon, Swords } from 'lucide-react';
 import { cn } from '../lib/utils';
 import ScoreCard from './ScoreCard';
 import { translations } from '../translations';
+import { NotificationService } from '../services/notificationService';
 
 interface SocialHubProps {
   onClose: () => void;
@@ -18,10 +20,12 @@ interface SocialHubProps {
 
 export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: SocialHubProps) {
   const { currentUser } = useUser();
+  const { serviceAccount } = useNotifications();
   const { confirm } = useDialog();
   const [activeTab, setActiveTab] = useState<'search' | 'friends' | 'pending'>('search');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [sentChallenges, setSentChallenges] = useState<string[]>([]);
 
   if (!currentUser) return null;
   const lang = currentUser.language || 'en';
@@ -58,6 +62,29 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
     await update(ref(db, `users/${targetUserId}/pendingRequests`), {
       [currentUser.id]: 'incoming'
     });
+
+    // Send FCM Notification
+    try {
+      const tokensSnap = await get(ref(db, `fcmTokens/${targetUserId}`));
+      if (tokensSnap.exists()) {
+        const tokens = Object.values(tokensSnap.val()) as string[];
+        const templateSnap = await get(ref(db, 'customNotifications/friendRequest'));
+        let title = 'New Friend Request';
+        let body = `${currentUser.name} wants to be your friend!`;
+
+        if (templateSnap.exists()) {
+          const template = templateSnap.val();
+          if (template?.title) title = template.title;
+          if (template?.body) body = template.body.replace('{player}', currentUser.name);
+        }
+
+        for (const token of tokens) {
+          await NotificationService.sendToToken(serviceAccount, token, title, body);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to send friend request notification:", e);
+    }
   };
 
   const acceptFriendRequest = async (targetUserId: string) => {
@@ -65,6 +92,29 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
     await update(ref(db, `users/${targetUserId}/friends`), { [currentUser.id]: true });
     await set(ref(db, `users/${currentUser.id}/pendingRequests/${targetUserId}`), null);
     await set(ref(db, `users/${targetUserId}/pendingRequests/${currentUser.id}`), null);
+
+    // Send FCM Notification to the requester
+    try {
+      const tokensSnap = await get(ref(db, `fcmTokens/${targetUserId}`));
+      if (tokensSnap.exists()) {
+        const tokens = Object.values(tokensSnap.val()) as string[];
+        const templateSnap = await get(ref(db, 'customNotifications/friendAccept'));
+        let title = 'Friend Request Accepted';
+        let body = `${currentUser.name} accepted your friend request!`;
+
+        if (templateSnap.exists()) {
+          const template = templateSnap.val();
+          if (template?.title) title = template.title;
+          if (template?.body) body = template.body.replace('{player}', currentUser.name);
+        }
+
+        for (const token of tokens) {
+          await NotificationService.sendToToken(serviceAccount, token, title, body);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to send friend accept notification:", e);
+    }
   };
 
   const cancelOrDeclineRequest = async (targetUserId: string) => {
@@ -83,6 +133,73 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
       await set(ref(db, `users/${currentUser.id}/friends/${targetUserId}`), null);
       await set(ref(db, `users/${targetUserId}/friends/${currentUser.id}`), null);
     }
+  };
+
+  const sendChallenge = async (targetUserId: string) => {
+    // Create match room
+    const roomRef = push(ref(db, 'matches'));
+    const roomId = roomRef.key!;
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+
+    const room = {
+      id: roomId,
+      topicId: currentUser.selectedTopicId || 'general',
+      joinCode: code,
+      hostId: currentUser.id,
+      participants: {
+        [currentUser.id]: { userId: currentUser.id, score: 0, currentIndex: 0, finished: false, accuracy: 0 }
+      },
+      status: 'waiting',
+      timerEnabled: true,
+      whoFirstMode: true,
+      totalTime: 5,
+      createdAt: Date.now(),
+      isChallenge: true,
+      targetUserId
+    };
+
+    await set(roomRef, room);
+    
+    // Notify the user via RTDB
+    await update(ref(db, `users/${targetUserId}/challenges`), {
+      [currentUser.id]: {
+        roomId,
+        hostId: currentUser.id,
+        hostName: currentUser.name,
+        timestamp: Date.now(),
+        status: 'pending'
+      }
+    });
+
+    // Real FCM Notification if Admin SDK is loaded
+    if (serviceAccount) {
+      try {
+        // Get target user's tokens
+        const tokensSnapshot = await get(ref(db, `fcmTokens/${targetUserId}`));
+        if (tokensSnapshot.exists()) {
+          const tokens = Object.values(tokensSnapshot.val()) as string[];
+          
+          // Get template
+          const templateSnapshot = await get(ref(db, 'customNotifications/challenge'));
+          let title = "New Challenge";
+          let body = `${currentUser.name} Challenging You For A Match`;
+          
+          if (templateSnapshot.exists()) {
+            const template = templateSnapshot.val();
+            if (template?.title) title = template.title;
+            if (template?.body) body = template.body.replace('{player}', currentUser.name);
+          }
+
+          for (const token of tokens) {
+            await NotificationService.sendToToken(serviceAccount, token, title, body);
+          }
+        }
+      } catch (err) {
+        console.error("FCM Send failed:", err);
+      }
+    }
+    
+    setSentChallenges(prev => [...prev, targetUserId]);
   };
 
   return (
@@ -223,8 +340,12 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                       className="flex items-center gap-4 cursor-pointer"
                       onClick={() => setSelectedUser(user)}
                     >
-                       <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center text-primary font-black text-xl border border-primary/20">
-                          {(user.name || 'P')[0].toUpperCase()}
+                       <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center text-primary font-black text-xl border border-primary/20 overflow-hidden">
+                          {user.avatarUrl ? (
+                            <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover" />
+                          ) : (
+                            (user.name || 'P')[0].toUpperCase()
+                          )}
                        </div>
                        <div className="text-left">
                           <h4 className="font-bold text-sm text-black dark:text-white">{user.name}</h4>
@@ -234,12 +355,30 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                           </div>
                        </div>
                     </div>
-                    <button 
-                      onClick={() => removeFriend(user.id)}
-                      className="p-3 bg-red-500/10 text-red-500 rounded-xl md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-red-500 hover:text-white"
-                    >
-                      <UserMinus size={18} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                       <button 
+                         onClick={() => !sentChallenges.includes(user.id) && sendChallenge(user.id)}
+                         disabled={sentChallenges.includes(user.id)}
+                         className={cn(
+                           "p-3 rounded-xl transition-all flex items-center gap-2",
+                           sentChallenges.includes(user.id) 
+                             ? "bg-green-500/10 text-green-500 cursor-default" 
+                             : "bg-primary/10 text-primary hover:bg-primary hover:text-black"
+                         )}
+                         title={sentChallenges.includes(user.id) ? "Challenge Requested" : "Challenge to a Match"}
+                       >
+                         {sentChallenges.includes(user.id) ? <UserCheck size={18} /> : <Swords size={18} />}
+                         <span className="hidden md:inline text-[8px] font-black uppercase tracking-widest">
+                           {sentChallenges.includes(user.id) ? "Requested" : "Challenge"}
+                         </span>
+                       </button>
+                       <button 
+                         onClick={() => removeFriend(user.id)}
+                         className="p-3 bg-red-500/10 text-red-500 rounded-xl md:opacity-0 md:group-hover:opacity-100 transition-all hover:bg-red-500 hover:text-white"
+                       >
+                         <UserMinus size={18} />
+                       </button>
+                    </div>
                   </div>
                 )
               )) : (
@@ -259,8 +398,12 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                   {pendingIncoming.map(user => (
                     <div key={user.id} className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl border border-black/5 dark:border-white/5 flex items-center justify-between">
                        <div className="flex items-center gap-4 text-black dark:text-white">
-                          <div className="w-10 h-10 bg-black/5 dark:bg-white/10 rounded-xl flex items-center justify-center text-black/30 dark:text-white/40">
-                             {(user.name || 'P')[0].toUpperCase()}
+                          <div className="w-10 h-10 bg-black/5 dark:bg-white/10 rounded-xl flex items-center justify-center text-black/30 dark:text-white/40 overflow-hidden">
+                             {user.avatarUrl ? (
+                               <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover" />
+                             ) : (
+                               (user.name || 'P')[0].toUpperCase()
+                             )}
                           </div>
                           <div className="text-left">
                              <h4 className="font-bold text-sm">{user.name}</h4>
@@ -292,8 +435,12 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                   {pendingOutgoing.map(user => (
                     <div key={user.id} className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl border border-black/5 dark:border-white/5 flex items-center justify-between opacity-60">
                        <div className="flex items-center gap-4 text-black dark:text-white">
-                          <div className="w-10 h-10 bg-black/5 dark:bg-white/10 rounded-xl flex items-center justify-center text-black/20 dark:text-white/20">
-                             {(user.name || 'P')[0].toUpperCase()}
+                          <div className="w-10 h-10 bg-black/5 dark:bg-white/10 rounded-xl flex items-center justify-center text-black/20 dark:text-white/20 overflow-hidden">
+                             {user.avatarUrl ? (
+                               <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover" />
+                             ) : (
+                               (user.name || 'P')[0].toUpperCase()
+                             )}
                           </div>
                           <div className="text-left">
                              <h4 className="font-bold text-sm">{user.name}</h4>

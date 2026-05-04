@@ -45,13 +45,22 @@ export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCoun
         <div className="absolute -top-10 -right-10 w-40 h-40 bg-[#32befa]/10 rounded-full blur-3xl" />
         
         <div className="flex justify-between items-start relative z-10">
-          <div>
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#32befa] mb-2 block">
-              Performance Index
-            </span>
-            <h2 className="text-3xl font-black text-black dark:text-white italic tracking-tighter uppercase">
-              {user.name}
-            </h2>
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 bg-primary rounded-2xl flex items-center justify-center text-black font-black text-2xl shadow-xl shadow-primary/20 overflow-hidden border-2 border-primary">
+               {user.avatarUrl ? (
+                 <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover" />
+               ) : (
+                 (user.name || 'P')[0].toUpperCase()
+               )}
+            </div>
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#32befa] mb-1 block">
+                Performance Index
+              </span>
+              <h2 className="text-3xl font-black text-black dark:text-white italic tracking-tighter uppercase">
+                {user.name}
+              </h2>
+            </div>
           </div>
           <div className="bg-black/5 dark:bg-white/5 backdrop-blur-md p-3 rounded-2xl border border-black/5 dark:border-white/10">
             <Trophy className="text-yellow-500" size={24} />

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { db } from '../firebase/config';
 import { ref, onValue } from 'firebase/database';
-import { SKINS } from '../types';
+import { SKINS, Settings } from '../types';
 
 interface ThemeContextType {
   isDark: boolean;
@@ -11,11 +11,13 @@ interface ThemeContextType {
   vibrationEnabled: boolean;
   setVibrationEnabled: (val: boolean) => void;
   activeSkin: keyof typeof SKINS;
+  customization: Settings['customization'] | undefined;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [customization, setCustomization] = useState<Settings['customization']>();
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem('theme_dark');
     return saved ? JSON.parse(saved) : true; // Default dark
@@ -32,6 +34,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   });
   
   const [activeSkin, setActiveSkin] = useState<keyof typeof SKINS>('rahee');
+
+  useEffect(() => {
+    const custRef = ref(db, 'settings/customization');
+    const unsub = onValue(custRef, (s) => {
+      if (s.exists()) {
+        setCustomization(s.val());
+      }
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('theme_dark', JSON.stringify(isDark));
@@ -62,15 +74,27 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return () => unsub();
   }, []);
 
-  // Inject CSS variables for the skin
+  // Inject CSS variables for the skin + customization overrides
   useEffect(() => {
     const skin = SKINS[activeSkin] || SKINS['rahee'];
-    document.documentElement.style.setProperty('--primary-color', skin.primary);
-    document.documentElement.style.setProperty('--accent-color', skin.accent);
-  }, [activeSkin]);
+    const p = customization?.primaryColor || skin.primary;
+    const a = customization?.accentColor || skin.accent;
+    
+    document.documentElement.style.setProperty('--primary-color', p);
+    document.documentElement.style.setProperty('--accent-color', a);
+  }, [activeSkin, customization]);
 
   return (
-    <ThemeContext.Provider value={{ isDark, setIsDark, soundEnabled, setSoundEnabled, vibrationEnabled, setVibrationEnabled, activeSkin }}>
+    <ThemeContext.Provider value={{ 
+      isDark, 
+      setIsDark, 
+      soundEnabled, 
+      setSoundEnabled, 
+      vibrationEnabled, 
+      setVibrationEnabled, 
+      activeSkin,
+      customization
+    }}>
       <div className={activeSkin}>
         {children}
       </div>

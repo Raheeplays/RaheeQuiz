@@ -1,20 +1,35 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { User } from '../types';
+import { User, Settings } from '../types';
 import { db, auth } from '../firebase/config';
-import { ref, onValue, get, update } from 'firebase/database';
+import { ref, onValue, get, update, onDisconnect } from 'firebase/database';
 import { onAuthStateChanged } from 'firebase/auth';
 
 interface UserContextType {
   currentUser: User | null;
   setCurrentUser: (user: User | null) => void;
   loading: boolean;
+  settings: Settings | null;
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Fetch Settings
+  useEffect(() => {
+    const settingsRef = ref(db, 'settings');
+    const unsubscribe = onValue(settingsRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setSettings(snapshot.val());
+      } else {
+        setSettings({ livesEnabledForAll: true }); // Default
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
@@ -44,6 +59,62 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
               needsUpdate = true;
             }
 
+            // --- Daily Login & Streak Logic ---
+            const today = new Date().toISOString().split('T')[0];
+            if (userData.lastLoginDate !== today) {
+              userData.raheeCoins = (userData.raheeCoins || 0) + 100;
+              userData.lastLoginDate = today;
+              updates.raheeCoins = userData.raheeCoins;
+              updates.lastLoginDate = today;
+              needsUpdate = true;
+            }
+
+            // Streak check
+            if (userData.lastPlayedDate) {
+              const lastPlayed = new Date(userData.lastPlayedDate);
+              const yesterday = new Date();
+              yesterday.setDate(yesterday.getDate() - 1);
+              const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+              if (userData.lastPlayedDate === yesterdayStr) {
+                // Streak continues - this is updated when they finish a quiz
+              } else if (userData.lastPlayedDate !== today) {
+                // Streak broken
+                userData.streak = 0;
+                updates.streak = 0;
+                needsUpdate = true;
+              }
+            } else {
+              userData.streak = 0;
+              updates.streak = 0;
+              needsUpdate = true;
+            }
+
+            // --- Lives Logic ---
+            if (!userData.lives) {
+              userData.lives = {
+                count: 16,
+                lastRefill: Date.now(),
+                enabled: true
+              };
+              updates.lives = userData.lives;
+              needsUpdate = true;
+            } else {
+              // Refill logic: +1 every 16 minutes
+              const now = Date.now();
+              const diffMs = now - userData.lives.lastRefill;
+              const refillInterval = 16 * 60 * 1000; // 16 minutes
+
+              if (diffMs >= refillInterval && userData.lives.count < 16) {
+                const livesToAdd = Math.floor(diffMs / refillInterval);
+                const newCount = Math.min(16, userData.lives.count + livesToAdd);
+                userData.lives.count = newCount;
+                userData.lives.lastRefill = userData.lives.lastRefill + (livesToAdd * refillInterval);
+                updates.lives = userData.lives;
+                needsUpdate = true;
+              }
+            }
+
             if (needsUpdate) {
               update(userRef, updates).catch(err => console.error("Sync error:", err));
             }
@@ -57,7 +128,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         }, (error) => {
           console.error("Database read error:", error);
           if (error.message.includes('permission_denied')) {
-            // This shouldn't happen if auth exists, but good to handle
             setCurrentUser(null);
           }
           setLoading(false);
@@ -75,7 +145,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <UserContext.Provider value={{ currentUser, setCurrentUser, loading }}>
+    <UserContext.Provider value={{ currentUser, setCurrentUser, loading, settings }}>
       {children}
     </UserContext.Provider>
   );

@@ -65,8 +65,8 @@ export default function WinnerLoserScreen({ history, onClose, total }: WinnerLos
            <Trophy size={64} className="text-black" />
         </div>
 
-        <h1 className="text-5xl font-black text-white mb-2 leading-none uppercase tracking-tighter">
-          {scorePercentage > 50 ? 'VICTORY' : 'NICE EFFORT'}
+        <h1 className="text-4xl font-black text-white mb-2 leading-none uppercase tracking-tighter">
+          QUIZ COMPLETED
         </h1>
         <p className="text-white/40 font-bold mb-8 uppercase tracking-widest">Global Ranking Results</p>
 
@@ -107,7 +107,7 @@ export default function WinnerLoserScreen({ history, onClose, total }: WinnerLos
              className="bg-white/5 border border-white/10 text-white font-bold h-16 rounded-2xl flex items-center justify-center gap-2"
            >
              <Home size={20} />
-             HOME
+             FINISH BATTLE
            </button>
            <button 
              onClick={handleRequestMore}

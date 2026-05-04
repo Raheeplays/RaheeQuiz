@@ -118,7 +118,7 @@ export default function Events() {
       <QuizScreen 
         onClose={() => setActiveEventQuiz(null)} 
         eventId={activeEventQuiz.id}
-        topicId={activeEventQuiz.topicId}
+        topicIds={[activeEventQuiz.topicId]}
       />
     );
   }

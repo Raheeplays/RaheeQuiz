@@ -1,21 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { db, auth } from '../firebase/config';
-import { ref, set, get, push, query, orderByChild, equalTo } from 'firebase/database';
+import { ref, set, get } from 'firebase/database';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { useUser } from '../contexts/UserContext';
 import { User } from '../types';
 import { cn } from '../lib/utils';
-import { LogIn, UserPlus } from 'lucide-react';
-// import { CLASSES, SUBJECTS } from '../constants';
+import { LogIn, UserPlus, Shield } from 'lucide-react';
 import { translations } from '../translations';
 
 export default function Auth() {
   const { setCurrentUser } = useUser();
   const [isLogin, setIsLogin] = useState(true);
-  const [useEmail, setUseEmail] = useState(false);
   const [name, setName] = useState('');
-  const [username, setUsername] = useState('');
   const [emailInput, setEmailInput] = useState('');
   const [password, setPassword] = useState('');
   
@@ -27,15 +24,8 @@ export default function Auth() {
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    const cleanUsername = username.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
-    const finalEmail = useEmail ? emailInput : `${cleanUsername}@RaheeGames.in`;
-
-    if (useEmail && !emailInput) {
+    if (!emailInput) {
       setError('Please enter your email');
-      return;
-    }
-    if (!useEmail && !username) {
-      setError('Please enter your username');
       return;
     }
     if (!isLogin && !name) {
@@ -47,14 +37,18 @@ export default function Auth() {
       return;
     }
 
+    if (!isLogin && password.length < 6) {
+      setError('Password must be at least 6 characters');
+      return;
+    }
+
     setError('');
     setLoading(true);
 
     try {
       if (isLogin) {
-        // Login Logic
         try {
-          const authResult = await signInWithEmailAndPassword(auth, finalEmail, password);
+          const authResult = await signInWithEmailAndPassword(auth, emailInput.trim(), password);
           const fbUid = authResult.user.uid;
 
           const userRef = ref(db, `users/${fbUid}`);
@@ -78,28 +72,12 @@ export default function Auth() {
           }
         }
       } else {
-        // Signup logic
         try {
-          const authResult = await createUserWithEmailAndPassword(auth, finalEmail, password);
-          // Now we ARE authenticated, we can check the 'users' node for username conflicts
-          // If using derived email, Auth would have already failed if email is in use (which is 1:1 with username)
-
-          const usersRef = ref(db, 'users');
-          const usernameQuery = query(usersRef, orderByChild('username'), equalTo(cleanUsername));
-          const nameCheck = await get(usernameQuery);
-          
-          if (nameCheck.exists()) {
-            // Someone else has this username
-            await authResult.user.delete();
-            setError('Username already taken');
-            setLoading(false);
-            return;
-          }
-
-          await completeSignup(authResult.user.uid, cleanUsername);
+          const authResult = await createUserWithEmailAndPassword(auth, emailInput.trim(), password);
+          await completeSignup(authResult.user.uid, emailInput.trim());
         } catch (err: any) {
           if (err.code === 'auth/email-already-in-use') {
-            setError(useEmail ? 'Email already in use' : 'Username already taken');
+            setError('Email already in use');
           } else {
             setError('Signup failed: ' + err.message);
           }
@@ -109,74 +87,50 @@ export default function Auth() {
       console.error(err);
       setError('Connection failed. Please try again.');
     } finally {
-      setLoading(false);
+      if (error) setLoading(false);
     }
   };
 
-  const completeSignup = async (fbUid: string, cleanId: string) => {
-    const newUser: any = {
+  const completeSignup = async (fbUid: string, email: string) => {
+    const newUser: User = {
       id: fbUid,
-      fbUid: fbUid,
       name,
-      username: cleanId,
-      email: useEmail ? emailInput : null,
-      password: password,
+      email: email,
       role: 'user',
-      status: 'pending',
+      status: 'approved',
       xp: 0,
+      dailyXP: 0,
+      weeklyXP: 0,
       rank: 1,
       currentRound: 1,
       currentQuizIndex: 0,
       selectedTopicId: null,
-      fixedTopicId: null,
-      canSwitchTopic: false,
       language: 'en',
-      raheeCoins: 0,
+      raheeCoins: 100,
       lifelines: {
-        'fiftyFifty': 0,
-        'changeQuiz': 0
+        'fiftyFifty': 1,
+        'changeQuiz': 1
       },
       scores: {}
     };
 
     await set(ref(db, `users/${fbUid}`), newUser);
-    setCurrentUser(newUser as User);
+    setCurrentUser(newUser);
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
+    <div className="min-h-screen bg-black flex items-center justify-center p-6 bg-[radial-gradient(circle_at_center,_var(--primary-color)_0%,_transparent_100%)] bg-opacity-5">
       <motion.div
-        initial={{ y: 20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        className="w-full max-w-md bg-[#111] p-8 rounded-3xl border border-white/5 shadow-2xl"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-md bg-white/5 backdrop-blur-2xl p-8 rounded-[3rem] border border-white/10 shadow-2xl"
       >
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-black text-[#32befa] mb-2 font-mono text-center">RAHEE</h1>
-          <p className="text-white/60">
-            {isLogin ? 'Welcome back, let\'s quiz!' : 'Create an account to play'}
-          </p>
-        </div>
-
-        {/* Auth Toggle */}
-        <div className="flex bg-black/50 p-1 rounded-2xl mb-8 border border-white/5">
-          <button
-            onClick={() => setUseEmail(false)}
-            className={cn(
-              "flex-1 py-3 rounded-xl text-sm font-bold transition-all",
-              !useEmail ? "bg-[#32befa] text-black shadow-lg" : "text-white/40 hover:text-white"
-            )}
-          >
-            Username
-          </button>
-          <button
-            onClick={() => setUseEmail(true)}
-            className={cn(
-              "flex-1 py-3 rounded-xl text-sm font-bold transition-all",
-              useEmail ? "bg-[#32befa] text-black shadow-lg" : "text-white/40 hover:text-white"
-            )}
-          >
-            Email
-          </button>
+        <div className="flex flex-col items-center mb-10">
+          <div className="w-20 h-20 bg-primary rounded-[2.5rem] flex items-center justify-center text-black mb-4 shadow-[0_0_30px_rgba(var(--primary-color),0.3)]">
+            <Shield size={40} />
+          </div>
+          <h1 className="text-3xl font-black text-white tracking-tighter">Rahee Quiz</h1>
+          <p className="text-white/40 text-[10px] font-bold uppercase tracking-[0.3em] mt-2">Secure Arena Access</p>
         </div>
 
         <form onSubmit={handleAuth} className="space-y-6">
@@ -187,60 +141,23 @@ export default function Auth() {
                 <input
                   type="text"
                   value={name}
-                  onChange={(e) => {
-                    setName(e.target.value);
-                    if (!useEmail) {
-                      setUsername(e.target.value.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, ''));
-                    }
-                  }}
-                  className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-[#32befa] outline-none transition-all"
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-primary outline-none transition-all font-bold"
                   placeholder="Enter your name"
                 />
               </div>
             )}
 
-            {useEmail ? (
-              <div>
-                <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Email Address</label>
-                <input
-                  type="email"
-                  value={emailInput}
-                  onChange={(e) => setEmailInput(e.target.value)}
-                  className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-[#32befa] outline-none transition-all"
-                  placeholder="your@email.com"
-                />
-              </div>
-            ) : (
-              <div>
-                <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Username (ID)</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#34d399] font-black">@</span>
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="w-full bg-black border border-white/10 rounded-2xl p-4 pl-10 text-white focus:border-[#32befa] outline-none transition-all"
-                    placeholder="rahee_rock"
-                  />
-                </div>
-              </div>
-            )}
-
-            {!isLogin && useEmail && (
-              <div>
-                <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Unique Username</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#34d399] font-black">@</span>
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="w-full bg-black border border-white/10 rounded-2xl p-4 pl-10 text-white focus:border-[#32befa] outline-none transition-all"
-                    placeholder="choose_username"
-                  />
-                </div>
-              </div>
-            )}
+            <div>
+              <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Email Address</label>
+              <input
+                type="email"
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-primary outline-none transition-all font-bold"
+                placeholder="your@email.com"
+              />
+            </div>
 
             <div>
               <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Password</label>
@@ -248,7 +165,7 @@ export default function Auth() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-[#32befa] outline-none transition-all"
+                className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-primary outline-none transition-all font-bold"
                 placeholder="••••••••"
               />
             </div>
@@ -258,14 +175,15 @@ export default function Auth() {
             <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
-              className="bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-2xl text-sm font-medium"
+              className="bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-2xl text-xs font-black uppercase tracking-widest text-center"
             >
               {error}
             </motion.div>
           )}
+
           <button
             disabled={loading}
-            className="w-full bg-[#32befa] text-black font-black p-5 rounded-2xl flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 shadow-lg shadow-[#32befa]/20"
+            className="w-full bg-primary text-black font-black p-5 rounded-2xl flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 shadow-lg shadow-primary/20 uppercase tracking-widest text-xs"
           >
             {loading ? (
               <div className="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin" />
@@ -283,12 +201,15 @@ export default function Auth() {
           </button>
         </form>
 
-        <div className="mt-6 text-center">
+        <div className="mt-8 text-center border-t border-white/5 pt-8">
           <button
-            onClick={() => setIsLogin(!isLogin)}
-            className="text-white/40 hover:text-white transition-colors text-sm"
+            onClick={() => {
+              setIsLogin(!isLogin);
+              setError('');
+            }}
+            className="text-white/40 hover:text-primary transition-colors text-[10px] font-black uppercase tracking-widest"
           >
-            {isLogin ? 'New here? Create an account' : 'Already have an account? Login'}
+            {isLogin ? "Don't have an account? Create one" : "Already have an account? Login"}
           </button>
         </div>
       </motion.div>

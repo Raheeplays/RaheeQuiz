@@ -5,8 +5,11 @@ import { db, firebaseConfig } from '../firebase/config';
 import { ref, onValue, set, push, remove, get, update, query, orderByChild, equalTo } from 'firebase/database';
 import { User, Topic, Quiz, Feedback, QuizHistory } from '../types';
 import ScoreCard from './ScoreCard';
-import { Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2, Coins, TrendingUp, Calendar, Sun, Moon, Star } from 'lucide-react';
+import { Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2, Coins, TrendingUp, Calendar, Sun, Moon, Star, Settings as SettingsIcon, Bell, Send, Share2, Image as ImageIcon, Search, Volume2, Play, RotateCcw, Zap, ChevronUp, ChevronDown } from 'lucide-react';
+import { NotificationService, ServiceAccount } from '../services/notificationService';
+import { useNotifications } from '../contexts/NotificationContext';
 import { useTheme } from '../contexts/ThemeContext';
+import { useUser } from '../contexts/UserContext';
 import { useDialog } from '../contexts/DialogContext';
 import { cn } from '../lib/utils';
 import Papa from 'papaparse';
@@ -19,6 +22,7 @@ import CertificatePreview from './CertificatePreview';
 
 export default function AdminPanel() {
   const { isDark, setIsDark } = useTheme();
+  const { currentUser: adminUser, settings } = useUser();
   const { alert, confirm } = useDialog();
   const [activeSubTab, setActiveSubTab] = useState('users');
   const [users, setUsers] = useState<User[]>([]);
@@ -38,18 +42,273 @@ export default function AdminPanel() {
   const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
   const [topicPath, setTopicPath] = useState<string[]>([]); // Array of IDs representing the path
   const [quizTopicPath, setQuizTopicPath] = useState<Topic[]>([]); 
-  const [newNode, setNewNode] = useState({ id: '', name: '', description: '' });
+  const [newNode, setNewNode] = useState<{ id: string; name: string; description: string; order?: number }>({ id: '', name: '', description: '', order: 0 });
   const [nodeEditMode, setNodeEditMode] = useState<string | null>(null);
-  const [certPreviewData, setCertPreviewData] = useState({
-    name: 'Student Name',
-    topic: 'Quiz Mastery',
-    score: 100,
-    total: 100,
+  const [notifForm, setNotifForm] = useState({
+    title: '',
+    body: '',
+    imageUrl: '',
+    targetType: 'all' as 'all' | 'topic' | 'token' | 'player',
+    topic: 'all_users',
+    token: '',
+    targetUserId: ''
   });
+  const [tokenLinkInput, setTokenLinkInput] = useState('');
+  useEffect(() => {
+    setTokenLinkInput('');
+  }, [selectedUser?.id]);
+  const { serviceAccount, setServiceAccount } = useNotifications();
+  const [notifSchedules, setNotifSchedules] = useState<any[]>([]);
+  const [customTemplates, setCustomTemplates] = useState({
+    challenge: { title: 'New Challenge!', body: '{player} has challenged you to a match!' },
+    rankUp: { title: 'Rank Increased!', body: 'Congratulations! You reached Rank {rank}!' },
+    dailyReset: { title: 'Daily Leaderboard Reset!', body: 'The daily leaderboard has reset! You finished at Rank #{rank}. Start playing to climb back up!' },
+    weeklyReset: { title: 'Weekly Arena Reset!', body: 'A new week begins! Your final rank was #{rank}. Can you top the charts this week?' },
+    friendRequest: { title: 'New Friend Request', body: '{player} wants to be your friend!' },
+    friendAccept: { title: 'Friend Request Accepted', body: '{player} accepted your friend request!' },
+    questionOrder: 'random' // 'random' or 'sequential'
+  });
+  const [isSendingNotif, setIsSendingNotif] = useState(false);
+  const [scheduleTime, setScheduleTime] = useState('');
+  const [searchTokenUser, setSearchTokenUser] = useState('');
+  const [certPreviewData, setCertPreviewData] = useState<any>(null);
+  const [custForm, setCustForm] = useState({
+    correctSound: 'https://assets.mixkit.co/active_storage/sfx/2013/2013-preview.mp3',
+    incorrectSound: 'https://assets.mixkit.co/active_storage/sfx/2014/2014-preview.mp3',
+    vibrationEnabled: true,
+    correctVibration: 50,
+    incorrectVibration: 200,
+    primaryColor: '#32befa',
+    accentColor: '#0088cc',
+    animationIntensity: 1
+  });
+
+  useEffect(() => {
+    onValue(ref(db, 'settings/customization'), s => {
+      if (s.exists()) {
+        setCustForm(prev => ({ ...prev, ...s.val() }));
+      }
+    });
+  }, []);
+
+  const saveCustomization = async () => {
+    await set(ref(db, 'settings/customization'), custForm);
+    await alert({ title: 'Success', description: 'App customization updated!', type: 'success' });
+  };
+
+  const resetCustomization = async () => {
+    const verified = await confirm({
+      title: 'Reset Customization',
+      description: 'Are you sure you want to reset all themes and audio settings to defaults? This will clear all overrides.',
+      type: 'confirm'
+    });
+    if (!verified) return;
+
+    const defaults = {
+      correctSound: 'https://assets.mixkit.co/active_storage/sfx/2013/2013-preview.mp3',
+      incorrectSound: 'https://assets.mixkit.co/active_storage/sfx/2014/2014-preview.mp3',
+      vibrationEnabled: true,
+      correctVibration: 50,
+      incorrectVibration: 200,
+      primaryColor: '#32befa',
+      accentColor: '#0088cc',
+      animationIntensity: 1
+    };
+
+    await set(ref(db, 'settings/customization'), defaults);
+    setCustForm(defaults);
+    await alert({ title: 'Reset Complete', description: 'Customization has been restored to defaults.', type: 'info' });
+  };
+
+  const testSound = (url: string) => {
+    if (!url) return;
+    const audio = new Audio(url);
+    audio.volume = 0.5;
+    audio.play().catch(e => {
+       console.error("Sound preview failed:", e);
+       alert({ title: "Playback Failed", description: "Could not play sound from the provided URL.", type: "error" });
+    });
+  };
+
+  const testVibration = (duration: number) => {
+    if (navigator.vibrate) {
+      navigator.vibrate(duration);
+    } else {
+      alert({ title: "Not Supported", description: "Vibration is not supported on this device/browser.", type: "info" });
+    }
+  };
+
+  useEffect(() => {
+    onValue(ref(db, 'notificationSchedules'), s => {
+      if (s.exists()) {
+        const data = s.val();
+        setNotifSchedules(Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })));
+      } else {
+        setNotifSchedules([]);
+      }
+    });
+
+    onValue(ref(db, 'customNotifications'), s => {
+      if (s.exists()) {
+        setCustomTemplates(prev => ({ ...prev, ...s.val() }));
+      }
+    });
+  }, []);
+
+  const handleServiceAccountUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string);
+        if (json.project_id && json.private_key && json.client_email) {
+          setServiceAccount(json);
+          alert({ title: 'Success', description: 'Admin SDK Key loaded successfully for this session.', type: 'success' });
+        } else {
+          throw new Error('Invalid Service Account format');
+        }
+      } catch (err) {
+        alert({ title: 'Error', description: 'Invalid JSON file. Please provide a valid Firebase Service Account key.', type: 'error' });
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const sendNotification = async (immediate = true) => {
+    if (!serviceAccount) {
+      await alert({ title: 'Error', description: 'Please upload Admin SDK JSON first.', type: 'error' });
+      return;
+    }
+    if (!notifForm.title || !notifForm.body) {
+      await alert({ title: 'Error', description: 'Title and Body are required.', type: 'error' });
+      return;
+    }
+
+    if (!immediate && !scheduleTime) {
+      await alert({ title: 'Error', description: 'Please set a schedule time.', type: 'error' });
+      return;
+    }
+
+    setIsSendingNotif(true);
+    try {
+      if (immediate) {
+        if (notifForm.targetType === 'player') {
+          const tokensSnap = await get(ref(db, `fcmTokens/${notifForm.targetUserId}`));
+          if (!tokensSnap.exists()) {
+            throw new Error('No FCM tokens found for this player.');
+          }
+          const tokens = Object.values(tokensSnap.val()) as string[];
+          for (const token of tokens) {
+            await NotificationService.sendToToken(serviceAccount, token, notifForm.title, notifForm.body, notifForm.imageUrl);
+          }
+        } else if (notifForm.targetType === 'all') {
+          await NotificationService.sendToAll(serviceAccount, notifForm.title, notifForm.body, notifForm.imageUrl);
+        } else if (notifForm.targetType === 'topic') {
+          await NotificationService.sendToTopic(serviceAccount, notifForm.topic, notifForm.title, notifForm.body, notifForm.imageUrl);
+        } else {
+          await NotificationService.sendToToken(serviceAccount, notifForm.token, notifForm.title, notifForm.body, notifForm.imageUrl);
+        }
+        await alert({ title: 'Success', description: 'Notification sent successfully!', type: 'success' });
+      } else {
+        const scheduleRef = push(ref(db, 'notificationSchedules'));
+        await set(scheduleRef, {
+          ...notifForm,
+          scheduledTime: new Date(scheduleTime).getTime(),
+          status: 'pending',
+          createdAt: Date.now()
+        });
+        await alert({ title: 'Success', description: 'Notification scheduled!', type: 'success' });
+      }
+    } catch (err: any) {
+      await alert({ title: 'Error', description: err.message, type: 'error' });
+    } finally {
+      setIsSendingNotif(false);
+    }
+  };
+
+  const updateTemplates = async () => {
+    await set(ref(db, 'customNotifications'), customTemplates);
+    await alert({ title: 'Success', description: 'Templates updated!', type: 'success' });
+  };
+
+  const linkTokenToUser = async (userId: string, token: string) => {
+    if (!token) return;
+    try {
+      const tokensRef = ref(db, `fcmTokens/${userId}`);
+      const snapshot = await get(tokensRef);
+      if (snapshot.exists()) {
+        const existingTokens = Object.values(snapshot.val());
+        if (existingTokens.includes(token)) {
+          await alert({ title: 'Info', description: 'This token is already linked.', type: 'info' });
+          return;
+        }
+      }
+      await push(ref(db, `fcmTokens/${userId}`), token);
+      await alert({ title: 'Success', description: 'Token linked to user!', type: 'success' });
+    } catch (err: any) {
+      console.error("Token link failed:", err);
+      await alert({ title: 'Error', description: 'Failed to link token: ' + err.message, type: 'error' });
+    }
+  };
+
+  // Notification Schedule Runner
+  useEffect(() => {
+    if (!serviceAccount || notifSchedules.length === 0) return;
+
+    const runSchedules = async () => {
+      const now = Date.now();
+      const dueSchedules = notifSchedules.filter(s => new Date(s.scheduledTime).getTime() <= now);
+
+      for (const schedule of dueSchedules) {
+        try {
+          const authObj = {
+            client_email: serviceAccount.client_email,
+            private_key: serviceAccount.private_key,
+            project_id: serviceAccount.project_id
+          };
+
+          const payload = {
+            title: schedule.title,
+            body: schedule.body,
+            image: schedule.imageUrl
+          };
+
+          if (schedule.targetType === 'player') {
+            const tokensSnap = await get(ref(db, `fcmTokens/${schedule.targetUserId}`));
+            if (tokensSnap.exists()) {
+              const tokens = Object.values(tokensSnap.val()) as string[];
+              for (const token of tokens) {
+                await NotificationService.sendToToken(authObj, token, payload);
+              }
+            }
+          } else if (schedule.targetType === 'all') {
+            await NotificationService.sendToAll(authObj, payload);
+          } else if (schedule.targetType === 'topic') {
+            await NotificationService.sendToTopic(authObj, schedule.topic || 'all_users', payload);
+          } else if (schedule.targetType === 'token') {
+            await NotificationService.sendToToken(authObj, schedule.token || '', payload);
+          }
+
+          // Remove after sending
+          await remove(ref(db, `notificationSchedules/${schedule.id}`));
+        } catch (error) {
+          console.error('Failed to send scheduled notification:', error);
+        }
+      }
+    };
+
+    const interval = setInterval(runSchedules, 60000); // Check every minute
+    runSchedules(); // Run immediately on load
+
+    return () => clearInterval(interval);
+  }, [serviceAccount, notifSchedules]);
   
   // Create state
   const [newTopic, setNewTopic] = useState({
-    name: ''
+    name: '',
+    order: 0
   });
   const [bulkText, setBulkText] = useState('');
   const [newEvent, setNewEvent] = useState({
@@ -81,12 +340,6 @@ export default function AdminPanel() {
     }
   });
 
-  // Player creation state
-  const [isAddingUser, setIsAddingUser] = useState(false);
-  const [newPlayerName, setNewPlayerName] = useState('');
-  const [newPlayerUsername, setNewPlayerUsername] = useState('');
-  const [newPlayerPassword, setNewPlayerPassword] = useState('');
-  const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [newQuiz, setNewQuiz] = useState({
     questionEn: '', questionHi: '',
     opt1En: '', opt1Hi: '',
@@ -97,17 +350,28 @@ export default function AdminPanel() {
     explanationEn: '', explanationHi: ''
   });
 
+    // Player creation state
+    const [isAddingUser, setIsAddingUser] = useState(false);
+    const [newPlayerName, setNewPlayerName] = useState('');
+    const [newPlayerUsername, setNewPlayerUsername] = useState('');
+    const [newPlayerPassword, setNewPlayerPassword] = useState('');
+    const [isCreatingUser, setIsCreatingUser] = useState(false);
+
   useEffect(() => {
     onValue(ref(db, 'users'), s => {
       if (s.exists()) {
         const data = s.val();
-        setUsers(Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })));
+        const allUsers = Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })) as User[];
+        setUsers(allUsers);
       }
     });
+
     onValue(ref(db, 'topics'), s => {
       if (s.exists()) {
         const data = s.val();
-        setTopics(Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })));
+        const list = Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })) as Topic[];
+        list.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        setTopics(list);
       }
     });
     
@@ -145,7 +409,7 @@ export default function AdminPanel() {
     const index = sorted.findIndex(u => u.id === userId);
     return index !== -1 ? index + 1 : '-';
   };
-
+  
   useEffect(() => {
     if (selectedUser) {
       const historyRef = ref(db, 'history');
@@ -255,6 +519,40 @@ export default function AdminPanel() {
     }
   };
 
+  const saveServiceAccountToCloud = async () => {
+    if (!serviceAccount) return;
+    const verified = await confirm({
+      title: "Save to Cloud",
+      description: "Do you want to securely save this Admin SDK to the database? This allows one-click access in the future.",
+      type: 'confirm'
+    });
+    if (!verified) return;
+    try {
+      await set(ref(db, 'adminConfig/serviceAccount'), serviceAccount);
+      await alert({ title: 'Success', description: 'Admin SDK saved to cloud!', type: 'success' });
+    } catch (err: any) {
+      console.error("Save to cloud failed:", err);
+      await alert({ title: 'Error', description: 'Failed to save to cloud: ' + err.message, type: 'error' });
+    }
+  };
+
+  const deleteServiceAccountFromCloud = async () => {
+    const verified = await confirm({
+      title: "Remove from Cloud",
+      description: "Are you sure you want to delete the stored Admin SDK from the database? This cannot be undone.",
+      type: 'confirm'
+    });
+    if (!verified) return;
+    try {
+      await remove(ref(db, 'adminConfig/serviceAccount'));
+      setServiceAccount(null);
+      await alert({ title: 'Removed', description: 'Admin SDK cleared from cloud and local session.', type: 'info' });
+    } catch (err: any) {
+      console.error("Delete from cloud failed:", err);
+      await alert({ title: 'Error', description: 'Failed to delete from cloud: ' + err.message, type: 'error' });
+    }
+  };
+
   const createPlayerAccount = async () => {
     if (!newPlayerName || !newPlayerUsername || !newPlayerPassword) {
       await alert({ title: 'Error', description: 'All fields are required', type: 'error' });
@@ -266,19 +564,31 @@ export default function AdminPanel() {
     
     setIsCreatingUser(true);
     try {
-      // 1. Create secondary auth instance to avoid signing out the admin
+      // 1. Proactive check if username exists in RTDB
+      const usersRef = ref(db, 'users');
+      const usernameQuery = query(usersRef, orderByChild('username'), equalTo(cleanUsername));
+      const nameCheck = await get(usernameQuery);
+      
+      if (nameCheck.exists()) {
+        await alert({ title: 'Error', description: 'Username already taken', type: 'error' });
+        setIsCreatingUser(false);
+        return;
+      }
+
+      // 2. Create secondary auth instance to avoid signing out the admin
       const secondaryApp = initializeApp(firebaseConfig, `SecondaryApp_${Date.now()}`);
       const secondaryAuth = getAuth(secondaryApp);
       
-      // 2. Create Auth User
+      // 3. Create Auth User
       const authResult = await createUserWithEmailAndPassword(secondaryAuth, finalEmail, newPlayerPassword);
       const uid = authResult.user.uid;
 
-      // 3. Create DB User profile
+      // 4. Create DB User profile
       const userRef = ref(db, `users/${uid}`);
       const newUser: User = {
         id: uid,
         name: newPlayerName,
+        email: finalEmail,
         username: cleanUsername,
         password: newPlayerPassword,
         role: 'user',
@@ -296,7 +606,7 @@ export default function AdminPanel() {
 
       await set(userRef, newUser);
       
-      // 4. Cleanup secondary app
+      // 5. Cleanup secondary app
       await signOut(secondaryAuth);
       await deleteApp(secondaryApp);
 
@@ -309,7 +619,9 @@ export default function AdminPanel() {
     } catch (err: any) {
       console.error("Failed to create user:", err);
       let msg = err.message;
-      if (err.code === 'auth/email-already-in-use') msg = "Username already taken";
+      if (err.code === 'auth/email-already-in-use' || (msg && msg.includes('auth/email-already-in-use'))) {
+        msg = "Username already taken";
+      }
       await alert({ title: 'Error', description: msg, type: 'error' });
     } finally {
       setIsCreatingUser(false);
@@ -321,7 +633,8 @@ export default function AdminPanel() {
     const topicId = editingTopicId || newTopic.name.toLowerCase().replace(/\s+/g, '_');
     const topicData: any = {
       id: topicId,
-      name: newTopic.name
+      name: newTopic.name,
+      order: newTopic.order || topics.length
     };
     
     // Preserve existing children if editing
@@ -333,7 +646,7 @@ export default function AdminPanel() {
     }
     
     await set(ref(db, `topics/${topicId}`), topicData);
-    setNewTopic({ name: '' });
+    setNewTopic({ name: '', order: 0 });
     setEditingTopicId(null);
     setTopicPath([]);
     if (editingTopicId) {
@@ -372,7 +685,8 @@ export default function AdminPanel() {
     const nodeData: any = {
       id: nodeId,
       name: newNode.name,
-      description: newNode.description
+      description: newNode.description,
+      order: newNode.order || 0
     };
     
     if (nodeEditMode) {
@@ -384,7 +698,7 @@ export default function AdminPanel() {
     }
 
     await set(ref(db, dbPath), nodeData);
-    setNewNode({ id: '', name: '', description: '' });
+    setNewNode({ id: '', name: '', description: '', order: 0 });
     setNodeEditMode(null);
   };
 
@@ -404,6 +718,48 @@ export default function AdminPanel() {
     dbPath += `/children/${nodeId}`;
     
     await remove(ref(db, dbPath));
+  };
+
+  const moveTopic = async (topicId: string, direction: 'up' | 'down') => {
+    const index = topics.findIndex(t => t.id === topicId);
+    if (index === -1) return;
+    if (direction === 'up' && index === 0) return;
+    if (direction === 'down' && index === topics.length - 1) return;
+
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    const currentTopic = topics[index];
+    const otherTopic = topics[newIndex];
+
+    const updates: any = {};
+    updates[`topics/${currentTopic.id}/order`] = newIndex;
+    updates[`topics/${otherTopic.id}/order`] = index;
+    await update(ref(db), updates);
+  };
+
+  const moveNode = async (nodeId: string, direction: 'up' | 'down') => {
+    const parent = getCurrentNode();
+    if (!parent?.children) return;
+    
+    // Sort logic to match displayed list
+    const children = Object.values(parent.children).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const index = children.findIndex(c => c.id === nodeId);
+    if (index === -1) return;
+    if (direction === 'up' && index === 0) return;
+    if (direction === 'down' && index === children.length - 1) return;
+
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    const currentNode = children[index];
+    const otherNode = children[newIndex];
+
+    let parentPath = `topics/${editingTopicId}`;
+    topicPath.forEach(pid => {
+        parentPath += `/children/${pid}`;
+    });
+
+    const updates: any = {};
+    updates[`${parentPath}/children/${currentNode.id}/order`] = newIndex;
+    updates[`${parentPath}/children/${otherNode.id}/order`] = index;
+    await update(ref(db), updates);
   };
 
   const getNextQuizId = () => {
@@ -663,6 +1019,7 @@ export default function AdminPanel() {
             const bot: User = {
               id: bRef.key || '',
               name: row.name,
+              email: row.email || `${(row.name || 'bot').toLowerCase().replace(/\s+/g, '_')}@bot.rahee.games`,
               username: (row.name || '').toLowerCase().replace(/\s+/g, '_'),
               role: 'user',
               status: 'approved',
@@ -951,7 +1308,33 @@ export default function AdminPanel() {
                 ) : (
                    <>
                       <h3 className="text-3xl font-black mb-1 uppercase tracking-tighter text-black dark:text-white">{u.name}</h3>
-                      <p className="text-black/40 dark:text-white/40 font-bold uppercase tracking-widest text-xs mb-4">Player ID: @{u.id}</p>
+                      <div className="flex flex-col gap-4 mb-6">
+                         <div className="flex items-center justify-center md:justify-start gap-2">
+                            <p className="text-black/40 dark:text-white/40 font-bold uppercase tracking-widest text-xs">Player ID: @{u.id}</p>
+                         </div>
+                         
+                         <div className="bg-black/5 dark:bg-white/5 p-4 rounded-2xl space-y-3">
+                            <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Link FCM Token</label>
+                            <div className="flex gap-2">
+                               <input 
+                                 value={tokenLinkInput}
+                                 onChange={e => setTokenLinkInput(e.target.value)}
+                                 placeholder="Paste FCM Token here..."
+                                 className="flex-1 bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 text-xs font-bold text-black dark:text-white outline-none focus:border-primary"
+                               />
+                               <button 
+                                 onClick={async () => {
+                                   if (!tokenLinkInput) return;
+                                   await linkTokenToUser(u.id, tokenLinkInput);
+                                   setTokenLinkInput('');
+                                 }}
+                                 className="bg-primary text-black px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:scale-105 active:scale-95 transition-all"
+                               >
+                                  Save
+                               </button>
+                            </div>
+                         </div>
+                      </div>
                       <div className="flex flex-wrap justify-center md:justify-start gap-3">
                          <div className="px-4 py-2 bg-black/5 dark:bg-white/5 rounded-xl border border-black/5 dark:border-white/5">
                             <p className="text-[10px] text-black/30 dark:text-white/30 uppercase font-black">Global Rank</p>
@@ -1199,6 +1582,49 @@ export default function AdminPanel() {
 
                 <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5 mt-6">
                    <h4 className="font-black text-sm uppercase tracking-widest mb-6 flex items-center gap-2 text-black dark:text-white">
+                      <Star size={18} className="text-primary" />
+                      Lives System
+                   </h4>
+                   <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-1 ml-1">Current Lives</p>
+                           <input 
+                              type="number"
+                              defaultValue={u.lives?.count ?? 16}
+                              key={`lives-${u.id}-${u.lives?.count}`}
+                              onBlur={async (e) => {
+                                 const val = parseInt(e.target.value);
+                                 if (!isNaN(val)) {
+                                    await update(ref(db, `users/${u.id}/lives`), { count: val });
+                                 }
+                              }}
+                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                           />
+                        </div>
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-3 ml-1">Status</p>
+                           <button 
+                             onClick={async () => {
+                               const newState = !u.lives?.enabled;
+                               await update(ref(db, `users/${u.id}/lives`), { enabled: newState });
+                             }}
+                             className={cn(
+                               "w-full py-4 rounded-2xl font-black uppercase tracking-widest text-xs transition-all border",
+                               u.lives?.enabled 
+                                 ? "bg-green-500/10 text-green-500 border-green-500/20" 
+                                 : "bg-red-500/10 text-red-500 border-red-500/20"
+                             )}
+                           >
+                             {u.lives?.enabled ? 'LIVES ENABLED' : 'LIVES DISABLED'}
+                           </button>
+                        </div>
+                      </div>
+                   </div>
+                </div>
+
+                <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5 mt-6">
+                   <h4 className="font-black text-sm uppercase tracking-widest mb-6 flex items-center gap-2 text-black dark:text-white">
                       <Edit2 size={18} className="text-primary" />
                       Progression Editor
                    </h4>
@@ -1357,6 +1783,601 @@ export default function AdminPanel() {
      );
   };
 
+  const renderNotificationsSection = () => {
+    return (
+      <div className="space-y-8 pb-32">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-black uppercase tracking-tighter">Notifications Dashboard</h2>
+          <label className="flex items-center gap-2 bg-primary text-black px-4 py-2 rounded-xl font-black text-xs cursor-pointer hover:scale-105 transition-all">
+            <Upload size={16} />
+            LOAD ADMIN SDK JSON
+            <input type="file" accept=".json" className="hidden" onChange={handleServiceAccountUpload} />
+          </label>
+        </div>
+
+        {serviceAccount && (
+          <div className="flex flex-col gap-3">
+            <div className="bg-green-500/10 border border-green-500/20 p-4 rounded-2xl text-green-500 text-xs font-bold uppercase tracking-widest flex items-center justify-between">
+               <div className="flex items-center gap-2">
+                  <CheckCircle size={16} />
+                  Service Account Loaded: {serviceAccount.project_id}
+               </div>
+               <button 
+                 onClick={() => setServiceAccount(null)}
+                 className="text-white/20 hover:text-red-500 transition-colors"
+                 title="Unload from session"
+               >
+                 <XCircle size={16} />
+               </button>
+            </div>
+            
+            <div className="flex gap-2">
+               <button 
+                 onClick={saveServiceAccountToCloud}
+                 className="flex-1 bg-primary text-black px-4 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-primary/20"
+               >
+                 <HistoryIcon size={14} />
+                 SAVE TO CLOUD
+               </button>
+               <button 
+                 onClick={deleteServiceAccountFromCloud}
+                 className="px-4 py-3 bg-red-500/10 text-red-500 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-red-500 hover:text-black transition-all"
+               >
+                 <Trash2 size={14} />
+                 CLEAR CLOUD
+               </button>
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Send Section */}
+          <div className="space-y-6">
+            <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5">
+              <h3 className="text-lg font-black mb-6 flex items-center gap-2 uppercase tracking-tighter">
+                <Send size={20} className="text-primary" />
+                Send Notification
+              </h3>
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Title</label>
+                  <input 
+                    value={notifForm.title}
+                    onChange={e => setNotifForm({...notifForm, title: e.target.value})}
+                    className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary"
+                    placeholder="Notification Title"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Body</label>
+                  <textarea 
+                    value={notifForm.body}
+                    onChange={e => setNotifForm({...notifForm, body: e.target.value})}
+                    className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary h-24"
+                    placeholder="Notification Message"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Image URL (Optional)</label>
+                  <div className="relative">
+                    <ImageIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-primary" size={18} />
+                    <input 
+                      value={notifForm.imageUrl}
+                      onChange={e => setNotifForm({...notifForm, imageUrl: e.target.value})}
+                      className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 pl-12 rounded-2xl font-bold outline-none focus:border-primary"
+                      placeholder="https://example.com/image.jpg"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1 col-span-2 md:col-span-1">
+                    <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Target Type</label>
+                    <select 
+                      value={notifForm.targetType}
+                      onChange={e => setNotifForm({...notifForm, targetType: e.target.value as any})}
+                      className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary"
+                    >
+                      <option value="all">Broadcast (All Users)</option>
+                      <option value="topic">Topic-wise</option>
+                      <option value="player">Single Player</option>
+                      <option value="token">Specific Token</option>
+                    </select>
+                  </div>
+                  {notifForm.targetType === 'player' && (
+                    <div className="space-y-1 col-span-2 md:col-span-1">
+                      <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Select Player</label>
+                      <select 
+                        value={notifForm.targetUserId}
+                        onChange={e => setNotifForm({...notifForm, targetUserId: e.target.value})}
+                        className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary"
+                      >
+                        <option value="">Choose a player...</option>
+                        {users.filter(u => !u.isBot).map(u => <option key={u.id} value={u.id}>{u.name} (@{u.username})</option>)}
+                      </select>
+                    </div>
+                  )}
+                  {notifForm.targetType === 'topic' && (
+                    <div className="space-y-1 col-span-2 md:col-span-1">
+                      <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Select Topic</label>
+                      <select 
+                        value={notifForm.topic}
+                        onChange={e => setNotifForm({...notifForm, topic: e.target.value})}
+                        className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary"
+                      >
+                        <option value="all_users">All Users Topic</option>
+                        {topics.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  {notifForm.targetType === 'token' && (
+                    <div className="space-y-1 col-span-2 md:col-span-1">
+                      <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">FCM Token</label>
+                      <input 
+                        value={notifForm.token}
+                        onChange={e => setNotifForm({...notifForm, token: e.target.value})}
+                        className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary text-xs"
+                        placeholder="Paste FCM Token"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-4 pt-4">
+                  <button 
+                    disabled={isSendingNotif}
+                    onClick={() => sendNotification(true)}
+                    className="flex-1 bg-primary text-black font-black uppercase tracking-widest py-4 rounded-2xl hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Send size={18} />
+                    Send Now
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5">
+               <h3 className="text-lg font-black mb-6 flex items-center gap-2 uppercase tracking-tighter">
+                <Clock size={20} className="text-primary" />
+                Schedule Notification
+              </h3>
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Date & Time</label>
+                  <input 
+                    type="datetime-local"
+                    value={scheduleTime}
+                    onChange={e => setScheduleTime(e.target.value)}
+                    className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary"
+                  />
+                </div>
+                <button 
+                  disabled={isSendingNotif}
+                  onClick={() => sendNotification(false)}
+                  className="w-full bg-white/10 text-white font-black uppercase tracking-widest py-4 rounded-2xl hover:bg-white/20 transition-all flex items-center justify-center gap-2"
+                >
+                  <Calendar size={18} />
+                  Schedule
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Tokens & Schedules Section */}
+          <div className="space-y-6">
+             <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5">
+              <h3 className="text-lg font-black mb-6 flex items-center gap-2 uppercase tracking-tighter">
+                <Users size={20} className="text-primary" />
+                Token Management
+              </h3>
+              <div className="mb-4 relative">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20" size={16} />
+                <input 
+                  value={searchTokenUser}
+                  onChange={e => setSearchTokenUser(e.target.value)}
+                  placeholder="Search Player..."
+                  className="w-full bg-black/40 border border-white/5 p-3 pl-12 rounded-xl text-xs outline-none focus:border-primary"
+                />
+              </div>
+              <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 scrollbar-hide">
+                {users
+                  .filter(u => !u.isBot && (u.name.toLowerCase().includes(searchTokenUser.toLowerCase()) || u.id.toLowerCase().includes(searchTokenUser.toLowerCase())))
+                  .map(u => (
+                  <div key={u.id} className="bg-black/20 p-4 rounded-xl border border-white/5 flex items-center justify-between group">
+                    <div>
+                      <p className="text-sm font-bold">{u.name}</p>
+                      <p className="text-[8px] font-mono text-white/20 uppercase">@{u.id}</p>
+                    </div>
+                    <button 
+                      onClick={async () => {
+                        const token = prompt('Paste FCM Token for this user:');
+                        if (token) await linkTokenToUser(u.id, token);
+                      }}
+                      className="text-[8px] font-black uppercase tracking-widest bg-primary/10 text-primary px-2 py-1 rounded hover:bg-primary hover:text-black transition-all"
+                    >
+                      Link Token
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5">
+              <h3 className="text-lg font-black mb-6 flex items-center gap-2 uppercase tracking-tighter">
+                <Clock size={20} className="text-primary" />
+                Active Schedules
+              </h3>
+              <div className="space-y-3">
+                {notifSchedules.length === 0 ? (
+                  <p className="text-center text-white/10 italic text-xs">No pending schedules</p>
+                ) : (
+                  notifSchedules.map(s => (
+                    <div key={s.id} className="bg-black/40 p-4 rounded-xl border border-white/5 space-y-2 relative group">
+                      <button 
+                        onClick={() => remove(ref(db, `notificationSchedules/${s.id}`))}
+                        className="absolute top-2 right-2 text-white/10 hover:text-red-500 transition-colors"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black text-primary px-2 py-0.5 bg-primary/10 rounded uppercase">{s.targetType}</span>
+                        <span className="text-[10px] font-bold text-white/40">{new Date(s.scheduledTime).toLocaleString()}</span>
+                      </div>
+                      <p className="text-xs font-black truncate">{s.title}</p>
+                      <p className="text-[10px] text-white/40 line-clamp-2">{s.body}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5">
+              <h3 className="text-lg font-black mb-6 flex items-center gap-2 uppercase tracking-tighter">
+                <Palette size={20} className="text-primary" />
+                Custom Templates
+              </h3>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <p className="text-[10px] font-bold text-white/20 uppercase ml-2">Challenge Request</p>
+                  <input 
+                    value={customTemplates.challenge.title}
+                    onChange={e => setCustomTemplates({...customTemplates, challenge: {...customTemplates.challenge, title: e.target.value}})}
+                    onBlur={updateTemplates}
+                    className="w-full bg-black/40 border border-white/5 p-3 rounded-xl text-xs outline-none mb-1 shadow-inner placeholder:opacity-20 font-bold"
+                    placeholder="Title"
+                  />
+                  <textarea 
+                    value={customTemplates.challenge.body}
+                    onChange={e => setCustomTemplates({...customTemplates, challenge: {...customTemplates.challenge, body: e.target.value}})}
+                    onBlur={updateTemplates}
+                    className="w-full bg-black/40 border border-white/5 p-3 rounded-xl text-xs outline-none h-16 shadow-inner placeholder:opacity-20 font-bold"
+                    placeholder="Body (Use {player} for name)"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-[10px] font-bold text-white/20 uppercase ml-2">Rank Increase</p>
+                  <input 
+                    value={customTemplates.rankUp.title}
+                    onChange={e => setCustomTemplates({...customTemplates, rankUp: {...customTemplates.rankUp, title: e.target.value}})}
+                    onBlur={updateTemplates}
+                    className="w-full bg-black/40 border border-white/5 p-3 rounded-xl text-xs outline-none mb-1 shadow-inner placeholder:opacity-20 font-bold"
+                    placeholder="Title"
+                  />
+                  <textarea 
+                    value={customTemplates.rankUp.body}
+                    onChange={e => setCustomTemplates({...customTemplates, rankUp: {...customTemplates.rankUp, body: e.target.value}})}
+                    onBlur={updateTemplates}
+                    className="w-full bg-black/40 border border-white/5 p-3 rounded-xl text-xs outline-none h-16 shadow-inner placeholder:opacity-20 font-bold"
+                    placeholder="Body (Use {rank} for number)"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-[10px] font-bold text-white/20 uppercase ml-2">Daily Leaderboard Reset</p>
+                  <input 
+                    value={customTemplates.dailyReset.title}
+                    onChange={e => setCustomTemplates({...customTemplates, dailyReset: {...customTemplates.dailyReset, title: e.target.value}})}
+                    onBlur={updateTemplates}
+                    className="w-full bg-black/40 border border-white/5 p-3 rounded-xl text-xs outline-none mb-1 shadow-inner placeholder:opacity-20 font-bold"
+                    placeholder="Title"
+                  />
+                  <textarea 
+                    value={customTemplates.dailyReset.body}
+                    onChange={e => setCustomTemplates({...customTemplates, dailyReset: {...customTemplates.dailyReset, body: e.target.value}})}
+                    onBlur={updateTemplates}
+                    className="w-full bg-black/40 border border-white/5 p-3 rounded-xl text-xs outline-none h-16 shadow-inner placeholder:opacity-20 font-bold"
+                    placeholder="Body (Use {rank} for number)"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-[10px] font-bold text-white/20 uppercase ml-2">Weekly Leaderboard Reset</p>
+                  <input 
+                    value={customTemplates.weeklyReset.title}
+                    onChange={e => setCustomTemplates({...customTemplates, weeklyReset: {...customTemplates.weeklyReset, title: e.target.value}})}
+                    onBlur={updateTemplates}
+                    className="w-full bg-black/40 border border-white/5 p-3 rounded-xl text-xs outline-none mb-1 shadow-inner placeholder:opacity-20 font-bold"
+                    placeholder="Title"
+                  />
+                  <textarea 
+                    value={customTemplates.weeklyReset.body}
+                    onChange={e => setCustomTemplates({...customTemplates, weeklyReset: {...customTemplates.weeklyReset, body: e.target.value}})}
+                    onBlur={updateTemplates}
+                    className="w-full bg-black/40 border border-white/5 p-3 rounded-xl text-xs outline-none h-16 shadow-inner placeholder:opacity-20 font-bold"
+                    placeholder="Body (Use {rank} for number)"
+                  />
+                </div>
+
+                <div className="bg-white/5 border border-white/5 p-2 rounded-2xl">
+                  <p className="text-[10px] font-black uppercase text-primary tracking-widest px-1 mb-2">Friend Request</p>
+                  <input 
+                    value={customTemplates.friendRequest.title}
+                    onChange={e => setCustomTemplates({...customTemplates, friendRequest: {...customTemplates.friendRequest, title: e.target.value}})}
+                    onBlur={updateTemplates}
+                    className="w-full bg-black/40 border border-white/5 p-3 rounded-xl text-xs outline-none mb-1 shadow-inner placeholder:opacity-20 font-bold"
+                    placeholder="Title"
+                  />
+                  <textarea 
+                    value={customTemplates.friendRequest.body}
+                    onChange={e => setCustomTemplates({...customTemplates, friendRequest: {...customTemplates.friendRequest, body: e.target.value}})}
+                    onBlur={updateTemplates}
+                    className="w-full bg-black/40 border border-white/5 p-3 rounded-xl text-xs outline-none h-16 shadow-inner placeholder:opacity-20 font-bold"
+                    placeholder="Body (Use {player} for name)"
+                  />
+                </div>
+
+                <div className="bg-white/5 border border-white/5 p-2 rounded-2xl">
+                  <p className="text-[10px] font-black uppercase text-primary tracking-widest px-1 mb-2">Friend Acceptance</p>
+                  <input 
+                    value={customTemplates.friendAccept.title}
+                    onChange={e => setCustomTemplates({...customTemplates, friendAccept: {...customTemplates.friendAccept, title: e.target.value}})}
+                    onBlur={updateTemplates}
+                    className="w-full bg-black/40 border border-white/5 p-3 rounded-xl text-xs outline-none mb-1 shadow-inner placeholder:opacity-20 font-bold"
+                    placeholder="Title"
+                  />
+                  <textarea 
+                    value={customTemplates.friendAccept.body}
+                    onChange={e => setCustomTemplates({...customTemplates, friendAccept: {...customTemplates.friendAccept, body: e.target.value}})}
+                    onBlur={updateTemplates}
+                    className="w-full bg-black/40 border border-white/5 p-3 rounded-xl text-xs outline-none h-16 shadow-inner placeholder:opacity-20 font-bold"
+                    placeholder="Body (Use {player} for name)"
+                  />
+                </div>
+
+                <div className="bg-white/5 border border-white/5 p-4 rounded-2xl flex items-center justify-between">
+                   <div>
+                      <p className="text-[10px] font-black uppercase text-primary tracking-widest mb-1">Question Delivery Order</p>
+                      <p className="text-white/40 text-[8px] uppercase font-bold">Global setting for all game modes</p>
+                   </div>
+                   <div className="flex bg-black/40 p-1 rounded-xl">
+                      <button 
+                        onClick={() => { setCustomTemplates(prev => ({...prev, questionOrder: 'random'})); updateTemplates(); }}
+                        className={cn("px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all", customTemplates.questionOrder === 'random' ? "bg-primary text-black" : "text-white/40 hover:text-white")}
+                      >
+                         Random
+                      </button>
+                      <button 
+                        onClick={() => { setCustomTemplates(prev => ({...prev, questionOrder: 'sequential'})); updateTemplates(); }}
+                        className={cn("px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all", customTemplates.questionOrder === 'sequential' ? "bg-primary text-black" : "text-white/40 hover:text-white")}
+                      >
+                         Sequence
+                      </button>
+                   </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderCustomization = () => {
+    return (
+      <div className="space-y-8 pb-32">
+        <div className="flex items-center justify-between px-2">
+           <div>
+              <h2 className="text-2xl font-black uppercase tracking-tighter text-black dark:text-white">App Customization</h2>
+              <p className="text-[10px] font-bold text-black/30 dark:text-white/30 uppercase tracking-[0.2em]">Global visual and audio overrides</p>
+           </div>
+           <div className="flex items-center gap-3">
+              <button 
+                onClick={resetCustomization}
+                className="px-6 py-4 bg-white/5 hover:bg-red-500/10 text-black/40 dark:text-white/40 hover:text-red-500 rounded-[2rem] font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2"
+              >
+                <RotateCcw size={14} />
+                Reset Defaults
+              </button>
+              <button 
+                onClick={saveCustomization}
+                className="px-8 py-4 bg-primary text-black rounded-[2rem] font-black text-xs uppercase tracking-widest hover:scale-105 transition-all shadow-xl shadow-primary/20"
+              >
+                Save Changes
+              </button>
+           </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+           {/* Color Pallet */}
+           <div className="bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/5 p-8 rounded-[3rem] space-y-6">
+              <div className="flex items-center gap-4 mb-4">
+                 <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                    <Palette size={24} />
+                 </div>
+                 <div>
+                    <h4 className="font-black uppercase tracking-tight">Theme Overrides</h4>
+                    <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Custom Colors</p>
+                 </div>
+              </div>
+              
+              <div className="space-y-4">
+                 <div className="flex flex-col gap-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest opacity-60 ml-2">Primary Color</label>
+                    <div className="flex items-center gap-3 bg-black/5 dark:bg-white/5 p-2 rounded-2xl border border-black/5 dark:border-white/5">
+                       <input 
+                         type="color" 
+                         value={custForm.primaryColor}
+                         onChange={e => setCustForm({...custForm, primaryColor: e.target.value})}
+                         className="w-10 h-10 rounded-xl bg-transparent cursor-pointer border-none"
+                       />
+                       <input 
+                         type="text" 
+                         value={custForm.primaryColor}
+                         onChange={e => setCustForm({...custForm, primaryColor: e.target.value})}
+                         className="bg-transparent text-sm font-mono outline-none flex-1 text-black dark:text-white"
+                       />
+                    </div>
+                 </div>
+
+                 <div className="flex flex-col gap-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest opacity-60 ml-2">Accent Color</label>
+                    <div className="flex items-center gap-3 bg-black/5 dark:bg-white/5 p-2 rounded-2xl border border-black/5 dark:border-white/5">
+                       <input 
+                         type="color" 
+                         value={custForm.accentColor}
+                         onChange={e => setCustForm({...custForm, accentColor: e.target.value})}
+                         className="w-10 h-10 rounded-xl bg-transparent cursor-pointer border-none"
+                       />
+                       <input 
+                         type="text" 
+                         value={custForm.accentColor}
+                         onChange={e => setCustForm({...custForm, accentColor: e.target.value})}
+                         className="bg-transparent text-sm font-mono outline-none flex-1 text-black dark:text-white"
+                       />
+                    </div>
+                 </div>
+              </div>
+           </div>
+
+           {/* Audio & Haptics */}
+           <div className="bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/5 p-8 rounded-[3rem] space-y-6">
+              <div className="flex items-center gap-4 mb-4">
+                 <div className="w-12 h-12 rounded-2xl bg-yellow-500/10 flex items-center justify-center text-yellow-500">
+                    <Volume2 size={24} />
+                 </div>
+                 <div>
+                    <h4 className="font-black uppercase tracking-tight">Audio & Feedback</h4>
+                    <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Sounds & Vibrations</p>
+                 </div>
+              </div>
+
+              <div className="space-y-4">
+                 <div className="flex flex-col gap-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest opacity-40 ml-2">Correct Answer Sound (URL)</label>
+                    <div className="flex items-center gap-2">
+                       <input 
+                          value={custForm.correctSound}
+                          onChange={e => setCustForm({...custForm, correctSound: e.target.value})}
+                          className="flex-1 bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 p-4 rounded-2xl font-bold outline-none text-xs text-black dark:text-white"
+                       />
+                       <button 
+                         onClick={() => testSound(custForm.correctSound)}
+                         className="p-4 bg-green-500/10 text-green-500 rounded-2xl hover:bg-green-500/20 transition-all"
+                         title="Preview Correct Sound"
+                       >
+                         <Play size={16} />
+                       </button>
+                    </div>
+                 </div>
+                 <div className="flex flex-col gap-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest opacity-40 ml-2">Incorrect Answer Sound (URL)</label>
+                    <div className="flex items-center gap-2">
+                       <input 
+                          value={custForm.incorrectSound}
+                          onChange={e => setCustForm({...custForm, incorrectSound: e.target.value})}
+                          className="flex-1 bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 p-4 rounded-2xl font-bold outline-none text-xs text-black dark:text-white"
+                       />
+                       <button 
+                         onClick={() => testSound(custForm.incorrectSound)}
+                         className="p-4 bg-red-500/10 text-red-500 rounded-2xl hover:bg-red-500/20 transition-all"
+                         title="Preview Incorrect Sound"
+                       >
+                         <Play size={16} />
+                       </button>
+                    </div>
+                 </div>
+                 <div className="flex items-center justify-between p-4 bg-black/5 dark:bg-white/5 rounded-[2rem] border border-black/5 dark:border-white/5">
+                    <div className="flex items-center gap-4">
+                       <span className="text-[10px] font-black uppercase tracking-[0.2em] text-black dark:text-white">Enable Vibration</span>
+                    </div>
+                    <button 
+                      onClick={() => setCustForm({...custForm, vibrationEnabled: !custForm.vibrationEnabled})}
+                      className={cn(
+                        "w-12 h-6 rounded-full relative transition-all",
+                        custForm.vibrationEnabled ? "bg-primary" : "bg-black/20 dark:bg-white/20"
+                      )}
+                    >
+                       <div className={cn(
+                         "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                         custForm.vibrationEnabled ? "right-1" : "left-1"
+                       )} />
+                    </button>
+                 </div>
+
+                 {/* Vibration Durations */}
+                 <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-black/5 dark:bg-white/5 p-4 rounded-2xl border border-black/5 dark:border-white/5 space-y-2">
+                       <div className="flex justify-between items-center">
+                          <label className="text-[8px] font-black uppercase tracking-widest opacity-40">Correct Vib (ms)</label>
+                          <button onClick={() => testVibration(custForm.correctVibration)} className="p-1 hover:bg-green-500/10 text-green-500 rounded"><Zap size={10} /></button>
+                       </div>
+                       <input 
+                         type="number" 
+                         value={custForm.correctVibration}
+                         onChange={e => setCustForm({...custForm, correctVibration: parseInt(e.target.value) || 0})}
+                         className="w-full bg-transparent text-xs font-bold outline-none text-black dark:text-white"
+                       />
+                    </div>
+                    <div className="bg-black/5 dark:bg-white/5 p-4 rounded-2xl border border-black/5 dark:border-white/5 space-y-2">
+                       <div className="flex justify-between items-center">
+                          <label className="text-[8px] font-black uppercase tracking-widest opacity-40">Incorrect Vib (ms)</label>
+                          <button onClick={() => testVibration(custForm.incorrectVibration)} className="p-1 hover:bg-red-500/10 text-red-500 rounded"><Zap size={10} /></button>
+                       </div>
+                       <input 
+                         type="number" 
+                         value={custForm.incorrectVibration}
+                         onChange={e => setCustForm({...custForm, incorrectVibration: parseInt(e.target.value) || 0})}
+                         className="w-full bg-transparent text-xs font-bold outline-none text-black dark:text-white"
+                       />
+                    </div>
+                 </div>
+              </div>
+           </div>
+
+           {/* Animation Intensity */}
+           <div className="col-span-full bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/5 p-8 rounded-[3rem] space-y-6">
+              <div className="flex items-center gap-4 mb-4">
+                 <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                    <TrendingUp size={24} />
+                 </div>
+                 <div>
+                    <h4 className="font-black uppercase tracking-tight">Animation Dynamics</h4>
+                    <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Motion Intensity</p>
+                 </div>
+              </div>
+              
+              <div className="space-y-6">
+                 <div className="flex flex-col gap-4">
+                    <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-[0.2em] opacity-40">
+                       <span>Static</span>
+                       <span>Bouncy</span>
+                    </div>
+                    <input 
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.1"
+                      value={custForm.animationIntensity}
+                      onChange={e => setCustForm({...custForm, animationIntensity: parseFloat(e.target.value)})}
+                      className="w-full accent-primary h-1.5 bg-black/10 dark:bg-white/10 rounded-full appearance-none cursor-pointer"
+                    />
+                    <div className="text-center text-[8px] font-black text-primary uppercase">Value: {custForm.animationIntensity}</div>
+                 </div>
+              </div>
+           </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderSection = () => {
     switch(activeSubTab) {
       case 'users':
@@ -1428,21 +2449,33 @@ export default function AdminPanel() {
                       <p className="text-white/20 italic p-4 text-center">No real players found</p>
                     ) : (
                       realPlayers.map(u => (
-                        <button 
+                        <div 
                           key={u.id} 
                           onClick={() => setSelectedUser(u)}
-                          className="w-full bg-black/5 dark:bg-[#111] p-4 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between hover:bg-black/10 dark:hover:bg-white/5 transition-all group"
+                          className="w-full bg-black/5 dark:bg-[#111] p-4 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between hover:bg-black/10 dark:hover:bg-white/5 transition-all group cursor-pointer"
                         >
                           <div className="text-left">
-                            <p className="font-bold flex items-center gap-2">
+                            <p className="font-bold flex items-center gap-2 text-black dark:text-white">
                               {u.name}
-                              {u.status === 'pending' && <span className="text-[8px] bg-yellow-500/20 text-yellow-500 px-1.5 py-0.5 rounded font-black">PENDING</span>}
-                              {u.extraTriesRequested && <span className="text-[8px] bg-primary/20 text-primary px-1.5 py-0.5 rounded font-black">RESET REQ</span>}
+                              {u.status === 'pending' && <span className="text-[8px] bg-yellow-500/20 text-yellow-500 px-1.5 py-0.5 rounded font-black uppercase">PENDING</span>}
+                              {u.extraTriesRequested && <span className="text-[8px] bg-primary/20 text-primary px-1.5 py-0.5 rounded font-black uppercase">RESET REQ</span>}
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  // Link token logic or just open detail? The error log said this was "Link FCM Token" button
+                                  // In the actual code it just sets selected user... wait
+                                  setSelectedUser(u);
+                                }}
+                                className="opacity-0 group-hover:opacity-100 p-1 bg-primary/10 text-primary rounded-md hover:bg-primary hover:text-black transition-all"
+                                title="Link FCM Token"
+                              >
+                                <Bell size={10} />
+                              </button>
                             </p>
-                            <p className="text-[10px] text-white/40 font-bold uppercase tracking-widest">RANK #{getUserRank(u.id)} • {u.xp} XP</p>
+                            <p className="text-[10px] text-black/40 dark:text-white/40 font-bold uppercase tracking-widest">RANK #{getUserRank(u.id)} • {u.xp} XP</p>
                           </div>
-                          <ChevronRight size={16} className="text-white/10 group-hover:text-primary transition-all group-hover:translate-x-1" />
-                        </button>
+                          <ChevronRight size={16} className="text-black/10 dark:text-white/10 group-hover:text-primary transition-all group-hover:translate-x-1" />
+                        </div>
                       ))
                     )}
                   </div>
@@ -1541,7 +2574,17 @@ export default function AdminPanel() {
                         placeholder="e.g. Ancient Rome"
                       />
                     </div>
-                    <button onClick={addTopic} className="bg-primary text-black font-black uppercase tracking-widest py-4 rounded-2xl shadow-lg shadow-primary/20 active:scale-95 transition-all self-end">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Sequence Order</label>
+                      <input 
+                        type="number"
+                        value={newTopic.order} 
+                        onChange={e => setNewTopic({...newTopic, order: parseInt(e.target.value) || 0})}
+                        className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl outline-none text-black dark:text-white font-bold focus:border-primary"
+                        placeholder="0"
+                      />
+                    </div>
+                    <button onClick={addTopic} className="bg-primary text-black font-black uppercase tracking-widest py-4 rounded-2xl shadow-lg shadow-primary/20 active:scale-95 transition-all md:col-span-2">
                       CREATE TOPIC
                     </button>
                   </div>
@@ -1575,6 +2618,16 @@ export default function AdminPanel() {
                              placeholder="Brief overview"
                            />
                         </div>
+                        <div className="space-y-1">
+                           <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Sequence Order</label>
+                           <input 
+                             type="number"
+                             value={newNode.order}
+                             onChange={e => setNewNode({...newNode, order: parseInt(e.target.value) || 0})}
+                             className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-3 rounded-xl outline-none text-black dark:text-white text-xs"
+                             placeholder="0"
+                           />
+                        </div>
                         <div className="flex gap-2">
                           <button onClick={addNode} className="flex-1 bg-white dark:bg-white text-black font-black uppercase tracking-widest py-3 rounded-xl text-[10px]">
                             {nodeEditMode ? 'Update' : 'Add'} Node
@@ -1586,7 +2639,9 @@ export default function AdminPanel() {
                      </div>
                      <div className="space-y-2 max-h-[250px] overflow-y-auto custom-scrollbar pr-2">
                         {currentNode?.children ? (
-                           Object.values(currentNode.children).map((child: Topic, cIdx) => (
+                           Object.values(currentNode.children)
+                             .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                             .map((child: Topic, cIdx) => (
                               <div key={`${child.id}-${cIdx}`} className="flex items-center justify-between p-3 bg-black/20 dark:bg-white/5 rounded-xl border border-white/5 group/node">
                                  <div className="flex-1 cursor-pointer" onClick={() => setTopicPath([...topicPath, child.id])}>
                                     <div className="flex items-center gap-2">
@@ -1595,11 +2650,13 @@ export default function AdminPanel() {
                                     </div>
                                     <p className="text-[8px] font-mono text-black/30 dark:text-white/30 mb-0.5">{child.id}</p>
                                  </div>
-                                 <div className="flex items-center opacity-20 group-hover/node:opacity-100 transition-opacity">
+                                 <div className="flex items-center opacity-40 group-hover/node:opacity-100 transition-opacity gap-0.5">
+                                    <button onClick={() => moveNode(child.id, 'up')} className="text-black/40 dark:text-white/40 hover:text-primary p-1 bg-black/5 dark:bg-white/5 rounded"><ChevronUp size={12} /></button>
+                                    <button onClick={() => moveNode(child.id, 'down')} className="text-black/40 dark:text-white/40 hover:text-primary p-1 bg-black/5 dark:bg-white/5 rounded"><ChevronDown size={12} /></button>
                                     <button onClick={() => {
-                                      setNewNode({ id: child.id, name: child.name, description: child.description || '' });
+                                      setNewNode({ id: child.id, name: child.name, description: child.description || '', order: child.order || 0 });
                                       setNodeEditMode(child.id);
-                                    }} className="text-primary p-2"><Edit2 size={12} /></button>
+                                    }} className="text-primary p-2 ml-1"><Edit2 size={12} /></button>
                                     <button onClick={() => removeNode(child.id)} className="text-red-500 p-2"><Trash2 size={12} /></button>
                                  </div>
                               </div>
@@ -1626,6 +2683,10 @@ export default function AdminPanel() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    <div className="flex flex-col gap-1 mr-2">
+                       <button onClick={() => moveTopic(t.id, 'up')} className="text-black/20 dark:text-white/20 hover:text-primary transition-all p-0.5 bg-black/5 dark:bg-white/5 rounded"><ChevronUp size={12} /></button>
+                       <button onClick={() => moveTopic(t.id, 'down')} className="text-black/20 dark:text-white/20 hover:text-primary transition-all p-0.5 bg-black/5 dark:bg-white/5 rounded"><ChevronDown size={12} /></button>
+                    </div>
                     <button onClick={() => { setEditingTopicId(t.id); setTopicPath([]); }} className="bg-[#32befa]/10 text-[#32befa] px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all">Manage</button>
                     <button onClick={async () => { 
                       const verified = await confirm({
@@ -2597,6 +3658,117 @@ export default function AdminPanel() {
              </div>
           </div>
         );
+      case 'config':
+        return (
+          <div className="space-y-8">
+            <h3 className="text-xl font-black uppercase tracking-tighter text-black dark:text-white">Global Configuration</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                    <Star size={24} />
+                  </div>
+                  <div>
+                    <h4 className="font-black uppercase tracking-tight">Lives System</h4>
+                    <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Global Toggle</p>
+                  </div>
+                </div>
+                
+                <div className="space-y-4">
+                   <p className="text-sm font-bold text-black/60 dark:text-white/60 leading-relaxed">
+                     When enabled, the 16-lives system is active for all accounts unless overridden individually. Lives refill every 16 minutes.
+                   </p>
+                   <button 
+                     onClick={async () => {
+                       const newState = !settings?.livesEnabledForAll;
+                       await update(ref(db, 'settings'), { livesEnabledForAll: newState });
+                     }}
+                     className={cn(
+                       "w-full py-6 rounded-3xl font-black uppercase tracking-widest text-xs transition-all border shadow-lg",
+                       settings?.livesEnabledForAll 
+                         ? "bg-green-500 text-white border-green-400 shadow-green-500/20" 
+                         : "bg-red-500 text-white border-red-400 shadow-red-500/20"
+                     )}
+                   >
+                     {settings?.livesEnabledForAll ? 'SYSTEM LIVES ENABLED' : 'SYSTEM LIVES DISABLED'}
+                   </button>
+                </div>
+              </div>
+
+              <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                    <Clock size={24} />
+                  </div>
+                  <div>
+                    <h4 className="font-black uppercase tracking-tight">Quiz Timer</h4>
+                    <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Global Question Timer</p>
+                  </div>
+                </div>
+                
+                <div className="space-y-6">
+                   <p className="text-sm font-bold text-black/60 dark:text-white/60 leading-relaxed">
+                     Control whether a countdown timer is active during standard quiz play and set the duration per question.
+                   </p>
+                   
+                   <div className="flex flex-col gap-4">
+                      <button 
+                        onClick={async () => {
+                          const newState = !settings?.quizTimerEnabled;
+                          await update(ref(db, 'settings'), { quizTimerEnabled: newState });
+                        }}
+                        className={cn(
+                          "w-full py-6 rounded-3xl font-black uppercase tracking-widest text-xs transition-all border shadow-lg",
+                          settings?.quizTimerEnabled 
+                            ? "bg-green-500 text-white border-green-400 shadow-green-500/20" 
+                            : "bg-red-500 text-white border-red-400 shadow-red-500/20"
+                        )}
+                      >
+                        {settings?.quizTimerEnabled ? 'GLOBAL TIMER ON' : 'GLOBAL TIMER OFF'}
+                      </button>
+
+                      <div className="bg-white/5 dark:bg-black/20 p-6 rounded-3xl border border-black/5 dark:border-white/5">
+                        <div className="flex items-center justify-between mb-4">
+                           <span className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">Timer Duration</span>
+                           <span className="text-xl font-black text-primary">{settings?.quizTimerSeconds || 30}s</span>
+                        </div>
+                        <div className="flex gap-2">
+                           <button 
+                             onClick={async () => {
+                               const current = settings?.quizTimerSeconds || 30;
+                               if (current <= 5) return;
+                               await update(ref(db, 'settings'), { quizTimerSeconds: current - 5 });
+                             }}
+                             className="flex-1 py-4 bg-black/5 dark:bg-white/10 rounded-2xl flex items-center justify-center text-black dark:text-white hover:bg-primary hover:text-black transition-all"
+                           >
+                              <ChevronDown size={20} />
+                           </button>
+                           <button 
+                             onClick={async () => {
+                               await update(ref(db, 'settings'), { quizTimerSeconds: 30 });
+                             }}
+                             className="px-6 py-4 bg-black/5 dark:bg-white/10 rounded-2xl flex items-center justify-center text-black/40 dark:text-white/40 hover:text-primary transition-all"
+                           >
+                              <RotateCcw size={16} />
+                           </button>
+                           <button 
+                             onClick={async () => {
+                               const current = settings?.quizTimerSeconds || 30;
+                               if (current >= 120) return;
+                               await update(ref(db, 'settings'), { quizTimerSeconds: current + 5 });
+                             }}
+                             className="flex-1 py-4 bg-black/5 dark:bg-white/10 rounded-2xl flex items-center justify-center text-black dark:text-white hover:bg-primary hover:text-black transition-all"
+                           >
+                              <ChevronUp size={20} />
+                           </button>
+                        </div>
+                      </div>
+                   </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
       case 'appearance':
         return (
           <div className="space-y-6 pb-32">
@@ -2632,6 +3804,8 @@ export default function AdminPanel() {
             </div>
           </div>
         );
+      case 'notifications':
+        return renderNotificationsSection();
       case 'feedback':
         return (
           <div className="space-y-6 pb-32">
@@ -2705,6 +3879,94 @@ export default function AdminPanel() {
              </div>
           </div>
         );
+      case 'verification':
+        const pendingUsers = users.filter(u => u.pendingAvatarUrl);
+        return (
+          <div className="space-y-8 pb-32">
+            <h3 className="text-xl font-black uppercase tracking-tighter text-black dark:text-white">Profile Verification Queue ({pendingUsers.length})</h3>
+            
+            {pendingUsers.length === 0 ? (
+              <div className="bg-black/5 dark:bg-[#111] p-20 rounded-[3rem] border border-black/5 dark:border-white/5 text-center">
+                <ImageIcon size={64} className="mx-auto mb-4 text-black/10 dark:text-white/10" />
+                <p className="font-black uppercase tracking-widest text-black/20 dark:text-white/20">No pending profile pictures</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {pendingUsers.map(u => (
+                  <motion.div 
+                    key={u.id}
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5 space-y-6"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-primary/20 rounded-full flex items-center justify-center text-primary font-black">
+                        {u.name[0].toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="font-black text-sm text-black dark:text-white uppercase leading-none">{u.name}</p>
+                        <p className="text-[8px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mt-1">@{u.id}</p>
+                      </div>
+                    </div>
+
+                    <div className="aspect-square w-full rounded-2xl overflow-hidden border border-black/5 dark:border-white/5 bg-black/10 flex items-center justify-center relative group">
+                      <img 
+                        src={u.pendingAvatarUrl} 
+                        alt="Pending" 
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          const target = e.target as HTMLImageElement;
+                          target.src = 'https://ui-avatars.com/api/?name=' + encodeURIComponent(u.name);
+                        }}
+                      />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <button 
+                          onClick={() => window.open(u.pendingAvatarUrl, '_blank')}
+                          className="px-4 py-2 bg-white text-black rounded-xl font-black text-[10px] uppercase tracking-widest shadow-xl"
+                        >
+                          View Full
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button 
+                         onClick={async () => {
+                           const v = await confirm({ title: 'Approve Profile Picture?', description: `Allow ${u.name} to use this image as their avatar?`, type: 'confirm' });
+                           if (!v) return;
+                           await update(ref(db, `users/${u.id}`), {
+                             avatarUrl: u.pendingAvatarUrl,
+                             pendingAvatarUrl: null
+                           });
+                           await alert({ title: 'Approved', description: 'User profile updated!', type: 'success' });
+                         }}
+                         className="flex-1 bg-green-500 text-white font-black uppercase tracking-widest text-[10px] py-4 rounded-2xl shadow-lg shadow-green-500/20 active:scale-95 transition-all flex items-center justify-center gap-2"
+                      >
+                         <CheckCircle size={14} />
+                         Approve
+                      </button>
+                      <button 
+                         onClick={async () => {
+                           const v = await confirm({ title: 'Reject Profile Picture?', description: `Reject ${u.name}'s image request?`, type: 'error' });
+                           if (!v) return;
+                           await update(ref(db, `users/${u.id}`), {
+                             pendingAvatarUrl: null
+                           });
+                           await alert({ title: 'Rejected', description: 'Request removed.', type: 'info' });
+                         }}
+                         className="px-6 bg-red-500 text-white font-black uppercase tracking-widest text-[10px] py-4 rounded-2xl shadow-lg shadow-red-500/20 active:scale-95 transition-all"
+                      >
+                         <XCircle size={14} />
+                      </button>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      case 'customization':
+        return renderCustomization();
       default: return null;
     }
   };
@@ -2764,8 +4026,12 @@ export default function AdminPanel() {
                { id: 'topics', label: 'Topics', icon: HelpCircle },
                { id: 'quizzes', label: 'Quizzes', icon: FileText },
                { id: 'bots', label: 'Bots', icon: Bot },
+               { id: 'notifications', label: 'Notifications', icon: Bell },
+               { id: 'verification', label: 'Verifications', icon: ImageIcon },
                { id: 'feedback', label: 'Support', icon: MessageSquare },
+               { id: 'config', label: 'Config', icon: SettingsIcon },
                { id: 'appearance', label: 'Skin', icon: Palette },
+               { id: 'customization', label: 'Customization', icon: Edit2 },
              ].map(tab => (
                <button
                  key={tab.id}

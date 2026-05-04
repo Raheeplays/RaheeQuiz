@@ -6,7 +6,7 @@ import { db } from '../firebase/config';
 import { ref, onValue, set, get, push, update } from 'firebase/database';
 import { Quiz, User, QuizHistory } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Volume2, VolumeX, MessageSquare, Globe, ChevronRight, Check, AlertCircle, Clock, Trophy, Settings as SettingsIcon, Zap, RefreshCw } from 'lucide-react';
+import { X, Volume2, VolumeX, MessageSquare, Globe, ChevronRight, Check, AlertCircle, Clock, Trophy, Settings as SettingsIcon, Zap, RefreshCw, Star } from 'lucide-react';
 import { cn } from '../lib/utils';
 import WinnerLoserScreen from './WinnerLoserScreen';
 import Settings from './Settings';
@@ -15,10 +15,19 @@ import Dialog from './ui/Dialog';
 
 import { Skeleton } from './ui/Skeleton';
 
-export default function QuizScreen({ onClose, language: initialLanguage = 'en', eventId, topicId: propTopicId }: { onClose: () => void, language?: 'en' | 'hi', eventId?: string, topicId?: string }) {
-  const { currentUser } = useUser();
-  const { isDark, soundEnabled, vibrationEnabled } = useTheme();
-  const { confirm } = useDialog();
+export default function QuizScreen({ onClose, language: initialLanguage = 'en', eventId, topicIds: propTopicIds }: { onClose: () => void, language?: 'en' | 'hi', eventId?: string, topicIds?: string[] }) {
+  const { currentUser, settings } = useUser();
+  const [quizTimeLeft, setQuizTimeLeft] = useState(16);
+  const { isDark, soundEnabled, vibrationEnabled, customization } = useTheme();
+
+  // Sync initial timer with settings
+  useEffect(() => {
+    if (settings?.quizTimerSeconds && currentIndex === 0 && !isAnswered) {
+      setQuizTimeLeft(settings.quizTimerSeconds);
+    }
+  }, [settings?.quizTimerSeconds]);
+  const { confirm, alert } = useDialog();
+  
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [currentIndex, setCurrentIndex] = useState(eventId ? 0 : (currentUser?.currentQuizIndex || 0));
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
@@ -34,11 +43,19 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
   const [showFeedback, setShowFeedback] = useState(false);
   const [history, setHistory] = useState<QuizHistory[]>([]);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
-  const [eventData, setEventData] = useState<Event | null>(null);
+  const [eventData, setEventData] = useState<any | null>(null);
+  const [questionOrder, setQuestionOrder] = useState<'random' | 'sequential'>('random');
   
-  const targetTopicId = eventId ? propTopicId : (currentUser?.selectedNicheId || currentUser?.selectedTopicId);
+  const targetTopicIds = eventId ? (propTopicIds || []) : (propTopicIds || (currentUser?.selectedTopicIds || (currentUser?.selectedNicheId ? [currentUser.selectedNicheId] : (currentUser?.selectedTopicId ? [currentUser.selectedTopicId] : []))));
 
   useEffect(() => {
+    // Fetch Global Question Order setting
+    onValue(ref(db, 'customNotifications/questionOrder'), (snapshot) => {
+      if (snapshot.exists()) {
+        setQuestionOrder(snapshot.val());
+      }
+    });
+
     if (eventId) {
       const eventRef = ref(db, `events/${eventId}`);
       onValue(eventRef, (snapshot) => {
@@ -57,6 +74,62 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
     }
   }, [eventId]);
 
+  const completeQuiz = async () => {
+    if (eventId && currentUser) {
+      await update(ref(db, `events/${eventId}/results/${currentUser.id}`), {
+        score: roundStats.correct,
+        total: quizzes.length,
+        completedAt: Date.now()
+      });
+    }
+    setShowResult(true);
+  };
+
+  useEffect(() => {
+    if (!targetTopicIds || (Array.isArray(targetTopicIds) && targetTopicIds.length === 0)) {
+      setLoading(false);
+      return;
+    }
+
+    const fetchAllQuizzes = async () => {
+      let combined: Quiz[] = [];
+      const ids = Array.isArray(targetTopicIds) ? targetTopicIds : [targetTopicIds];
+      
+      for (const tid of ids) {
+        const quizzesRef = ref(db, `topicQuizzes/${tid}`);
+        const snap = await get(quizzesRef);
+        if (snap.exists()) {
+          combined = [...combined, ...Object.values(snap.val()) as Quiz[]];
+        }
+      }
+
+      if (combined.length > 0) {
+        if (questionOrder === 'random') {
+          const seed = currentUser?.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) || 0;
+          const shuffled = [...combined].sort((a, b) => {
+            const pseudoRandomA = Math.sin(seed + a.id.length) * 10000;
+            const pseudoRandomB = Math.sin(seed + b.id.length) * 10000;
+            return (pseudoRandomA - Math.floor(pseudoRandomA)) - (pseudoRandomB - Math.floor(pseudoRandomB));
+          });
+          setQuizzes(shuffled);
+        } else {
+          setQuizzes([...combined].sort((a, b) => a.id.localeCompare(b.id)));
+        }
+      } else {
+        setQuizzes([]);
+      }
+      setLoading(false);
+    };
+
+    fetchAllQuizzes();
+  }, [targetTopicIds, questionOrder]);
+
+  const QUESTIONS_PER_ROUND = 10;
+  const absoluteIndex = ((currentUser?.currentRound || 1) - 1) * QUESTIONS_PER_ROUND + currentIndex + skippedCount;
+
+  const livesActive = settings?.livesEnabledForAll && currentUser?.lives?.enabled;
+
+  // Global Event Timer
   useEffect(() => {
     if (timeLeft !== null && timeLeft > 0 && !showRoundComplete && !showResult) {
       const timer = setInterval(() => {
@@ -73,50 +146,34 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
     }
   }, [timeLeft, showRoundComplete, showResult]);
 
-  const completeQuiz = async () => {
-    if (eventId && currentUser) {
-      await update(ref(db, `events/${eventId}/results/${currentUser.id}`), {
-        score: roundStats.correct,
-        total: quizzes.length,
-        completedAt: Date.now()
-      });
-    }
-    setShowResult(true);
-  };
-
+  // Per-Question Timer
   useEffect(() => {
-    if (!targetTopicId) return;
-
-    const quizzesRef = ref(db, `topicQuizzes/${targetTopicId}`);
-    onValue(quizzesRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        let topicQuizzes = Object.values(data) as Quiz[];
-        
-        // If we are showing all quizzes for a topic (including children), 
-        // we'd need a more complex query, but for now we fetch only from the specific niche bucket.
-        
-        // Deterministic shuffle
-        const seed = currentUser.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-        const shuffled = [...topicQuizzes].sort((a, b) => {
-          const pseudoRandomA = Math.sin(seed + a.id.length) * 10000;
-          const pseudoRandomB = Math.sin(seed + b.id.length) * 10000;
-          return (pseudoRandomA - Math.floor(pseudoRandomA)) - (pseudoRandomB - Math.floor(pseudoRandomB));
+    if (settings?.quizTimerEnabled === false) return;
+    
+    if (!isAnswered && !showRoundComplete && !showResult && quizTimeLeft > 0 && !loading) {
+      const timer = setInterval(() => {
+        setQuizTimeLeft(prev => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            handleAnswer(-1); // -1 means time out
+            return 0;
+          }
+          return prev - 1;
         });
-
-        setQuizzes(shuffled);
-      } else {
-        setQuizzes([]);
-      }
-      setLoading(false);
-    });
-  }, [currentUser?.selectedTopicId]);
-
-  const QUESTIONS_PER_ROUND = 10;
-  const absoluteIndex = ((currentUser?.currentRound || 1) - 1) * QUESTIONS_PER_ROUND + currentIndex + skippedCount;
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [quizTimeLeft, isAnswered, showRoundComplete, showResult, loading, settings?.quizTimerEnabled]);
 
   const handleAnswer = async (index: number) => {
     if (isAnswered || !currentUser || !quizzes[absoluteIndex]) return;
+    
+    // Check for lives
+    if (livesActive && (currentUser.lives?.count || 0) <= 0) {
+      alert({ title: 'No Lives Left', description: 'Your lives will refill every 16 minutes. You can also get more from the shop.', type: 'error' });
+      return;
+    }
+
     setSelectedOption(index);
     setIsAnswered(true);
 
@@ -126,15 +183,18 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
     // Play feedback
     if (soundEnabled) {
       const audio = new Audio(isCorrect 
-        ? 'https://assets.mixkit.co/active_storage/sfx/2013/2013-preview.mp3' 
-        : 'https://assets.mixkit.co/active_storage/sfx/2014/2014-preview.mp3'
+        ? (customization?.correctSound || 'https://assets.mixkit.co/active_storage/sfx/2013/2013-preview.mp3')
+        : (customization?.incorrectSound || 'https://assets.mixkit.co/active_storage/sfx/2014/2014-preview.mp3')
       );
       audio.volume = 0.5;
       audio.play().catch(e => console.log('Audio playback failed', e));
     }
     
-    if (vibrationEnabled && navigator.vibrate) {
-      navigator.vibrate(isCorrect ? [50] : [200, 100, 200]);
+    if (vibrationEnabled && (customization?.vibrationEnabled !== false) && navigator.vibrate) {
+      const duration = isCorrect 
+        ? (customization?.correctVibration || 50) 
+        : (customization?.incorrectVibration || 200);
+      navigator.vibrate(duration);
     }
 
     // Update round stats
@@ -158,7 +218,9 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
     setHistory(prev => [...prev, historyEntry]);
 
     // Update User Stats in RTDB
-    const newXp = currentUser.xp + xpGain;
+    const newXp = (currentUser.xp || 0) + xpGain;
+    const newDailyXp = (currentUser.dailyXP || 0) + xpGain;
+    const newWeeklyXp = (currentUser.weeklyXP || 0) + xpGain;
     const newRank = Math.floor(newXp / 1600) + 1;
     const newIndex = currentIndex + 1;
 
@@ -168,19 +230,50 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
     const currentTopicId = currentUser.selectedTopicId || 'general';
     const currentTopicScores = currentUser.scores?.[currentTopicId] || { correct: 0, total: 0 };
     
-    // Total solved across this session
-    const totalSolvedInRound = newIndex;
+    // Streak logic
+    const today = new Date().toISOString().split('T')[0];
+    let newStreak = currentUser.streak || 0;
+    if (currentUser.lastPlayedDate !== today) {
+        if (!currentUser.lastPlayedDate) {
+            newStreak = 1;
+        } else {
+            const lastPlayed = new Date(currentUser.lastPlayedDate);
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            const yesterdayStr = yesterday.toISOString().split('T')[0];
+            
+            if (currentUser.lastPlayedDate === yesterdayStr) {
+                newStreak += 1;
+            } else {
+                newStreak = 1;
+            }
+        }
+    }
+
     let bonusCoins = 0;
-    // Award 100 coins per 16 quizzes (User requirement: solve 16 quiz -> earn 100)
-    // We track this by checking total progress
     const totalQuizzesSolved = ((currentUser.currentRound - 1) * QUESTIONS_PER_ROUND) + newIndex;
     if (totalQuizzesSolved > 0 && totalQuizzesSolved % 16 === 0) {
       bonusCoins = 100;
     }
 
+    // Lives deduction
+    let newLives = currentUser.lives;
+    if (livesActive && !isCorrect) {
+      newLives = {
+        ...currentUser.lives!,
+        count: Math.max(0, currentUser.lives!.count - 1),
+        lastRefill: currentUser.lives!.count === 16 ? Date.now() : currentUser.lives!.lastRefill
+      };
+    }
+
     const updates: Partial<User> = {
       xp: newXp,
+      dailyXP: newDailyXp,
+      weeklyXP: newWeeklyXp,
       rank: newRank,
+      streak: newStreak,
+      lastPlayedDate: today,
+      lives: newLives,
       currentQuizIndex: newIndex,
       raheeCoins: (currentUser.raheeCoins || 0) + bonusCoins,
       scores: {
@@ -198,7 +291,6 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
         updates.currentRound = (currentUser.currentRound || 1) + 1;
       }
       
-      // Delay to show result of last question
       setTimeout(async () => {
         if (eventId) {
           await completeQuiz();
@@ -207,7 +299,6 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
         }
       }, 1500);
     } else {
-      // Auto next after 2 seconds (giving time for explanation)
       setTimeout(() => {
         nextQuestion();
       }, 2000);
@@ -222,6 +313,7 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
     setSelectedOption(null);
     setIsAnswered(false);
     setHiddenOptions([]);
+    setQuizTimeLeft(settings?.quizTimerSeconds || 30);
     setCurrentIndex(prev => prev + 1);
   };
 
@@ -261,6 +353,7 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
     } else {
       setSelectedOption(null);
       setIsAnswered(false);
+      setQuizTimeLeft(settings?.quizTimerSeconds || 30);
       setCurrentIndex(0); // Reset for next round
     }
   };
@@ -331,10 +424,28 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
           <button onClick={onClose} className="p-2 -ml-2 text-black/40 dark:text-white/40 hover:text-primary transition-colors"><X size={24} /></button>
           <div>
             <h1 className="text-sm font-black text-primary tracking-tighter uppercase mb-0.5">Rahee Quiz</h1>
-            <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">{targetTopicId || 'General'} • {eventId ? 'Special Event' : `R${currentUser?.currentRound || 1} • Q${currentIndex}`}</p>
+            <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">{(targetTopicIds && targetTopicIds.length > 0) ? (targetTopicIds.length === 1 ? targetTopicIds[0] : `${targetTopicIds.length} Topics`) : 'General'} • {eventId ? 'Special Event' : `R${currentUser?.currentRound || 1} • Q${currentIndex}`}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {livesActive && currentUser?.lives && (
+            <div className={cn(
+              "px-3 py-1 rounded-full text-[10px] font-black tracking-widest flex items-center gap-2 border transition-all",
+              currentUser.lives.count <= 3 ? "bg-red-500 text-white border-red-400 animate-pulse" : "bg-primary/10 text-primary border-primary/20"
+            )}>
+              <Star size={12} fill="currentColor" />
+              {currentUser.lives.count}
+            </div>
+          )}
+          {settings?.quizTimerEnabled !== false && (
+            <div className={cn(
+              "px-3 py-1 rounded-full text-[10px] font-black tracking-widest flex items-center gap-2 border transition-all",
+              quizTimeLeft <= 5 ? "bg-red-500 text-white animate-pulse border-red-400" : "bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40 border-black/10 dark:border-white/10"
+            )}>
+              <Clock size={12} />
+              {quizTimeLeft}s
+            </div>
+          )}
           {timeLeft !== null && (
             <div className={cn(
               "px-3 py-1 rounded-full text-[10px] font-black tracking-widest flex items-center gap-2 border",

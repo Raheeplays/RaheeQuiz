@@ -5,18 +5,21 @@ import { ref, onValue, set, update, get } from 'firebase/database';
 import { Quiz, User, MatchRoom, MatchProgress } from '../types';
 import { useUser } from '../contexts/UserContext';
 import { useTheme } from '../contexts/ThemeContext';
-import { Swords, Trophy, Zap, Clock, Check, X, AlertCircle, Volume2, Globe, RefreshCw } from 'lucide-react';
+import { useDialog } from '../contexts/DialogContext';
+import { Swords, Trophy, Zap, Clock, Check, X, AlertCircle, Volume2, Globe, RefreshCw, Minus } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface MultiplayerGameProps {
   roomId: string;
   isBot: boolean;
   onClose: () => void;
+  onMinimize: () => void;
 }
 
-export default function MultiplayerGame({ roomId, isBot, onClose }: MultiplayerGameProps) {
+export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: MultiplayerGameProps) {
   const { currentUser } = useUser();
-  const { isDark } = useTheme();
+  const { isDark, soundEnabled, vibrationEnabled, customization } = useTheme();
+  const { confirm } = useDialog();
   const [room, setRoom] = useState<MatchRoom | null>(null);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -35,6 +38,17 @@ export default function MultiplayerGame({ roomId, isBot, onClose }: MultiplayerG
     return onValue(roomRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val() as MatchRoom;
+        
+        // If room is already finished, and we haven't set a winner yet, do it now
+        if (data.status === 'finished' && !winner) {
+          const participants = Object.values(data.participants) as MatchProgress[];
+          const sorted = [...participants].sort((a, b) => b.score - a.score || b.currentIndex - a.currentIndex);
+          if (sorted[0]) setWinner(sorted[0].userId);
+          setRoom(data);
+          setLoading(false);
+          return;
+        }
+
         setRoom(data);
         
         // Timer Logic
@@ -58,11 +72,20 @@ export default function MultiplayerGame({ roomId, isBot, onClose }: MultiplayerG
     });
   }, [roomId, winner]);
 
-  const finalizeGame = (data: MatchRoom) => {
+  const finalizeGame = async (data: MatchRoom) => {
     const participants = Object.values(data.participants) as MatchProgress[];
     // Score tie-break by index reached
     const sorted = [...participants].sort((a, b) => b.score - a.score || b.currentIndex - a.currentIndex);
     if (sorted[0]) setWinner(sorted[0].userId);
+    
+    // Mark room as finished in DB so users don't get pulled back on reload
+    if (data.status !== 'finished') {
+      try {
+        await update(ref(db, `matches/${roomId}`), { status: 'finished' });
+      } catch (err) {
+        console.error("Failed to mark match as finished:", err);
+      }
+    }
   };
 
   // Shared Countdown Timer Interval
@@ -147,6 +170,23 @@ export default function MultiplayerGame({ roomId, isBot, onClose }: MultiplayerG
 
     const isCorrect = index === quizzes[currentIndex].correctAnswerIndex;
     
+    // Play feedback
+    if (soundEnabled) {
+      const audio = new Audio(isCorrect 
+        ? (customization?.correctSound || 'https://assets.mixkit.co/active_storage/sfx/2013/2013-preview.mp3')
+        : (customization?.incorrectSound || 'https://assets.mixkit.co/active_storage/sfx/2014/2014-preview.mp3')
+      );
+      audio.volume = 0.5;
+      audio.play().catch(e => console.log('Audio playback failed', e));
+    }
+    
+    if (vibrationEnabled && (customization?.vibrationEnabled !== false) && navigator.vibrate) {
+      const duration = isCorrect 
+        ? (customization?.correctVibration || 50) 
+        : (customization?.incorrectVibration || 200);
+      navigator.vibrate(duration);
+    }
+
     if (room?.whoFirstMode) {
        // Claim the question
        await update(ref(db, `matches/${roomId}/claimedQuestions`), {
@@ -238,6 +278,24 @@ export default function MultiplayerGame({ roomId, isBot, onClose }: MultiplayerG
     }
   }, [room?.claimedQuestions, currentIndex, winner]);
 
+  const quitGame = async () => {
+    if (!currentUser || !room || winner) return;
+    
+    const verified = await confirm({
+      title: 'Quit Match?',
+      description: 'Are you sure you want to surrender? You will lose this match.',
+      type: 'confirm'
+    });
+
+    if (verified) {
+      await update(ref(db, `matches/${roomId}/participants/${currentUser.id}`), {
+        finished: true,
+        score: myProgress.score,
+      });
+      // Force finalize game to show results screen
+      finalizeGame(room);
+    }
+  };
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -257,23 +315,13 @@ export default function MultiplayerGame({ roomId, isBot, onClose }: MultiplayerG
   if (winner) {
     return (
       <div className="fixed inset-0 bg-black z-[140] flex flex-col items-center justify-center p-8 text-center backdrop-blur-xl">
-         <motion.div
-           initial={{ scale: 0.5 }}
-           animate={{ scale: 1 }}
-           className={cn(
-             "w-24 h-24 rounded-3xl flex items-center justify-center mb-6 shadow-2xl",
-             winner === currentUser?.id ? "bg-primary text-black shadow-primary/20" : "bg-red-500/20 text-red-500 border border-red-500/20"
-           )}
-         >
-            <Trophy size={48} />
-         </motion.div>
+         <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mb-6 border border-white/10">
+            <Trophy size={32} className="text-primary" />
+         </div>
 
-         <h2 className="text-3xl font-black mb-2 tracking-tighter uppercase">
-            {winner === currentUser?.id ? "YOU WON!" : "DEFEATED"}
+         <h2 className="text-2xl font-black mb-10 tracking-tighter uppercase text-white">
+            Battle Completed
          </h2>
-         <p className="text-white/40 mb-10 text-[10px] font-bold uppercase tracking-widest">
-            {winner === currentUser?.id ? "Another victory for rahee!" : "Tough luck, keep practice"}
-         </p>
 
          <div className="flex gap-4 w-full max-w-sm mb-10">
             <div className="flex-1 bg-white/5 p-4 rounded-2xl border border-white/5">
@@ -320,12 +368,28 @@ export default function MultiplayerGame({ roomId, isBot, onClose }: MultiplayerG
               </div>
             )}
 
-            <button 
-              onClick={() => setLanguage(l => l === 'en' ? 'hi' : 'en')}
-              className="text-[8px] font-black bg-white/5 px-3 py-2 rounded-full border border-white/5 uppercase"
-            >
-              {language === 'en' ? 'ENG' : 'HIN'}
-            </button>
+            <div className="flex items-center gap-2">
+               <button 
+                 onClick={() => setLanguage(l => l === 'en' ? 'hi' : 'en')}
+                 className="text-[8px] font-black bg-white/5 px-3 py-2 rounded-full border border-white/5 uppercase transition-all hover:bg-white/10"
+               >
+                 {language === 'en' ? 'ENG' : 'HIN'}
+               </button>
+               <button 
+                 onClick={onMinimize}
+                 className="p-2 text-black dark:text-white hover:bg-black/5 dark:hover:bg-white/10 rounded-xl transition-all"
+                 title="Minimize Match"
+               >
+                 <Minus size={20} />
+               </button>
+               <button 
+                 onClick={quitGame}
+                 className="p-2 text-red-500 hover:bg-red-500/10 rounded-xl transition-all"
+                 title="Quit Match"
+               >
+                 <X size={20} />
+               </button>
+            </div>
          </div>
 
          {/* Battle HUD */}
