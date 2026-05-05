@@ -2,46 +2,30 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
 import { ref, onValue } from 'firebase/database';
 import { User } from '../types';
-import { Trophy, Medal, Crown, TrendingUp, Bot, Clock, X } from 'lucide-react';
+import { Trophy, Medal, Crown, TrendingUp, Bot, Clock } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 
 import { useUser } from '../contexts/UserContext';
+
 import { Skeleton } from './ui/Skeleton';
-import ScoreCard from './ScoreCard';
-import { ref as dbRef, update } from 'firebase/database';
 
 export default function Leaderboard() {
   const [players, setPlayers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'daily' | 'friends' | 'all'>('all');
   const { currentUser } = useUser();
-  const [selectedPlayer, setSelectedPlayer] = useState<User | null>(null);
 
   const [dailyCountdown, setDailyCountdown] = useState('');
   const [weeklyCountdown, setWeeklyCountdown] = useState('');
 
-  const sendFriendRequest = async (targetUserId: string) => {
-    if (!currentUser) return;
-    await update(dbRef(db, `users/${currentUser.id}/pendingRequests`), {
-      [targetUserId]: 'outgoing'
-    });
-    await update(dbRef(db, `users/${targetUserId}/pendingRequests`), {
-      [currentUser.id]: 'incoming'
-    });
-  };
-
   useEffect(() => {
-    const playersRef = ref(db, 'public_profiles');
+    const playersRef = ref(db, 'users');
     const unsubscribe = onValue(playersRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        const unique = new Map();
-        Object.entries(data).forEach(([key, val]: [string, any]) => {
-          const uid = val.id || key;
-          unique.set(uid, { ...val, id: uid });
-        });
-        setPlayers(Array.from(unique.values()));
+        const list = Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })) as User[];
+        setPlayers(list);
       }
       setLoading(false);
     });
@@ -172,9 +156,8 @@ export default function Leaderboard() {
                 )}
               </div>
               <div className="w-20 bg-gradient-to-t from-gray-500/10 dark:from-gray-500/20 to-transparent dark:to-gray-500/10 h-24 rounded-t-2xl border-x border-t border-black/5 dark:border-white/5 flex flex-col items-center justify-end p-2 text-center">
-                 <Medal size={20} className="text-gray-400 dark:text-gray-300 mb-1" />
+                 <Medal size={20} className="text-gray-400 dark:text-gray-300 mb-2" />
                  <span className="text-[10px] font-black text-black dark:text-white truncate max-w-full italic leading-tight">{filteredPlayers[1].name}</span>
-                 <span className="text-[8px] font-bold text-primary truncate max-w-full italic leading-tight">@{filteredPlayers[1].username || filteredPlayers[1].id}</span>
               </div>
            </motion.div>
          )}
@@ -189,9 +172,8 @@ export default function Leaderboard() {
               </div>
               <div className="w-24 bg-gradient-to-t from-primary/20 to-transparent dark:to-primary/10 h-36 rounded-t-2xl border-x border-t border-primary/20 flex flex-col items-center justify-end p-2 relative text-center">
                  <Crown size={32} className="text-yellow-400 absolute -top-10 drop-shadow-[0_0_10px_rgba(250,204,21,0.5)]" />
-                 <Trophy size={24} className="text-primary mb-1" />
+                 <Trophy size={24} className="text-primary mb-2" />
                  <span className="text-[11px] font-black text-black dark:text-white truncate max-w-full italic leading-tight">{filteredPlayers[0].name}</span>
-                 <span className="text-[9px] font-bold text-primary truncate max-w-full mb-1 italic leading-tight">@{filteredPlayers[0].username || filteredPlayers[0].id}</span>
               </div>
            </motion.div>
          )}
@@ -205,9 +187,8 @@ export default function Leaderboard() {
                 )}
               </div>
               <div className="w-20 bg-gradient-to-t from-amber-600/10 dark:from-amber-600/20 to-transparent dark:to-amber-600/10 h-16 rounded-t-2xl border-x border-t border-black/5 dark:border-white/5 flex flex-col items-center justify-end p-2 text-center">
-                 <Medal size={20} className="text-amber-700 dark:text-amber-600 mb-1" />
+                 <Medal size={20} className="text-amber-700 dark:text-amber-600 mb-2" />
                  <span className="text-[10px] font-black text-black dark:text-white truncate max-w-full italic leading-tight">{filteredPlayers[2].name}</span>
-                 <span className="text-[8px] font-bold text-primary truncate max-w-full italic leading-tight">@{filteredPlayers[2].username || filteredPlayers[2].id}</span>
               </div>
            </motion.div>
          )}
@@ -233,7 +214,7 @@ export default function Leaderboard() {
          ) : (
            filteredPlayers.map((player, idx) => (
              <motion.div
-               key={`${player.id}-${idx}`}
+               key={player.id}
                initial={{ x: -20, opacity: 0 }}
                animate={{ x: 0, opacity: 1 }}
                transition={{ delay: idx * 0.05 }}
@@ -254,15 +235,14 @@ export default function Leaderboard() {
                         (player.name || 'P')[0].toUpperCase()
                       )}
                    </div>
-                 <div className="space-y-0.5 text-left flex-1 min-w-0">
-                    <p className="font-bold flex items-center gap-2 text-black dark:text-white truncate">
-                      {player.name}
-                      {player.id === currentUser?.id && <span className="bg-primary text-black text-[8px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest shrink-0">You</span>}
-                      {player.isBot && currentUser?.role === 'admin' && <Bot size={12} className="text-black/20 dark:text-white/20 shrink-0" />}
-                    </p>
-                    <p className="text-[9px] text-primary font-bold lowercase tracking-tight truncate">@{player.username || player.id}</p>
-                    <p className="text-[10px] text-black/40 dark:text-white/40 font-bold uppercase tracking-widest leading-none mt-1">Rank #{idx + 1}</p>
-                 </div>
+                   <div className="space-y-0.5 text-left">
+                      <p className="font-bold flex items-center gap-2 text-black dark:text-white">
+                        {player.name}
+                        {player.id === currentUser?.id && <span className="bg-primary text-black text-[8px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest">You</span>}
+                        {player.isBot && currentUser?.role === 'admin' && <Bot size={12} className="text-black/20 dark:text-white/20" />}
+                      </p>
+                      <p className="text-[10px] text-black/40 dark:text-white/40 font-bold uppercase tracking-widest leading-none">Rank #{idx + 1}</p>
+                   </div>
                 </div>
                 <div className="text-right shrink-0">
                    <p className="text-lg font-black text-primary leading-none">
@@ -274,21 +254,6 @@ export default function Leaderboard() {
            ))
          )}
       </div>
-
-      <AnimatePresence>
-        {selectedPlayer && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-             <div className="w-full max-w-md">
-                <ScoreCard 
-                   user={selectedPlayer}
-                   currentUser={currentUser}
-                   onSendFriendRequest={sendFriendRequest}
-                   onClose={() => setSelectedPlayer(null)}
-                />
-             </div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

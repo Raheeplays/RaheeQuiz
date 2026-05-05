@@ -39,6 +39,12 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         const unsubscribeDb = onValue(userRef, (snapshot) => {
           if (snapshot.exists()) {
             const userData = snapshot.val();
+            // Ensure ID consistency
+            if (userData.id && userData.id !== firebaseUser.uid) {
+              console.error("User identity mismatch detected. Stopping sync.");
+              return;
+            }
+            
             // Ensure structure for existing users
             let needsUpdate = false;
             const updates: any = {};
@@ -126,10 +132,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
           }
           setLoading(false);
         }, (error) => {
-          console.error("Database read error:", error);
-          if (error.message.includes('permission_denied')) {
-            setCurrentUser(null);
-          }
+          console.error("Database read error for user profile:", error);
+          // Only log the error. Do NOT force logout unless it's a critical auth failure.
+          // Permission denied here might be transient or related to a specific nested path change.
           setLoading(false);
         });
 

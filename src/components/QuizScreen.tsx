@@ -306,15 +306,6 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
 
     if (!eventId) {
       await set(ref(db, `users/${currentUser.id}`), { ...currentUser, ...updates });
-      
-      // Update public profile for leaderboard
-      await update(ref(db, `public_profiles/${currentUser.id}`), {
-        xp: updates.xp,
-        dailyXP: updates.dailyXP,
-        weeklyXP: updates.weeklyXP,
-        rank: updates.rank,
-        avatarUrl: currentUser.avatarUrl || null
-      });
     }
   };
 

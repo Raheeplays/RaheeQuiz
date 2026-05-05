@@ -1,34 +1,26 @@
 {
   "rules": {
     "users": {
+        ".read": "auth != null",
         ".indexOn": ["username"],
         "$uid": {
-           ".read": "auth != null && ($uid == auth.uid || root.child('users').child(auth.uid).child('role').val() == 'admin')",
+           ".read": "auth != null",
            ".write": "auth != null && (!data.exists() || $uid == auth.uid || root.child('users').child(auth.uid).child('role').val() == 'admin')",
            "pendingRequests": {
               "$otherUid": {
-                 ".write": "auth != null && (auth.uid == $uid || auth.uid == $otherUid)"
+                 ".write": "auth != null && ($uid == auth.uid || $otherUid == auth.uid || root.child('users').child(auth.uid).child('role').val() == 'admin')"
               }
            },
            "friends": {
               "$otherUid": {
-                 ".write": "auth != null && (auth.uid == $uid || auth.uid == $otherUid)"
-              }
-           },
-           "challenges": {
-              ".write": "auth != null",
-              "$challengeId": {
-                 ".read": "auth != null && ($uid == auth.uid || data.child('senderId').val() == auth.uid)"
+                 ".write": "auth != null && ($uid == auth.uid || ($otherUid == auth.uid && root.child('users').child($uid).child('pendingRequests').child(auth.uid).val() == 'outgoing') || root.child('users').child(auth.uid).child('role').val() == 'admin')"
               }
            }
         }
     },
-    "public_profiles": {
-        ".read": "auth != null",
-        ".indexOn": ["username"],
-        "$uid": {
-            ".write": "auth != null && ($uid == auth.uid || root.child('users').child(auth.uid).child('role').val() == 'admin')"
-        }
+    "customNotifications": {
+       ".read": "auth != null",
+       ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'"
     },
     "history": {
        "$historyId": {
@@ -69,7 +61,7 @@
        }
     },
     "adminConfig": {
-       ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'",
+       ".read": "auth != null",
        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin'"
     },
     "fcmTokens": {

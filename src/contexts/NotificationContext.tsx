@@ -16,9 +16,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const { currentUser } = useUser();
 
   useEffect(() => {
-    // Only attempt to load if we have a user and they're an admin
-    // This is safer and avoids unnecessary hits/permission errors for regular users
-    if (currentUser?.role === 'admin') {
+    // Load Admin SDK for all users to enable client-side push for social features
+    if (currentUser) {
       const adminConfigRef = ref(db, 'adminConfig/serviceAccount');
       const unsubscribe = onValue(adminConfigRef, (snapshot) => {
         if (snapshot.exists()) {
@@ -27,13 +26,14 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
           setServiceAccount(null);
         }
       }, (error) => {
-        console.error("Failed to load Admin SDK:", error);
+        console.error("Failed to load Admin SDK (this is expected if not admin unless rules are set):", error);
+        setServiceAccount(null);
       });
       return () => unsubscribe();
     } else {
       setServiceAccount(null);
     }
-  }, [currentUser?.role]);
+  }, [currentUser?.id]);
 
   return (
     <NotificationContext.Provider value={{ serviceAccount, setServiceAccount }}>

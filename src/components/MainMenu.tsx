@@ -159,19 +159,14 @@ export default function MainMenu() {
   };
 
   useEffect(() => {
-    const usersRef = ref(db, 'public_profiles');
+    const usersRef = ref(db, 'users');
     const unsubscribe = onValue(usersRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        const uniqueMap = new Map();
-        Object.entries(data).forEach(([key, val]: [string, any]) => {
-          // Identify user by internal id first, then fallback to key
-          const userId = val.id || key;
-          const user = { ...val, id: userId };
-          // Keep only one entry per user ID to avoid duplicate keys in React
-          uniqueMap.set(userId, user);
-        });
-        setAllUsers(Array.from(uniqueMap.values()));
+        setAllUsers(Object.entries(data).map(([id, val]: [string, any]) => ({
+          id,
+          ...val
+        })));
       }
     });
 
@@ -223,10 +218,9 @@ export default function MainMenu() {
   };
 
   const getUserRank = (userId: string) => {
-    if (!userId || !allUsers || allUsers.length === 0) return '-';
     const sortedUsers = [...allUsers].sort((a, b) => (b.xp || 0) - (a.xp || 0));
     const index = sortedUsers.findIndex(u => u.id === userId);
-    return index !== -1 ? (index + 1).toString() : '-';
+    return index !== -1 ? index + 1 : '-';
   };
 
   const toggleLanguage = async () => {
@@ -299,19 +293,14 @@ export default function MainMenu() {
               {currentUser?.name}
               {currentUser?.role === 'admin' && <Shield size={18} className="text-primary" />}
             </h2>
-            <div className="flex items-center gap-3 mt-1.5 h-4">
+            <div className="flex items-center gap-2 mt-1">
               <button 
                 onClick={(e) => { e.stopPropagation(); toggleLanguage(); }}
-                className="px-2 py-0.5 bg-primary/10 text-primary text-[8px] font-black rounded uppercase tracking-widest border border-primary/20 hover:bg-primary hover:text-black transition-all shrink-0"
+                className="px-2 py-0.5 bg-primary/10 text-primary text-[8px] font-black rounded uppercase tracking-widest border border-primary/20 hover:bg-primary hover:text-black transition-all"
               >
                 {lang === 'en' ? 'English' : 'हिंदी'}
               </button>
-              <div className="flex items-center gap-1.5 whitespace-nowrap">
-                <Trophy size={10} className="text-primary shrink-0" />
-                <span className="text-primary text-[10px] font-black uppercase tracking-widest leading-normal">
-                  {t.rank} {userRank !== '-' ? ` #${userRank}` : ` ${lang === 'hi' ? 'लोड हो रहा है...' : 'Loading...'}`}
-                </span>
-              </div>
+              <span className="text-black/30 dark:text-white/40 text-[10px] font-bold uppercase tracking-widest leading-none">{t.rank} #{userRank}</span>
             </div>
           </div>
         </div>
