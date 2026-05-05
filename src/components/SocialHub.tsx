@@ -41,17 +41,12 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
         if (u.isBot && currentUser.role !== 'admin') return false;
         
         const query = searchQuery.trim().toLowerCase();
-        const isFriend = currentUser.friends?.[u.id];
         
-        // If they are a friend, allow partial matching for convenience
-        if (isFriend) {
-          return (u.name || '').toLowerCase().includes(query) || 
-                 (u.username && u.username.toLowerCase().includes(query));
-        }
+        // Match by name or username (partial match)
+        const nameMatch = (u.name || '').toLowerCase().includes(query);
+        const usernameMatch = (u.username || '').toLowerCase().includes(query);
         
-        // If not a friend, only show if the query EXACTLY matches their username
-        // This prevents "Unknown" players from appearing in partial searches
-        return u.username && u.username.toLowerCase() === query;
+        return nameMatch || usernameMatch;
       }).slice(0, 5)
     : [];
 
@@ -493,3 +488,4 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
     </div>
   );
 }
+
