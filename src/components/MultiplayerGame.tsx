@@ -1,13 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../firebase/config';
-import { ref, onValue, set, update, get } from 'firebase/database';
+import { ref, onValue, set, update, get, push } from 'firebase/database';
 import { Quiz, User, MatchRoom, MatchProgress } from '../types';
 import { useUser } from '../contexts/UserContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { useDialog } from '../contexts/DialogContext';
-import { Swords, Trophy, Zap, Clock, Check, X, AlertCircle, Volume2, Globe, RefreshCw, Minus } from 'lucide-react';
+import { useNotifications } from '../contexts/NotificationContext';
+import { Swords, Trophy, Zap, Clock, Check, X, AlertCircle, Volume2, Globe, RefreshCw, Minus, UserPlus, UserCheck } from 'lucide-react';
 import { cn } from '../lib/utils';
+import ScoreCard from './ScoreCard';
+import { NotificationService } from '../services/notificationService';
 
 interface MultiplayerGameProps {
   roomId: string;
@@ -18,9 +21,44 @@ interface MultiplayerGameProps {
 
 export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: MultiplayerGameProps) {
   const { currentUser } = useUser();
+  const { serviceAccount } = useNotifications();
   const { isDark, soundEnabled, vibrationEnabled, customization } = useTheme();
   const { confirm } = useDialog();
   const [room, setRoom] = useState<MatchRoom | null>(null);
+  
+  const sendFriendRequest = async (targetUserId: string) => {
+    if (!currentUser) return;
+    await update(ref(db, `users/${currentUser.id}/pendingRequests`), {
+      [targetUserId]: 'outgoing'
+    });
+    // This will work now with updated rules
+    await update(ref(db, `users/${targetUserId}/pendingRequests`), {
+      [currentUser.id]: 'incoming'
+    });
+
+    // Send FCM Notification
+    try {
+      const tokensSnap = await get(ref(db, `fcmTokens/${targetUserId}`));
+      if (tokensSnap.exists()) {
+        const tokens = Object.values(tokensSnap.val()) as string[];
+        const templateSnap = await get(ref(db, 'customNotifications/friendRequest'));
+        let title = 'New Friend Request';
+        let body = `${currentUser.name} wants to be your friend!`;
+
+        if (templateSnap.exists()) {
+          const template = templateSnap.val();
+          if (template?.title) title = template.title;
+          if (template?.body) body = template.body.replace('{player}', currentUser.name);
+        }
+
+        for (const token of tokens) {
+          await NotificationService.sendToToken(serviceAccount, token, title, body);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to send friend request notification:", e);
+    }
+  };
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
@@ -31,15 +69,31 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
   const [loading, setLoading] = useState(true);
   const [winner, setWinner] = useState<string | null>(null);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [participantDetails, setParticipantDetails] = useState<Record<string, User>>({});
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
 
   // Sync Room Data
   useEffect(() => {
     const roomRef = ref(db, `matches/${roomId}`);
-    return onValue(roomRef, (snapshot) => {
+    return onValue(roomRef, async (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val() as MatchRoom;
         
-        // If room is already finished, and we haven't set a winner yet, do it now
+        // Fetch participant details if not already fetched
+        const detailUpdates: Record<string, User> = { ...participantDetails };
+        let changed = false;
+        for (const uid of Object.keys(data.participants)) {
+           if (!detailUpdates[uid]) {
+              const uSnap = await get(ref(db, `public_profiles/${uid}`));
+              if (uSnap.exists()) {
+                 detailUpdates[uid] = { ...uSnap.val(), id: uid };
+                 changed = true;
+              }
+           }
+        }
+        if (changed) setParticipantDetails(detailUpdates);
+
+        // If room is already finished...
         if (data.status === 'finished' && !winner) {
           const participants = Object.values(data.participants) as MatchProgress[];
           const sorted = [...participants].sort((a, b) => b.score - a.score || b.currentIndex - a.currentIndex);
@@ -394,30 +448,38 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
 
          {/* Battle HUD */}
          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 pb-2">
-            <div className="text-right">
-               <p className="text-[10px] font-black uppercase text-primary tracking-widest truncate">{currentUser?.name}</p>
-               <div className="h-1.5 bg-black/5 dark:bg-white/5 rounded-full mt-1.5 overflow-hidden">
+            <div 
+              className="text-right cursor-pointer group/player bg-black/5 dark:bg-white/5 p-2 rounded-xl border border-transparent hover:border-primary/20 transition-all"
+              onClick={() => setSelectedProfileId(currentUser?.id || null)}
+            >
+               <p className="text-[9px] font-black uppercase text-primary tracking-widest truncate">{currentUser?.name}</p>
+               <div className="h-1 bg-black/10 dark:bg-white/10 rounded-full mt-1.5 overflow-hidden">
                   <motion.div 
                     animate={{ width: `${(myProgress.currentIndex / 10) * 100}%` }}
                     className="h-full bg-primary"
                   />
                </div>
-               <p className="text-[8px] font-black text-white/20 mt-1 uppercase tracking-widest">{myProgress.score} PTS</p>
+               <p className="text-[8px] font-black text-black/30 dark:text-white/20 mt-1 uppercase tracking-widest leading-none">{myProgress.score} PTS</p>
             </div>
 
-            <div className="w-8 h-8 bg-black/5 dark:bg-white/5 rounded-full flex items-center justify-center border border-white/5">
+            <div className="w-8 h-8 bg-black/5 dark:bg-white/5 rounded-full flex items-center justify-center border border-black/5 dark:border-white/5">
                 <span className="text-[10px] font-black italic opacity-20">VS</span>
             </div>
 
-            <div>
-               <p className="text-[10px] font-black uppercase text-white/60 tracking-widest truncate">Opponent</p>
-               <div className="h-1.5 bg-black/5 dark:bg-white/5 rounded-full mt-1.5 overflow-hidden">
+            <div 
+              className="cursor-pointer group/opponent bg-black/5 dark:bg-white/5 p-2 rounded-xl border border-transparent hover:border-primary/20 transition-all"
+              onClick={() => setSelectedProfileId(opponentId || null)}
+            >
+               <p className="text-[9px] font-black uppercase text-black/60 dark:text-white/60 tracking-widest truncate">
+                 {participantDetails[opponentId || '']?.name || 'Opponent'}
+               </p>
+               <div className="h-1 bg-black/10 dark:bg-white/10 rounded-full mt-1.5 overflow-hidden">
                   <motion.div 
                     animate={{ width: `${(opponentProgress.currentIndex / 10) * 100}%` }}
                     className="h-full bg-white/40"
                   />
                </div>
-               <p className="text-[8px] font-black text-white/20 mt-1 uppercase tracking-widest">{opponentProgress.score} PTS</p>
+               <p className="text-[8px] font-black text-black/30 dark:text-white/20 mt-1 uppercase tracking-widest leading-none">{opponentProgress.score} PTS</p>
             </div>
          </div>
       </div>
@@ -529,6 +591,45 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
              <p className="text-[8px] font-bold text-white/20 uppercase tracking-widest">Topic: {room.topicId}</p>
           </div>
        </div>
+
+        {/* Participant Profile Modal */}
+        <AnimatePresence>
+          {selectedProfileId && participantDetails[selectedProfileId] && (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+              <div className="relative w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Your Profile */}
+                <div className="hidden md:block">
+                  <div className="mb-4 text-center">
+                    <p className="text-[10px] font-black text-white/20 uppercase tracking-[0.3em]">Your Identity</p>
+                  </div>
+                  {currentUser && (
+                    <ScoreCard 
+                      user={currentUser}
+                      currentUser={currentUser}
+                      totalQuizzesCount={quizzes.length}
+                    />
+                  )}
+                </div>
+
+                {/* Selected/Opponent Profile */}
+                <div>
+                  <div className="mb-4 text-center">
+                    <p className="text-[10px] font-black text-primary uppercase tracking-[0.3em]">
+                      {selectedProfileId === currentUser?.id ? 'Your Profile' : 'Opponent Profile'}
+                    </p>
+                  </div>
+                  <ScoreCard 
+                    user={participantDetails[selectedProfileId]} 
+                    currentUser={currentUser}
+                    onSendFriendRequest={sendFriendRequest}
+                    onClose={() => setSelectedProfileId(null)} 
+                    totalQuizzesCount={quizzes.length}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </AnimatePresence>
     </div>
   );
 }

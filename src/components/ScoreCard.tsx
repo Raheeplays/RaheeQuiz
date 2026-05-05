@@ -6,12 +6,31 @@ import { cn } from '../lib/utils';
 
 interface ScoreCardProps {
   user: User;
+  currentUser?: User | null;
   onClose?: () => void;
+  onSendFriendRequest?: (id: string) => Promise<void>;
   isAdminView?: boolean;
   totalQuizzesCount?: number;
 }
 
-export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCount = 0 }: ScoreCardProps) {
+export default function ScoreCard({ 
+  user, 
+  currentUser, 
+  onClose, 
+  onSendFriendRequest, 
+  isAdminView, 
+  totalQuizzesCount = 0 
+}: ScoreCardProps) {
+  const [requestSent, setRequestSent] = React.useState(false);
+  const isFriend = currentUser?.friends?.[user.id];
+  const hasPending = currentUser?.pendingRequests?.[user.id];
+
+  const handleRequest = async () => {
+    if (onSendFriendRequest) {
+      await onSendFriendRequest(user.id);
+      setRequestSent(true);
+    }
+  };
   // Aggregate stats
   const aggregateStats = Object.values(user.scores || {}).reduce(
     (acc, curr) => {
@@ -57,9 +76,10 @@ export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCoun
               <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#32befa] mb-1 block">
                 Performance Index
               </span>
-              <h2 className="text-3xl font-black text-black dark:text-white italic tracking-tighter uppercase">
+              <h2 className="text-3xl font-black text-black dark:text-white italic tracking-tighter uppercase leading-none">
                 {user.name}
               </h2>
+              <p className="text-[10px] font-bold text-primary tracking-widest uppercase mt-0.5">@{user.username || user.id}</p>
             </div>
           </div>
           <div className="bg-black/5 dark:bg-white/5 backdrop-blur-md p-3 rounded-2xl border border-black/5 dark:border-white/10">
@@ -176,6 +196,22 @@ export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCoun
               ))}
             </div>
           </div>
+        )}
+
+        {currentUser && user.id !== currentUser.id && !isFriend && (
+          <button 
+            disabled={requestSent || !!hasPending}
+            onClick={handleRequest}
+            className={cn(
+              "w-full py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all active:scale-95 mb-3 flex items-center justify-center gap-2",
+              requestSent || hasPending 
+                ? "bg-green-500/10 text-green-500 border border-green-500/20" 
+                : "bg-primary text-black shadow-lg shadow-primary/20"
+            )}
+          >
+            {requestSent || hasPending ? <CheckCircle2 size={14} /> : <Zap size={14} fill="currentColor" />}
+            {requestSent || hasPending ? "Request Pending" : "Add Friend"}
+          </button>
         )}
 
         {onClose && (

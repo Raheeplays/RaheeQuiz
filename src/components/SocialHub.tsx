@@ -205,7 +205,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
   return (
     <div className="bg-white dark:bg-[#0a0a0a] rounded-[2.5rem] border border-black/5 dark:border-white/5 overflow-hidden flex flex-col h-full max-h-[85vh]">
         {/* Header */}
-        <div className="p-6 md:p-8 flex items-center justify-between border-b border-black/5 dark:border-white/5 bg-white/40 dark:bg-black/40 backdrop-blur-xl">
+        <div className="p-6 md:p-8 flex items-center justify-between border-b border-black/5 dark:border-white/5 bg-white/40 dark:bg-black/40 backdrop-blur-xl shrink-0">
            <div className="flex items-center gap-4">
              <div className="w-12 h-12 bg-primary/10 rounded-2xl flex items-center justify-center text-primary border border-primary/20">
                <Users size={24} />
@@ -215,10 +215,32 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                <p className="text-[10px] font-bold text-black/30 dark:text-white/40 uppercase tracking-widest px-1">Connect with friends</p>
              </div>
            </div>
+           <button onClick={onClose} className="p-3 bg-black/5 dark:bg-white/5 rounded-2xl hover:text-red-500 transition-colors">
+              <X size={20} />
+           </button>
+        </div>
+
+        {/* Global Search Bar */}
+        <div className="px-6 mt-6 shrink-0">
+          <div className="relative group">
+            <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-black/20 dark:text-white/20 group-focus-within:text-primary transition-colors" size={20} />
+            <input 
+              type="text"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                if (activeTab !== 'search' && e.target.value.trim() !== '') {
+                  setActiveTab('search');
+                }
+              }}
+              placeholder="Search by name or @username..."
+              className="w-full bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 rounded-2xl p-5 pl-12 text-black dark:text-white outline-none focus:border-primary/30 transition-all font-bold"
+            />
+          </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex p-2 gap-1 bg-black/5 dark:bg-white/5 mx-6 mt-6 rounded-2xl">
+        <div className="flex p-2 gap-1 bg-black/5 dark:bg-white/5 mx-6 mt-4 rounded-2xl shrink-0">
           {[
             { id: 'search', label: t.search, icon: SearchIcon },
             { id: 'friends', label: t.friends, icon: Users, count: friends.length },
@@ -250,17 +272,6 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {activeTab === 'search' && (
             <div className="space-y-6">
-              <div className="relative">
-                <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-black/20 dark:text-white/20" size={20} />
-                <input 
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search by name or @username..."
-                  className="w-full bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 rounded-2xl p-5 pl-12 text-black dark:text-white outline-none focus:border-primary/30 transition-all font-bold"
-                />
-              </div>
-
               <div className="space-y-3">
                 {filteredUsers.length > 0 ? (
                   filteredUsers.map(user => (
@@ -474,6 +485,8 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
           <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
              <ScoreCard 
                 user={selectedUser} 
+                currentUser={currentUser}
+                onSendFriendRequest={sendFriendRequest}
                 onClose={() => setSelectedUser(null)} 
                 totalQuizzesCount={totalQuizzesCount}
              />

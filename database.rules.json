@@ -4,7 +4,30 @@
         ".indexOn": ["username"],
         "$uid": {
            ".read": "auth != null && ($uid == auth.uid || root.child('users').child(auth.uid).child('role').val() == 'admin')",
-           ".write": "auth != null && (!data.exists() || $uid == auth.uid || root.child('users').child(auth.uid).child('role').val() == 'admin')"
+           ".write": "auth != null && (!data.exists() || $uid == auth.uid || root.child('users').child(auth.uid).child('role').val() == 'admin')",
+           "pendingRequests": {
+              "$otherUid": {
+                 ".write": "auth != null && (auth.uid == $uid || auth.uid == $otherUid)"
+              }
+           },
+           "friends": {
+              "$otherUid": {
+                 ".write": "auth != null && (auth.uid == $uid || auth.uid == $otherUid)"
+              }
+           },
+           "challenges": {
+              ".write": "auth != null",
+              "$challengeId": {
+                 ".read": "auth != null && ($uid == auth.uid || data.child('senderId').val() == auth.uid)"
+              }
+           }
+        }
+    },
+    "public_profiles": {
+        ".read": "auth != null",
+        ".indexOn": ["username"],
+        "$uid": {
+            ".write": "auth != null && ($uid == auth.uid || root.child('users').child(auth.uid).child('role').val() == 'admin')"
         }
     },
     "history": {

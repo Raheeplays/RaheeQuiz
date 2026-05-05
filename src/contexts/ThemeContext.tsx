@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { db } from '../firebase/config';
 import { ref, onValue } from 'firebase/database';
 import { SKINS, Settings } from '../types';
+import { cn } from '../lib/utils';
 
 interface ThemeContextType {
   isDark: boolean;
@@ -95,7 +96,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       activeSkin,
       customization
     }}>
-      <div className={activeSkin}>
+      <div className={cn(activeSkin, "min-h-screen", isDark ? "dark bg-black text-white" : "bg-white text-black")}>
         {children}
       </div>
     </ThemeContext.Provider>
