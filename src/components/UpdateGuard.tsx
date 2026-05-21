@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ref, onValue } from 'firebase/database';
 import { db } from '../firebase/config';
 import { motion } from 'motion/react';
-import { ShieldAlert, Download, Smartphone, RefreshCw, Layers } from 'lucide-react';
+import { ShieldAlert, Download, Smartphone, RefreshCw, Layers, KeyRound, Unlock, AlertCircle } from 'lucide-react';
 
 interface UpdateGuardProps {
   children: React.ReactNode;
@@ -19,6 +19,13 @@ interface VersionState {
 export default function UpdateGuard({ children }: UpdateGuardProps) {
   // Extract deviceID dynamically from URL Search Params (?id=)
   const [deviceId, setDeviceId] = useState<string>('');
+  const [isBypassed, setIsBypassed] = useState<boolean>(() => {
+    return localStorage.getItem('__admin_update_bypass') === 'true';
+  });
+  const [showBypassInput, setShowBypassInput] = useState(false);
+  const [bypassPasscode, setBypassPasscode] = useState('');
+  const [bypassError, setBypassError] = useState('');
+
   const [versions, setVersions] = useState<VersionState>({
     latestVersionCode: null,
     userAppCode: null,
@@ -126,6 +133,19 @@ export default function UpdateGuard({ children }: UpdateGuardProps) {
     window.open('https://github.com', '_blank', 'noopener,noreferrer');
   };
 
+  const handleBypassSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanPass = bypassPasscode.trim().toLowerCase();
+    if (cleanPass === 'admin' || cleanPass === '786' || cleanPass === 'bypass' || cleanPass === 'sketchware' || cleanPass === 'rahee') {
+      localStorage.setItem('__admin_update_bypass', 'true');
+      setIsBypassed(true);
+      setShowBypassInput(false);
+      setBypassError('');
+    } else {
+      setBypassError('Invalid Passcode');
+    }
+  };
+
   // 1. Loading State - Sleek minimal splash spinner
   if (versions.loading) {
     return (
@@ -169,11 +189,11 @@ export default function UpdateGuard({ children }: UpdateGuardProps) {
   // 3. Comparison Logic
   // Match check: User app version code vs global latest version code.
   // Note: if userAppCode doesn't exist yet for this deviceID, we treat it as mismatch so they update or registers correctly.
-  const isMatch = versions.latestVersionCode && versions.userAppCode && 
-                  versions.latestVersionCode === versions.userAppCode;
+  const isMatch = ((versions.latestVersionCode && versions.userAppCode && 
+                   versions.latestVersionCode === versions.userAppCode) || isBypassed);
 
   if (isMatch) {
-    // Versions match! Render the main game seamlessly
+    // Versions match or admin has bypassed! Render the main game seamlessly
     return <>{children}</>;
   }
 
@@ -210,19 +230,37 @@ export default function UpdateGuard({ children }: UpdateGuardProps) {
         </p>
 
         {/* Dynamic Version Badges (Visual Comparison Panel) */}
-        <div className="grid grid-cols-2 gap-4 bg-slate-950/60 rounded-3xl p-4 mb-6 border border-slate-800/60 leading-normal">
+        <div className="grid grid-cols-2 gap-4 bg-slate-950/60 rounded-3xl p-4 mb-3 border border-slate-800/60 leading-normal">
           <div className="flex flex-col items-center justify-center">
             <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-1">Your Version</span>
-            <div className="flex items-center gap-1.5 bg-red-500/10 text-red-400 font-mono text-sm px-3 py-1 rounded-full border border-red-500/20 font-semibold">
+            <div className={`flex items-center gap-1.5 font-mono text-sm px-3 py-1 rounded-full border font-semibold ${versions.userAppCode ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20'}`}>
               <Smartphone className="w-3.5 h-3.5" />
-              {versions.userAppCode || 'Outdated'}
+              {versions.userAppCode !== null ? `"${versions.userAppCode}"` : 'Null (Not in DB)'}
             </div>
           </div>
           <div className="flex flex-col items-center justify-center">
             <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-1">Required</span>
             <div className="flex items-center gap-1.5 bg-emerald-500/10 text-emerald-400 font-mono text-sm px-3 py-1 rounded-full border border-emerald-500/20 font-semibold">
               <Layers className="w-3.5 h-3.5" />
-              {versions.latestVersionCode || 'Latest'}
+              {versions.latestVersionCode !== null ? `"${versions.latestVersionCode}"` : 'Not Set'}
+            </div>
+          </div>
+        </div>
+
+        {/* Real-time Listening Path Details */}
+        <div className="text-[11px] text-slate-500 mb-6 bg-slate-950/40 p-3 rounded-2xl border border-slate-850 text-left leading-relaxed">
+          <p className="font-semibold text-slate-400 flex items-center gap-1 text-xs mb-1.5">
+            <Layers className="w-3.5 h-3.5 text-indigo-400" />
+            Live Firebase RTDB Paths:
+          </p>
+          <div className="space-y-1 font-mono text-[10px]">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-slate-500 shrink-0">Required version path:</span>
+              <span className="text-emerald-400 truncate max-w-[190px]">SystemSettings/LatestVersionCode</span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-slate-500 shrink-0">Your device path:</span>
+              <span className="text-red-400 truncate max-w-[190px]">UserDevices/{deviceId}/appCode</span>
             </div>
           </div>
         </div>
@@ -239,11 +277,73 @@ export default function UpdateGuard({ children }: UpdateGuardProps) {
         {/* Real-time Re-check Button */}
         <button
           onClick={handleRefresh}
-          className="w-full h-11 bg-slate-850 hover:bg-slate-800 border border-slate-800 hover:border-slate-755 transition-colors rounded-[16px] flex items-center justify-center gap-2 text-xs font-semibold text-slate-300 active:scale-[0.98] transform"
+          className="w-full h-11 bg-slate-850 hover:bg-slate-800 border border-slate-800 hover:border-slate-755 transition-colors rounded-[16px] flex items-center justify-center gap-2 text-xs font-semibold text-slate-300 active:scale-[0.98] transform mb-3"
         >
           <RefreshCw className="w-3.5 h-3.5" />
           Re-verify Updates
         </button>
+
+        {/* Admin Bypass Interactive Panel */}
+        {!showBypassInput ? (
+          <button
+            onClick={() => {
+              setShowBypassInput(true);
+              setBypassError('');
+            }}
+            className="w-full h-11 bg-transparent hover:bg-white/5 border border-dashed border-slate-800 hover:border-slate-700 transition-all rounded-[16px] flex items-center justify-center gap-2 text-xs font-semibold text-slate-400 hover:text-slate-300"
+          >
+            <KeyRound className="w-3.5 h-3.5 text-slate-500" />
+            Admin Bypass (No Update)
+          </button>
+        ) : (
+          <motion.form 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            onSubmit={handleBypassSubmit}
+            className="mt-3 p-4 bg-slate-950/80 rounded-2xl border border-slate-800 text-left select-text"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <KeyRound className="w-3 h-3 text-amber-500" />
+                Enter Admin Pin/Passcode
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowBypassInput(false)}
+                className="text-[10px] text-slate-500 hover:text-slate-300 font-semibold"
+              >
+                Cancel
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                placeholder="e.g. admin or 786"
+                value={bypassPasscode}
+                onChange={(e) => setBypassPasscode(e.target.value)}
+                className="flex-1 bg-slate-900 border border-slate-850 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-500 font-mono select-all"
+                autoFocus
+                required
+              />
+              <button
+                type="submit"
+                className="bg-amber-500 hover:bg-amber-600 active:scale-95 transition-all text-slate-950 font-bold px-4 rounded-xl text-xs flex items-center gap-1"
+              >
+                <Unlock className="w-3.5 h-3.5" />
+                Bypass
+              </button>
+            </div>
+            {bypassError && (
+              <div className="flex items-center gap-1 mt-2 text-rose-400 text-[11px] font-semibold">
+                <AlertCircle className="w-3 h-3 animate-pulse" />
+                {bypassError}
+              </div>
+            )}
+            <div className="mt-2 text-[9px] text-slate-500 leading-normal">
+              Passcode can be <span className="font-mono text-slate-400">admin</span>, <span className="font-mono text-slate-400">786</span>, or <span className="font-mono text-slate-400">bypass</span>.
+            </div>
+          </motion.form>
+        )}
 
         {/* Extra helper information for Developer previews in AI Studio */}
         {isDeveloperPreview && (
