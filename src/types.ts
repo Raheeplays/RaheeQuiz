@@ -36,11 +36,14 @@ export interface User {
   lifelines: {
     'fiftyFifty': number;
     'changeQuiz': number;
+    'audiencePoll': number;
+    'hint': number;
   };
   scores: {
     [topicId: string]: {
       correct: number;
       total: number;
+      unattempted?: number;
     }
   };
   friends?: { [userId: string]: boolean };
@@ -51,15 +54,63 @@ export interface User {
     totalAttempted: number;
     correctAnswers: number;
     incorrectAnswers: number;
+    unattemptedAnswers?: number;
   };
   dailyXP?: number;
   weeklyXP?: number;
+  autoCorrectEnabled?: boolean;
+  referralCode?: string;
+  referredBy?: string;
+  playedDates?: string[];
+  dailyRewards?: {
+    lastClaimDate?: string;
+    currentDay?: number;
+  };
+  freeRewards?: {
+    lastHourlyClaim?: string; // ISO string or timestamp
+    lastClaimTier1?: string;
+    lastClaimTier2?: string;
+    lastClaimTier3?: string;
+    lastClaimTier4?: string;
+    lastClaimTier5?: string;
+  };
+}
+
+export interface Coupon {
+  code: string;
+  value: number;
+  isUsed: boolean;
+  usedBy?: string;
+  usedByName?: string;
+  usedByUsername?: string;
+  usedAt?: number;
+  createdAt: number;
+  createdBy: string;
+}
+
+export interface CouponLog {
+  userId: string;
+  userName: string;
+  code: string;
+  isSuccess: boolean;
+  timestamp: number;
+  error?: string;
+}
+
+export interface ReferralLog {
+  referrerId: string;
+  referrerName: string;
+  referredId: string;
+  referredName: string;
+  rewardValue: number;
+  timestamp: number;
 }
 
 export interface Settings {
   livesEnabledForAll: boolean;
   quizTimerEnabled?: boolean;
   quizTimerSeconds?: number;
+  pushNotificationsEnabled?: boolean;
   customization?: {
     correctSound: string;
     incorrectSound: string;
@@ -80,6 +131,24 @@ export interface Settings {
     lastDailyReset: number;
     lastWeeklyReset: number;
   };
+  specialPin?: string; // Hidden access pin
+  code?: string; // Game update code node
+  updateCodeSettings?: {
+    code: string;
+    updateUrl?: string;
+    message?: string;
+  };
+}
+
+export interface SpecialMessage {
+  id: string;
+  userId: string;
+  userName: string;
+  text: string;
+  timestamp: number;
+  adminReply?: string;
+  replyTimestamp?: number;
+  replyExpiresAt?: number;
 }
 
 export interface Event {
@@ -123,6 +192,7 @@ export interface Event {
 
 export interface MatchProgress {
   userId: string;
+  userName?: string; // Added for display in match
   score: number;
   currentIndex: number;
   finished: boolean;
@@ -163,12 +233,16 @@ export interface Quiz {
   };
   correctAnswerIndex: number;
   topicId: string;
-  subTopicId?: string;
-  subSubTopicId?: string;
   explanation?: {
     en: string;
     hi: string;
   };
+  hint?: {
+    en: string;
+    hi: string;
+  };
+  questionImage?: string;
+  optionImages?: string[];
 }
 
 export interface Topic {
@@ -195,4 +269,29 @@ export interface QuizHistory {
   userAnswerIndex: number;
   isCorrect: boolean;
   timestamp: number;
+}
+
+export interface SessionHistory {
+  id: string;
+  userId: string;
+  topicId: string;
+  score: number;
+  total: number;
+  timestamp: number;
+  answers: {
+    quizId: string;
+    userAnswerIndex: number;
+    isCorrect: boolean;
+  }[];
+}
+
+export interface Ad {
+  id: string;
+  title: string;
+  mediaType: 'video' | 'image' | 'text';
+  mediaUrl: string; // URL of the banner or a simulated YouTube / GIF embed
+  active: boolean;
+  durationSeconds: number;
+  rewardValue?: string;
+  createdAt: number;
 }

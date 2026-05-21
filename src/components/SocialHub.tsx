@@ -19,7 +19,7 @@ interface SocialHubProps {
 }
 
 export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: SocialHubProps) {
-  const { currentUser } = useUser();
+  const { currentUser, settings } = useUser();
   const { serviceAccount } = useNotifications();
   const { confirm } = useDialog();
   const [activeTab, setActiveTab] = useState<'search' | 'friends' | 'pending'>('search');
@@ -60,31 +60,31 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
       });
 
       // Send FCM Notification
-      try {
-        const tokensSnap = await get(ref(db, `fcmTokens/${targetUserId}`));
-        if (tokensSnap.exists()) {
-          const tokens = Object.values(tokensSnap.val()) as string[];
-          const templateSnap = await get(ref(db, 'customNotifications/friendRequest'));
-          let title = 'New Friend Request';
-          let body = `${currentUser.name} wants to be your friend!`;
+      if (settings?.pushNotificationsEnabled !== false) {
+        try {
+          const tokensSnap = await get(ref(db, `fcmTokens/${targetUserId}`));
+          if (tokensSnap.exists()) {
+            const tokens = Object.values(tokensSnap.val()) as string[];
+            const templateSnap = await get(ref(db, 'customNotifications/friendRequest'));
+            let title = 'New Friend Request';
+            let body = `${currentUser.name} wants to be your friend!`;
 
-          if (templateSnap.exists()) {
-            const template = templateSnap.val();
-            if (template?.title) title = template.title;
-            if (template?.body) body = template.body.replace('{player}', currentUser.name);
-          }
+            if (templateSnap.exists()) {
+              const template = templateSnap.val();
+              if (template?.title) title = template.title;
+              if (template?.body) body = template.body.replace('{player}', currentUser.name);
+            }
 
-          for (const token of tokens) {
-            await NotificationService.sendToToken(serviceAccount, token, title, body);
+            for (const token of tokens) {
+              await NotificationService.sendToToken(serviceAccount, token, title, body);
+            }
           }
+        } catch (e) {
+          console.error("Failed to send friend request notification:", e);
         }
-      } catch (e) {
-        console.error("Failed to send friend request notification:", e);
       }
     } catch (err: any) {
       console.error("Friend request failed:", err);
-      // We don't alert here to avoid annoying the user if it's transient, 
-      // but the UI will naturally reflect the state if the first update succeeded.
     }
   };
 
@@ -96,26 +96,28 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
       await set(ref(db, `users/${targetUserId}/pendingRequests/${currentUser.id}`), null);
 
       // Send FCM Notification to the requester
-      try {
-        const tokensSnap = await get(ref(db, `fcmTokens/${targetUserId}`));
-        if (tokensSnap.exists()) {
-          const tokens = Object.values(tokensSnap.val()) as string[];
-          const templateSnap = await get(ref(db, 'customNotifications/friendAccept'));
-          let title = 'Friend Request Accepted';
-          let body = `${currentUser.name} accepted your friend request!`;
+      if (settings?.pushNotificationsEnabled !== false) {
+        try {
+          const tokensSnap = await get(ref(db, `fcmTokens/${targetUserId}`));
+          if (tokensSnap.exists()) {
+            const tokens = Object.values(tokensSnap.val()) as string[];
+            const templateSnap = await get(ref(db, 'customNotifications/friendAccept'));
+            let title = 'Friend Request Accepted';
+            let body = `${currentUser.name} accepted your friend request!`;
 
-          if (templateSnap.exists()) {
-            const template = templateSnap.val();
-            if (template?.title) title = template.title;
-            if (template?.body) body = template.body.replace('{player}', currentUser.name);
-          }
+            if (templateSnap.exists()) {
+              const template = templateSnap.val();
+              if (template?.title) title = template.title;
+              if (template?.body) body = template.body.replace('{player}', currentUser.name);
+            }
 
-          for (const token of tokens) {
-            await NotificationService.sendToToken(serviceAccount, token, title, body);
+            for (const token of tokens) {
+              await NotificationService.sendToToken(serviceAccount, token, title, body);
+            }
           }
+        } catch (e) {
+          console.error("Failed to send friend accept notification:", e);
         }
-      } catch (e) {
-        console.error("Failed to send friend accept notification:", e);
       }
     } catch (err: any) {
       console.error("Accept friend failed:", err);
@@ -177,7 +179,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
     });
 
     // Real FCM Notification if Admin SDK is loaded
-    if (serviceAccount) {
+    if (serviceAccount && settings?.pushNotificationsEnabled !== false) {
       try {
         // Get target user's tokens
         const tokensSnapshot = await get(ref(db, `fcmTokens/${targetUserId}`));
@@ -208,7 +210,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
   };
 
   return (
-    <div className="bg-white dark:bg-[#0a0a0a] rounded-[2.5rem] border border-black/5 dark:border-white/5 overflow-hidden flex flex-col h-full max-h-[85vh]">
+    <div className="bg-white dark:bg-[#050505] rounded-[2.5rem] border border-black/5 dark:border-white/5 overflow-hidden flex flex-col h-full max-h-[85vh]">
         {/* Header */}
         <div className="p-6 md:p-8 flex items-center justify-between border-b border-black/5 dark:border-white/5 bg-white/40 dark:bg-black/40 backdrop-blur-xl">
            <div className="flex items-center gap-4">
@@ -270,7 +272,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                 {filteredUsers.length > 0 ? (
                   filteredUsers.map(user => (
                     <motion.div 
-                      key={user.id}
+                  key={`friend-${user.id}`}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       className="bg-black/5 dark:bg-white/5 p-4 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between group hover:border-primary/20 transition-all"
@@ -338,7 +340,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
               {friends.length > 0 ? (
                 friends.map(user => (
                   <div 
-                    key={user.id}
+                    key={`search-res-${user.id}`}
                     className="bg-black/5 dark:bg-white/5 p-4 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between group hover:border-primary/20 transition-all"
                   >
                     <div 
@@ -401,7 +403,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                 <div className="space-y-3">
                   <p className="text-[10px] font-black text-primary uppercase tracking-widest px-2">Incoming Requests</p>
                   {pendingIncoming.map(user => (
-                    <div key={user.id} className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl border border-black/5 dark:border-white/5 flex items-center justify-between">
+                    <div key={`pending-in-${user.id}`} className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl border border-black/5 dark:border-white/5 flex items-center justify-between">
                        <div className="flex items-center gap-4 text-black dark:text-white">
                           <div className="w-10 h-10 bg-black/5 dark:bg-white/10 rounded-xl flex items-center justify-center text-black/30 dark:text-white/40 overflow-hidden">
                              {user.avatarUrl ? (
@@ -438,7 +440,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                 <div className="space-y-3">
                   <p className="text-[10px] font-black text-black/30 dark:text-white/40 uppercase tracking-widest px-2">Pending Requests</p>
                   {pendingOutgoing.map(user => (
-                    <div key={user.id} className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl border border-black/5 dark:border-white/5 flex items-center justify-between opacity-60">
+                    <div key={`pending-out-${user.id}`} className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl border border-black/5 dark:border-white/5 flex items-center justify-between opacity-60">
                        <div className="flex items-center gap-4 text-black dark:text-white">
                           <div className="w-10 h-10 bg-black/5 dark:bg-white/10 rounded-xl flex items-center justify-center text-black/20 dark:text-white/20 overflow-hidden">
                              {user.avatarUrl ? (
@@ -476,16 +478,22 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
       {/* Profile/ScoreCard Modal */}
       <AnimatePresence>
         {selectedUser && (
-          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-             <ScoreCard 
-                user={selectedUser} 
-                onClose={() => setSelectedUser(null)} 
-                totalQuizzesCount={totalQuizzesCount}
+          <div className="fixed inset-0 z-[150] flex items-start justify-center p-4 overflow-y-auto pt-20">
+             <motion.div 
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                onClick={() => setSelectedUser(null)}
+                className="absolute inset-0 bg-black/40 backdrop-blur-sm fixed"
              />
+             <div className="relative mb-20 w-full max-w-md">
+                <ScoreCard 
+                   user={selectedUser} 
+                   onClose={() => setSelectedUser(null)} 
+                   totalQuizzesCount={totalQuizzesCount}
+                />
+             </div>
           </div>
         )}
       </AnimatePresence>
     </div>
   );
 }
-

@@ -62,7 +62,7 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
       joinCode: code,
       hostId: currentUser.id,
       participants: {
-        [currentUser.id]: { userId: currentUser.id, score: 0, currentIndex: 0, finished: false, accuracy: 0 }
+        [currentUser.id]: { userId: currentUser.id, userName: currentUser.name, score: 0, currentIndex: 0, finished: false, accuracy: 0 }
       },
       status: 'waiting',
       timerEnabled: useTimer,
@@ -95,6 +95,7 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
         const updates = {
           [`participants/${currentUser.id}`]: {
             userId: currentUser.id,
+            userName: currentUser.name,
             score: 0,
             currentIndex: 0,
             finished: false,
@@ -134,8 +135,8 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
         topicId: currentUser.selectedTopicId || 'general',
         hostId: currentUser.id,
         participants: {
-          [currentUser.id]: { userId: currentUser.id, score: 0, currentIndex: 0, finished: false, accuracy: 0 },
-          [botId]: { userId: botId, score: 0, currentIndex: 0, finished: false, accuracy: 0 }
+          [currentUser.id]: { userId: currentUser.id, userName: currentUser.name, score: 0, currentIndex: 0, finished: false, accuracy: 0 },
+          [botId]: { userId: botId, userName: allUsers?.filter(u => u.isBot).sort(() => Math.random() - 0.5)[0]?.name || 'Rahee Player', score: 0, currentIndex: 0, finished: false, accuracy: 0 }
         },
         status: 'playing',
         timerEnabled: false,
@@ -158,7 +159,7 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        className="w-full max-w-lg bg-[#0a0a0a] rounded-[2.5rem] border border-white/5 overflow-hidden flex flex-col max-h-[90vh]"
+        className="w-full max-w-lg bg-[#050505] rounded-[2.5rem] border border-white/5 overflow-hidden flex flex-col max-h-[90vh]"
       >
         {/* Header */}
         <div className="p-6 md:p-8 flex items-center justify-between border-b border-white/5">

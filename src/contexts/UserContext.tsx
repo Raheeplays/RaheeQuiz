@@ -9,50 +9,112 @@ interface UserContextType {
   setCurrentUser: (user: User | null) => void;
   loading: boolean;
   settings: Settings | null;
+  logout: () => void;
+  impersonateBot: (bot: User) => void;
+  stopImpersonating: () => void;
+  isImpersonating: boolean;
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [impersonatedUser, setImpersonatedUser] = useState<User | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const logout = async () => {
+    await auth.signOut();
+    setImpersonatedUser(null);
+    setCurrentUser(null);
+  };
+
+  const impersonateBot = (bot: User) => {
+    setImpersonatedUser(bot);
+  };
+
+  const stopImpersonating = () => {
+    setImpersonatedUser(null);
+  };
+
+  // Keep the impersonated user data perfectly synchronized with Firebase in real-time
+  useEffect(() => {
+    if (!impersonatedUser?.id) return;
+
+    const impUserRef = ref(db, `users/${impersonatedUser.id}`);
+    const unsubscribe = onValue(impUserRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        setImpersonatedUser({ ...data, id: impersonatedUser.id });
+      }
+    });
+
+    return () => unsubscribe();
+  }, [impersonatedUser?.id]);
 
   // Fetch Settings
   useEffect(() => {
     const settingsRef = ref(db, 'settings');
     const unsubscribe = onValue(settingsRef, (snapshot) => {
       if (snapshot.exists()) {
-        setSettings(snapshot.val());
+        const data = snapshot.val();
+        setSettings(data);
+        if (!data.specialPin) {
+          update(settingsRef, { specialPin: '8532' });
+        }
       } else {
-        setSettings({ livesEnabledForAll: true }); // Default
+        setSettings({ livesEnabledForAll: true, specialPin: '8532' }); // Default
+        update(settingsRef, { livesEnabledForAll: true, specialPin: '8532' });
       }
     });
     return () => unsubscribe();
   }, []);
 
   useEffect(() => {
+    let unsubscribeDb: (() => void) | null = null;
+
     const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
+      // Clean up previous DB listener if it exists
+      if (unsubscribeDb) {
+        unsubscribeDb();
+        unsubscribeDb = null;
+      }
+
       if (firebaseUser) {
         // User is signed in, fetch profile
         const userRef = ref(db, `users/${firebaseUser.uid}`);
-        const unsubscribeDb = onValue(userRef, (snapshot) => {
+        unsubscribeDb = onValue(userRef, (snapshot) => {
           if (snapshot.exists()) {
             const userData = snapshot.val();
-            // Ensure ID consistency
-            if (userData.id && userData.id !== firebaseUser.uid) {
-              console.error("User identity mismatch detected. Stopping sync.");
-              return;
-            }
             
             // Ensure structure for existing users
             let needsUpdate = false;
             const updates: any = {};
 
+            if (!userData.id) {
+              userData.id = firebaseUser.uid;
+              updates.id = firebaseUser.uid;
+              needsUpdate = true;
+            }
+
             if (!userData.lifelines) {
-              userData.lifelines = { fiftyFifty: 1, changeQuiz: 1 };
+              userData.lifelines = { fiftyFifty: 1, changeQuiz: 1, audiencePoll: 1, hint: 1 };
               updates.lifelines = userData.lifelines;
               needsUpdate = true;
+            } else {
+              let nestedNeedsUpdate = false;
+              if (userData.lifelines.audiencePoll === undefined) {
+                userData.lifelines.audiencePoll = 1;
+                nestedNeedsUpdate = true;
+              }
+              if (userData.lifelines.hint === undefined) {
+                userData.lifelines.hint = 1;
+                nestedNeedsUpdate = true;
+              }
+              if (nestedNeedsUpdate) {
+                updates.lifelines = userData.lifelines;
+                needsUpdate = true;
+              }
             }
             if (userData.raheeCoins === undefined) {
               userData.raheeCoins = 0;
@@ -62,6 +124,16 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
             if (!userData.language) {
               userData.language = 'en';
               updates.language = 'en';
+              needsUpdate = true;
+            }
+            if (!userData.referralCode) {
+              const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+              let code = '';
+              for (let i = 0; i < 10; i++) {
+                code += chars.charAt(Math.floor(Math.random() * chars.length));
+              }
+              userData.referralCode = code;
+              updates.referralCode = code;
               needsUpdate = true;
             }
 
@@ -77,15 +149,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
             // Streak check
             if (userData.lastPlayedDate) {
-              const lastPlayed = new Date(userData.lastPlayedDate);
               const yesterday = new Date();
               yesterday.setDate(yesterday.getDate() - 1);
               const yesterdayStr = yesterday.toISOString().split('T')[0];
 
-              if (userData.lastPlayedDate === yesterdayStr) {
-                // Streak continues - this is updated when they finish a quiz
-              } else if (userData.lastPlayedDate !== today) {
-                // Streak broken
+              if (userData.lastPlayedDate !== yesterdayStr && userData.lastPlayedDate !== today) {
                 userData.streak = 0;
                 updates.streak = 0;
                 needsUpdate = true;
@@ -106,10 +174,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
               updates.lives = userData.lives;
               needsUpdate = true;
             } else {
-              // Refill logic: +1 every 16 minutes
               const now = Date.now();
               const diffMs = now - userData.lives.lastRefill;
-              const refillInterval = 16 * 60 * 1000; // 16 minutes
+              const refillInterval = 16 * 60 * 1000;
 
               if (diffMs >= refillInterval && userData.lives.count < 16) {
                 const livesToAdd = Math.floor(diffMs / refillInterval);
@@ -133,12 +200,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
           setLoading(false);
         }, (error) => {
           console.error("Database read error for user profile:", error);
-          // Only log the error. Do NOT force logout unless it's a critical auth failure.
-          // Permission denied here might be transient or related to a specific nested path change.
           setLoading(false);
         });
-
-        return () => unsubscribeDb();
       } else {
         // User is signed out
         setCurrentUser(null);
@@ -146,11 +209,23 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeDb) unsubscribeDb();
+    };
   }, []);
 
   return (
-    <UserContext.Provider value={{ currentUser, setCurrentUser, loading, settings }}>
+    <UserContext.Provider value={{ 
+      currentUser: impersonatedUser || currentUser, 
+      setCurrentUser, 
+      loading, 
+      settings,
+      logout,
+      impersonateBot,
+      stopImpersonating,
+      isImpersonating: !!impersonatedUser
+    }}>
       {children}
     </UserContext.Provider>
   );

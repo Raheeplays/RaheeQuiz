@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../firebase/config';
-import { ref, onValue, set, update, get } from 'firebase/database';
-import { Quiz, User, MatchRoom, MatchProgress } from '../types';
+import { ref, onValue, set, update, get, push } from 'firebase/database';
+import { Quiz, User, MatchRoom, MatchProgress, Settings as SettingsType } from '../types';
 import { useUser } from '../contexts/UserContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { useDialog } from '../contexts/DialogContext';
-import { Swords, Trophy, Zap, Clock, Check, X, AlertCircle, Volume2, Globe, RefreshCw, Minus } from 'lucide-react';
+import { Swords, Trophy, Zap, Clock, Check, X, AlertCircle, Volume2, Globe, RefreshCw, Minus, Shield, Send, Users } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface MultiplayerGameProps {
@@ -19,7 +19,7 @@ interface MultiplayerGameProps {
 export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: MultiplayerGameProps) {
   const { currentUser } = useUser();
   const { isDark, soundEnabled, vibrationEnabled, customization } = useTheme();
-  const { confirm } = useDialog();
+  const { confirm, alert } = useDialog();
   const [room, setRoom] = useState<MatchRoom | null>(null);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -27,10 +27,53 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
   const [isAnswered, setIsAnswered] = useState(false);
   const [language, setLanguage] = useState<'en' | 'hi'>('en');
   const [hiddenOptions, setHiddenOptions] = useState<number[]>([]);
+  const [pollResults, setPollResults] = useState<number[] | null>(null);
+  const [showHint, setShowHint] = useState(false);
   const [skippedCount, setSkippedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [winner, setWinner] = useState<string | null>(null);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [settings, setSettings] = useState<SettingsType | null>(null);
+
+  const [pressTimer, setPressTimer] = useState<NodeJS.Timeout | null>(null);
+  const [showSpecialPin, setShowSpecialPin] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [showSpecialChat, setShowSpecialChat] = useState(false);
+  const [specialMessage, setSpecialMessage] = useState('');
+  const [mySpecialMessages, setMySpecialMessages] = useState<any[]>([]);
+
+  // Sync Settings
+  useEffect(() => {
+    return onValue(ref(db, 'settings'), s => {
+      if (s.exists()) setSettings(s.val());
+    });
+  }, []);
+
+  // Sync Special Messages
+  useEffect(() => {
+    if (currentUser?.id) {
+      onValue(ref(db, `specialMessages/${currentUser.id}`), s => {
+        if (s.exists()) {
+          setMySpecialMessages(Object.entries(s.val()).map(([id, val]: [string, any]) => ({ ...val, id })));
+        } else {
+          setMySpecialMessages([]);
+        }
+      });
+    }
+  }, [currentUser?.id]);
+
+  const handleSendSpecialMessage = async () => {
+    if (!specialMessage.trim() || !currentUser) return;
+    
+    const msg = {
+      userName: currentUser.name,
+      text: specialMessage,
+      timestamp: Date.now()
+    };
+    
+    await push(ref(db, `specialMessages/${currentUser.id}`), msg);
+    setSpecialMessage('');
+  };
 
   // Sync Room Data
   useEffect(() => {
@@ -157,6 +200,16 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
     return () => clearInterval(botTimer);
   }, [isBot, room?.id, winner]);
 
+  // Admin Auto Correct
+  useEffect(() => {
+    if (currentUser?.role === 'admin' && currentUser?.autoCorrectEnabled && !isAnswered && !loading && quizzes[currentIndex] && !winner) {
+      const timer = setTimeout(() => {
+        handleAnswer(quizzes[currentIndex].correctAnswerIndex);
+      }, 1500); // Slightly more delay for multiplayer feel
+      return () => clearTimeout(timer);
+    }
+  }, [currentIndex, isAnswered, loading, currentUser?.autoCorrectEnabled, winner, quizzes]);
+
   const handleAnswer = async (index: number) => {
     if (isAnswered || !currentUser || !quizzes[currentIndex] || winner) return;
     
@@ -212,11 +265,13 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
       accuracy: Math.round((newScore / (newIndex * 100)) * 100)
     });
 
-    if (!isFinished) {
+    if (newIndex >= 10) {
       setTimeout(() => {
         setSelectedOption(null);
         setIsAnswered(false);
         setHiddenOptions([]);
+        setPollResults(null);
+        setShowHint(false);
         setCurrentIndex(newIndex);
       }, 1500);
     }
@@ -236,12 +291,44 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
     await set(ref(db, `users/${currentUser.id}/lifelines/fiftyFifty`), (currentUser.lifelines?.fiftyFifty || 0) - 1);
   };
 
+  const useAudiencePoll = async () => {
+    if (!currentUser || isAnswered || (currentUser.lifelines?.audiencePoll || 0) <= 0 || pollResults) return;
+
+    const correctIdx = currentQuiz.correctAnswerIndex;
+    let results = [0, 0, 0, 0];
+    let remaining = 100;
+    
+    const correctPercent = Math.floor(Math.random() * 30) + 40;
+    results[correctIdx] = correctPercent;
+    remaining -= correctPercent;
+    
+    const others = [0, 1, 2, 3].filter(i => i !== correctIdx);
+    for (let i = 0; i < 2; i++) {
+        const p = Math.floor(Math.random() * (remaining / (3 - i)));
+        results[others[i]] = p;
+        remaining -= p;
+    }
+    results[others[2]] = remaining;
+
+    setPollResults(results);
+
+    await set(ref(db, `users/${currentUser.id}/lifelines/audiencePoll`), (currentUser.lifelines?.audiencePoll || 0) - 1);
+  };
+
+  const useHint = async () => {
+    if (!currentUser || isAnswered || (currentUser.lifelines?.hint || 0) <= 0 || showHint) return;
+    setShowHint(true);
+    await set(ref(db, `users/${currentUser.id}/lifelines/hint`), (currentUser.lifelines?.hint || 0) - 1);
+  };
+
   const useChangeQuiz = async () => {
     if (!currentUser || isAnswered || (currentUser.lifelines?.changeQuiz || 0) <= 0) return;
 
     setSkippedCount(prev => prev + 1);
     setSelectedOption(null);
     setHiddenOptions([]);
+    setPollResults(null);
+    setShowHint(false);
 
     // Consume lifeline
     await set(ref(db, `users/${currentUser.id}/lifelines/changeQuiz`), (currentUser.lifelines?.changeQuiz || 0) - 1);
@@ -370,10 +457,35 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
 
             <div className="flex items-center gap-2">
                <button 
+                 onPointerDown={(e) => {
+                   const timer = setTimeout(() => {
+                     setShowSpecialPin(true);
+                     setPressTimer(null);
+                   }, 5000);
+                   setPressTimer(timer);
+                 }}
+                 onPointerUp={() => {
+                   if (pressTimer) {
+                     clearTimeout(pressTimer);
+                     setPressTimer(null);
+                   }
+                 }}
+                 onPointerLeave={() => {
+                   if (pressTimer) {
+                     clearTimeout(pressTimer);
+                     setPressTimer(null);
+                   }
+                 }}
                  onClick={() => setLanguage(l => l === 'en' ? 'hi' : 'en')}
-                 className="text-[8px] font-black bg-white/5 px-3 py-2 rounded-full border border-white/5 uppercase transition-all hover:bg-white/10"
+                 className={cn(
+                   "text-[8px] font-black bg-white/5 px-3 py-2 rounded-full border border-white/5 uppercase transition-all hover:bg-white/10 touch-none select-none",
+                   pressTimer && "animate-pulse border-primary/50 text-primary"
+                 )}
                >
-                 {language === 'en' ? 'ENG' : 'HIN'}
+                 <span className="select-none pointer-events-none flex items-center gap-1">
+                   {pressTimer && <Globe size={10} className="animate-spin" />}
+                   {language === 'en' ? 'ENG' : 'HIN'}
+                 </span>
                </button>
                <button 
                  onClick={onMinimize}
@@ -410,7 +522,9 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
             </div>
 
             <div>
-               <p className="text-[10px] font-black uppercase text-white/60 tracking-widest truncate">Opponent</p>
+               <p className="text-[10px] font-black uppercase text-white/60 tracking-widest truncate">
+                 {opponentProgress?.userName || 'Opponent'}
+               </p>
                <div className="h-1.5 bg-black/5 dark:bg-white/5 rounded-full mt-1.5 overflow-hidden">
                   <motion.div 
                     animate={{ width: `${(opponentProgress.currentIndex / 10) * 100}%` }}
@@ -445,11 +559,73 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
                        )}
                     </AnimatePresence>
 
-                    <span className="text-primary font-black uppercase text-[10px] tracking-[0.3em] mb-4 block">Question {currentIndex + 1}</span>
-                    <h2 className="text-xl md:text-3xl font-black leading-tight tracking-tight">
-                      {currentQuiz?.question?.[language]}
-                    </h2>
+                    {(() => {
+                      const hasImage = !!(
+                        currentQuiz?.questionImage && 
+                        typeof currentQuiz.questionImage === 'string' && 
+                        currentQuiz.questionImage.trim() !== '' && 
+                        currentQuiz.questionImage.trim() !== 'undefined'
+                      );
+                      return (
+                        <span className={cn(
+                          "text-primary font-black uppercase text-[10px] tracking-[0.3em] mb-4 block w-full",
+                          hasImage ? "text-center" : "text-left"
+                        )}>
+                          Question {currentIndex + 1}
+                        </span>
+                      );
+                    })()}
+                    {(() => {
+                      const hasImage = !!(
+                        currentQuiz?.questionImage && 
+                        typeof currentQuiz.questionImage === 'string' && 
+                        currentQuiz.questionImage.trim() !== '' && 
+                        currentQuiz.questionImage.trim() !== 'undefined'
+                      );
+                      return hasImage && (
+                        <div className="w-full h-40 md:h-56 rounded-2xl overflow-hidden border border-black/5 dark:border-white/5 bg-black/5 dark:bg-white/5 mb-4 max-w-lg mx-auto">
+                          <img 
+                            src={currentQuiz.questionImage} 
+                            alt="Question" 
+                            referrerPolicy="no-referrer"
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      );
+                    })()}
+                    {(() => {
+                      const hasImage = !!(
+                        currentQuiz?.questionImage && 
+                        typeof currentQuiz.questionImage === 'string' && 
+                        currentQuiz.questionImage.trim() !== '' && 
+                        currentQuiz.questionImage.trim() !== 'undefined'
+                      );
+                      return (
+                        <h2 className={cn(
+                          "text-xl md:text-3xl font-black leading-tight tracking-tight w-full",
+                          hasImage ? "text-center" : "text-left"
+                        )}>
+                          {currentQuiz?.question?.[language]}
+                        </h2>
+                      );
+                    })()}
                  </div>
+
+                 {showHint && (
+                   <motion.div
+                     initial={{ height: 0, opacity: 0 }}
+                     animate={{ height: 'auto', opacity: 1 }}
+                     className="mb-6 p-4 rounded-2xl bg-primary/10 border border-primary/20 flex gap-3 items-start"
+                   >
+                     <Zap size={20} className="text-primary shrink-0 mt-0.5" />
+                     <div>
+                       <p className="text-[8px] font-black uppercase tracking-widest text-primary mb-1">Lifeline Hint</p>
+                       <p className="text-xs font-bold text-white/60">
+                         {currentQuiz.hint?.[language] || (currentQuiz.explanation?.[language]?.slice(0, 80) + '...') || "Try focusing on the historical context!"}
+                       </p>
+                     </div>
+                   </motion.div>
+                 )}
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {currentQuiz?.options?.[language].map((opt, idx) => {
@@ -471,14 +647,30 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
                             disabled={isAnswered || !!winner || isHidden}
                             onClick={() => handleAnswer(idx)}
                             className={cn(
-                               "w-full p-5 rounded-2xl border font-bold text-base transition-all flex items-center justify-between group",
+                               "w-full p-4 rounded-2xl border font-bold text-base transition-all flex flex-col gap-3 group overflow-hidden",
                                colorClasses,
                                !isAnswered && !winner && !isHidden && "hover:border-primary/20 active:scale-[0.98]",
                                isHidden && "opacity-0 invisible pointer-events-none"
                             )}
                           >
-                             <span className="flex-1 text-left">{opt}</span>
-                             {isAnswered && isCorrect && <Check size={18} />}
+                             <div className="flex items-center justify-between w-full">
+                               <span className="flex-1 text-left">{opt}</span>
+                               {isAnswered && isCorrect && <Check size={18} />}
+                             </div>
+                             {pollResults && !isHidden && (
+                               <div className="mt-2 w-full">
+                                 <div className="flex items-center justify-between mb-1">
+                                   <div className="h-1 bg-white/10 rounded-full flex-1 overflow-hidden">
+                                     <motion.div 
+                                       initial={{ width: 0 }}
+                                       animate={{ width: `${pollResults[idx]}%` }}
+                                       className="h-full bg-primary"
+                                     />
+                                   </div>
+                                   <span className="text-[10px] font-black ml-2 text-primary">{pollResults[idx]}%</span>
+                                 </div>
+                               </div>
+                             )}
                           </button>
                        );
                     })}
@@ -486,37 +678,63 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
               </motion.div>
             </AnimatePresence>
 
-            {!isAnswered && (
-               <div className="flex justify-center gap-4 mt-8">
-                  <button 
-                    onClick={useFiftyFifty}
-                    disabled={!currentUser || (currentUser.lifelines?.fiftyFifty || 0) <= 0}
-                    className="flex-1 max-w-[100px] flex flex-col items-center gap-2 group disabled:opacity-30"
-                  >
-                     <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-[#facc15] group-hover:bg-[#facc15]/10 group-hover:border-[#facc15]/20 group-hover:scale-110 transition-all">
-                        <Zap size={20} />
-                     </div>
-                     <div className="flex flex-col items-center">
-                        <span className="text-[8px] font-black uppercase tracking-widest text-white/40 group-hover:text-[#facc15]">50-50</span>
-                        <span className="text-[7px] font-bold text-white/20">{currentUser?.lifelines?.fiftyFifty || 0} left</span>
-                     </div>
-                  </button>
+            <div className="grid grid-cols-4 gap-2 mt-8 md:px-10">
+               <button 
+                 onClick={useFiftyFifty}
+                 disabled={!currentUser || isAnswered || (currentUser.lifelines?.fiftyFifty || 0) <= 0 || hiddenOptions.length > 0}
+                 className="flex flex-col items-center gap-2 group disabled:opacity-30"
+               >
+                  <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-[#facc15] group-hover:bg-[#facc15]/10 group-hover:border-[#facc15]/20 group-hover:scale-110 transition-all">
+                     <Zap size={20} />
+                  </div>
+                  <div className="flex flex-col items-center">
+                     <span className="text-[8px] font-black uppercase tracking-widest text-white/40 group-hover:text-[#facc15]">50-50</span>
+                     <span className="text-[7px] font-bold text-white/20">{currentUser?.lifelines?.fiftyFifty || 0}</span>
+                  </div>
+               </button>
 
-                  <button 
-                    onClick={useChangeQuiz}
-                    disabled={!currentUser || (currentUser.lifelines?.changeQuiz || 0) <= 0}
-                    className="flex-1 max-w-[100px] flex flex-col items-center gap-2 group disabled:opacity-30"
-                  >
-                     <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-primary group-hover:bg-primary/10 group-hover:border-primary/20 group-hover:scale-110 transition-all">
-                        <RefreshCw size={20} />
-                     </div>
-                     <div className="flex flex-col items-center">
-                        <span className="text-[8px] font-black uppercase tracking-widest text-white/40 group-hover:text-primary">{language === 'en' ? 'Skip' : 'छोड़ें'}</span>
-                        <span className="text-[7px] font-bold text-white/20">{currentUser?.lifelines?.changeQuiz || 0} left</span>
-                     </div>
-                  </button>
-               </div>
-            )}
+               <button 
+                 onClick={useAudiencePoll}
+                 disabled={!currentUser || isAnswered || (currentUser.lifelines?.audiencePoll || 0) <= 0 || !!pollResults}
+                 className="flex flex-col items-center gap-2 group disabled:opacity-30"
+               >
+                  <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-green-500 group-hover:bg-green-500/10 group-hover:border-green-500/20 group-hover:scale-110 transition-all">
+                     <Users size={20} />
+                  </div>
+                  <div className="flex flex-col items-center">
+                     <span className="text-[8px] font-black uppercase tracking-widest text-white/40 group-hover:text-green-500">Poll</span>
+                     <span className="text-[7px] font-bold text-white/20">{currentUser?.lifelines?.audiencePoll || 0}</span>
+                  </div>
+               </button>
+
+               <button 
+                 onClick={useHint}
+                 disabled={!currentUser || isAnswered || (currentUser.lifelines?.hint || 0) <= 0 || showHint}
+                 className="flex flex-col items-center gap-2 group disabled:opacity-30"
+               >
+                  <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-primary group-hover:bg-primary/10 group-hover:border-primary/20 group-hover:scale-110 transition-all">
+                     <Zap size={20} />
+                  </div>
+                  <div className="flex flex-col items-center">
+                     <span className="text-[8px] font-black uppercase tracking-widest text-white/40 group-hover:text-primary">Hint</span>
+                     <span className="text-[7px] font-bold text-white/20">{currentUser?.lifelines?.hint || 0}</span>
+                  </div>
+               </button>
+
+               <button 
+                 onClick={useChangeQuiz}
+                 disabled={!currentUser || isAnswered || (currentUser.lifelines?.changeQuiz || 0) <= 0}
+                 className="flex-1 max-w-[100px] flex flex-col items-center gap-2 group disabled:opacity-30"
+               >
+                  <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-red-500 group-hover:bg-red-500/10 group-hover:border-red-500/20 group-hover:scale-110 transition-all">
+                     <RefreshCw size={20} />
+                  </div>
+                  <div className="flex flex-col items-center">
+                     <span className="text-[8px] font-black uppercase tracking-widest text-white/40 group-hover:text-red-500">Skip</span>
+                     <span className="text-[7px] font-bold text-white/20">{currentUser?.lifelines?.changeQuiz || 0}</span>
+                  </div>
+               </button>
+            </div>
          </div>
       </div>
 
@@ -529,6 +747,151 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
              <p className="text-[8px] font-bold text-white/20 uppercase tracking-widest">Topic: {room.topicId}</p>
           </div>
        </div>
+
+      <AnimatePresence>
+        {showSpecialPin && (
+          <div className="fixed inset-0 z-[300] bg-black/80 backdrop-blur-md flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="bg-white dark:bg-[#111] border border-black/10 dark:border-white/10 p-8 rounded-[2.5rem] max-w-sm w-full space-y-6 shadow-2xl"
+            >
+              <div className="text-center space-y-2">
+                <div className="w-16 h-16 bg-primary/20 rounded-full flex items-center justify-center text-primary mx-auto mb-4">
+                  <Shield size={32} />
+                </div>
+                <h3 className="text-xl font-black uppercase tracking-tighter text-black dark:text-white">Special Access</h3>
+                <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Enter Secret Pin to Continue</p>
+              </div>
+
+              <input 
+                type="text"
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value)}
+                placeholder="****"
+                className="w-full bg-black/5 dark:bg-black border border-black/10 dark:border-white/10 p-5 rounded-2xl font-black text-center text-2xl tracking-[0.5em] outline-none focus:border-primary transition-all text-black dark:text-white font-mono"
+                autoFocus
+              />
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => {
+                    setShowSpecialPin(false);
+                    setPinInput('');
+                  }}
+                  className="flex-1 py-4 font-black uppercase tracking-widest text-[10px] bg-black/5 dark:bg-white/5 rounded-2xl hover:bg-red-500/10 hover:text-red-500 transition-all text-black/60 dark:text-white/60"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => {
+                    if (pinInput === settings?.specialPin) {
+                      setShowSpecialPin(false);
+                      setShowSpecialChat(true);
+                      setPinInput('');
+                    } else {
+                      alert({ title: 'Incorrect PIN', description: 'The access code you entered is invalid.', type: 'error' });
+                    }
+                  }}
+                  className="flex-2 py-4 font-black uppercase tracking-widest text-[10px] bg-primary text-black rounded-2xl shadow-lg shadow-primary/20 active:scale-95 transition-all"
+                >
+                  Verify Access
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {showSpecialChat && (
+          <div className="fixed inset-0 z-[310] bg-white dark:bg-[#050505] flex flex-col transition-colors duration-300">
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 border-b border-black/5 dark:border-white/5">
+              <div className="flex items-center gap-4">
+                <button 
+                  onClick={() => setShowSpecialChat(false)}
+                  className="p-2 bg-black/5 dark:bg-white/5 rounded-xl hover:text-primary transition-all text-black/60 dark:text-white/60"
+                >
+                  <X size={20} />
+                </button>
+                <div>
+                  <h3 className="font-black text-sm uppercase tracking-tight text-black dark:text-white">Special Quiz Access</h3>
+                  <div className="flex items-center gap-1">
+                    <div className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
+                    <p className="text-[8px] font-black text-primary uppercase">Secure Channel</p>
+                  </div>
+                </div>
+              </div>
+              <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center text-primary">
+                <Shield size={20} />
+              </div>
+            </div>
+
+            {/* Chat Messages */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4 scrollbar-hide">
+              {mySpecialMessages.filter(m => m.adminReply && m.replyExpiresAt > Date.now()).length === 0 && (
+                <div className="h-full flex flex-col items-center justify-center text-center p-10 opacity-20">
+                  <Shield size={48} className="mb-4 text-black dark:text-white" />
+                  <p className="font-black uppercase tracking-widest text-xs text-black dark:text-white">Special Access Channel</p>
+                  <p className="text-[10px] font-bold mt-2 text-black dark:text-white max-w-[200px]">Send a message to request secret access codes. Your message will be visible only to admins.</p>
+                </div>
+              )}
+              {mySpecialMessages.map((msg: any) => (
+                <React.Fragment key={msg.id}>
+                  {msg.adminReply && (msg.replyExpiresAt > Date.now()) && (
+                    <div className="flex flex-col items-start translate-y-0 animate-in fade-in slide-in-from-left-4 duration-500">
+                      <div className="bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 p-5 rounded-[1.5rem] rounded-tl-none max-w-[85%] relative overflow-hidden group shadow-xl">
+                        <div className="flex items-center justify-between mb-3 gap-4">
+                          <div className="flex items-center gap-2">
+                             <div className="w-5 h-5 bg-primary rounded-full flex items-center justify-center text-black">
+                                <Shield size={10} />
+                             </div>
+                             <p className="text-[8px] font-black text-primary uppercase">Official Response</p>
+                          </div>
+                          <div className="flex items-center gap-1 text-[8px] font-black text-black/20 dark:text-white/20">
+                            <Clock size={8} />
+                            {Math.max(0, Math.ceil((msg.replyExpiresAt - Date.now()) / 1000))}s
+                          </div>
+                        </div>
+                        <p className="text-sm font-black text-black dark:text-white leading-relaxed">{msg.adminReply}</p>
+                        
+                        {/* Expiry indicator bar */}
+                        <div className="absolute bottom-0 left-0 h-1 bg-primary/10 w-full">
+                           <motion.div 
+                             initial={{ width: '100%' }}
+                             animate={{ width: '0%' }}
+                             transition={{ duration: Math.max(0.1, (msg.replyExpiresAt - Date.now()) / 1000), ease: 'linear' }}
+                             className="h-full bg-primary"
+                           />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </React.Fragment>
+              ))}
+            </div>
+
+            {/* Input */}
+            <div className="p-6 border-t border-black/5 dark:border-white/5 bg-white dark:bg-[#050505]">
+              <div className="flex gap-2 p-2 bg-black/5 dark:bg-white/5 rounded-3xl border border-black/5 dark:border-white/5">
+                <input 
+                  value={specialMessage}
+                  onChange={(e) => setSpecialMessage(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSendSpecialMessage()}
+                  placeholder="Request access code..."
+                  className="flex-1 bg-transparent px-4 py-2 text-sm font-bold outline-none placeholder:text-black/20 dark:placeholder:text-white/20 text-black dark:text-white"
+                />
+                <button 
+                  onClick={handleSendSpecialMessage}
+                  disabled={!specialMessage.trim()}
+                  className="w-10 h-10 bg-primary text-black rounded-2xl flex items-center justify-center hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+                >
+                  <Send size={18} />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

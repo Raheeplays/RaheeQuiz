@@ -30,7 +30,9 @@ export default function Events() {
     const unsubscribeEvents = onValue(eventsRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-        const eventList = Object.entries(data).map(([id, val]: [string, any]) => ({ ...val, id })) as Event[];
+        const eventList = Object.entries(data)
+          .filter(([_, val]) => val !== null)
+          .map(([id, val]: [string, any]) => ({ ...val, id })) as Event[];
         setEvents(eventList.sort((a, b) => a.startTime - b.startTime));
       } else {
         setEvents([]);

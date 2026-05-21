@@ -2,6 +2,7 @@ import React from 'react';
 import { motion } from 'motion/react';
 import { Clock, ShieldCheck, LogOut } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
+import { auth } from '../firebase/config';
 
 export default function WaitingRoom() {
   const { setCurrentUser } = useUser();
@@ -23,7 +24,7 @@ export default function WaitingRoom() {
         
         <div className="space-y-4">
           <button
-            onClick={() => setCurrentUser(null)}
+            onClick={() => auth.signOut()}
             className="w-full bg-white/5 text-white/60 p-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-white/10 transition-all font-medium"
           >
             <LogOut size={18} />

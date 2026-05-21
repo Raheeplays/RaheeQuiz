@@ -73,7 +73,7 @@ export default function WinnerLoserScreen({ history, onClose, total }: WinnerLos
         <div className="flex justify-center gap-2 mb-12">
           {[1,2,3,4,5].map(s => (
             <motion.div
-              key={s}
+              key={`winner-star-${s}`}
               initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.3 + (s * 0.1) }}
             >
                <Star 

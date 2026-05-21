@@ -8,6 +8,7 @@ import Auth from './components/Auth';
 import WaitingRoom from './components/WaitingRoom';
 import MainMenu from './components/MainMenu';
 import NotificationManager from './components/NotificationManager';
+import UpdateGuard from './components/UpdateGuard';
 import { AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 
@@ -32,37 +33,25 @@ function AppContent() {
     isDark ? "dark bg-black text-white" : "bg-white text-black"
   );
 
-  if (loading) {
-    return (
-      <div className={containerClass}>
-        <div className="flex flex-col items-center justify-center min-h-screen">
-          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!currentUser) {
-    return (
-      <div className={containerClass}>
-        <Auth />
-      </div>
-    );
-  }
-
-  if (currentUser.status === 'pending') {
-    return (
-      <div className={containerClass}>
-        <WaitingRoom />
-      </div>
-    );
-  }
-
   return (
-    <div className={containerClass}>
-      <NotificationManager />
-      <MainMenu />
-    </div>
+    <UpdateGuard>
+      <div className={containerClass}>
+        {loading ? (
+          <div className="flex flex-col items-center justify-center min-h-screen">
+            <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+          </div>
+        ) : !currentUser ? (
+          <Auth />
+        ) : currentUser.status === 'pending' ? (
+          <WaitingRoom />
+        ) : (
+          <>
+            <NotificationManager />
+            <MainMenu />
+          </>
+        )}
+      </div>
+    </UpdateGuard>
   );
 }
 

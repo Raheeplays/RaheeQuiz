@@ -85,7 +85,10 @@ export class LeaderboardService {
     await update(ref(db), updates);
     
     // 5. Send notifications if serviceAccount is available
-    if (serviceAccount) {
+    const settingsSnap = await get(ref(db, 'settings'));
+    const settings = settingsSnap.val() as Settings;
+
+    if (serviceAccount && settings?.pushNotificationsEnabled !== false) {
       await this.sendResetNotifications(type, sorted, serviceAccount);
     }
   }

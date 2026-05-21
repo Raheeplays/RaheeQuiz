@@ -11,7 +11,7 @@ import { NotificationService } from '../services/notificationService';
 import { LeaderboardService } from '../services/leaderboardService';
 
 export default function NotificationManager() {
-  const { currentUser } = useUser();
+  const { currentUser, settings } = useUser();
   const { serviceAccount } = useNotifications();
   const { confirm } = useDialog();
 
@@ -63,7 +63,7 @@ export default function NotificationManager() {
       setRankUpNotif({ rank: currentUser.rank, show: true });
       
       // Also send real FCM if key available
-      if (serviceAccount) {
+      if (serviceAccount && settings?.pushNotificationsEnabled !== false) {
         (async () => {
           try {
              const tokensSnapshot = await get(ref(db, `fcmTokens/${currentUser.id}`));

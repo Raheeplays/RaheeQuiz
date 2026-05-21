@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { db, firebaseConfig } from '../firebase/config';
 import { ref, onValue, set, push, remove, get, update, query, orderByChild, equalTo } from 'firebase/database';
-import { User, Topic, Quiz, Feedback, QuizHistory } from '../types';
+import { User, Topic, Quiz, Feedback, QuizHistory, SpecialMessage, Ad } from '../types';
 import ScoreCard from './ScoreCard';
-import { Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2, Coins, TrendingUp, Calendar, Sun, Moon, Star, Settings as SettingsIcon, Bell, Send, Share2, Image as ImageIcon, Search, Volume2, Play, RotateCcw, Zap, ChevronUp, ChevronDown } from 'lucide-react';
+import { Database, Folder, Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2, Coins, TrendingUp, Calendar, Sun, Moon, Star, Settings as SettingsIcon, Bell, Send, Share2, Image as ImageIcon, Search, Volume2, Play, RotateCcw, Zap, ChevronUp, ChevronDown, CornerDownRight } from 'lucide-react';
 import { NotificationService, ServiceAccount } from '../services/notificationService';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -20,16 +20,35 @@ import { CLASSES, SUBJECTS } from '../constants';
 import { generateCertificate } from '../utils/certificate';
 import CertificatePreview from './CertificatePreview';
 
+function flattenTopics(nodes: Topic[], depth = 0): { id: string; name: string; label: string }[] {
+  let result: { id: string; name: string; label: string }[] = [];
+  if (!nodes || !Array.isArray(nodes)) return result;
+  nodes.forEach(node => {
+    const indent = "— ".repeat(depth);
+    result.push({
+      id: node.id,
+      name: node.name,
+      label: `${indent}${node.name} (${node.id})`
+    });
+    if (node.children) {
+      result = [...result, ...flattenTopics(Object.values(node.children), depth + 1)];
+    }
+  });
+  return result;
+}
+
 export default function AdminPanel() {
   const { isDark, setIsDark } = useTheme();
-  const { currentUser: adminUser, settings } = useUser();
+  const { currentUser: adminUser, settings, impersonateBot, isImpersonating, logout } = useUser();
   const { alert, confirm } = useDialog();
   const [activeSubTab, setActiveSubTab] = useState('users');
   const [users, setUsers] = useState<User[]>([]);
+  const [ads, setAds] = useState<Ad[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [feedback, setFeedback] = useState<Feedback[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
+  const [specialMessages, setSpecialMessages] = useState<SpecialMessage[]>([]);
   const [currentSkin, setCurrentSkin] = useState('rahee');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [userHistory, setUserHistory] = useState<QuizHistory[]>([]);
@@ -39,6 +58,9 @@ export default function AdminPanel() {
   const [editName, setEditName] = useState('');
   const [editId, setEditId] = useState('');
   const [editingQuizId, setEditingQuizId] = useState<string | null>(null);
+  const [selectedQuizKeys, setSelectedQuizKeys] = useState<string[]>([]);
+  const [bulkTargetTopicId, setBulkTargetTopicId] = useState<string>('');
+  const allFlattenedTopics = useMemo(() => flattenTopics(topics), [topics]);
   const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
   const [topicPath, setTopicPath] = useState<string[]>([]); // Array of IDs representing the path
   const [quizTopicPath, setQuizTopicPath] = useState<Topic[]>([]); 
@@ -53,12 +75,31 @@ export default function AdminPanel() {
     token: '',
     targetUserId: ''
   });
+  const [dbExplorerPath, setDbExplorerPath] = useState<string[]>([]);
+  const [dbExplorerData, setDbExplorerData] = useState<any>(null);
   const [tokenLinkInput, setTokenLinkInput] = useState('');
+  const [localUpdateCode, setLocalUpdateCode] = useState('');
+  const [localUpdateUrl, setLocalUpdateUrl] = useState('');
+  const [localUpdateMessage, setLocalUpdateMessage] = useState('');
+
+  useEffect(() => {
+    if (settings) {
+      setLocalUpdateCode(settings.code || settings.updateCodeSettings?.code || '');
+      setLocalUpdateUrl(settings.updateCodeSettings?.updateUrl || '');
+      setLocalUpdateMessage(settings.updateCodeSettings?.message || '');
+    }
+  }, [settings]);
+
   useEffect(() => {
     setTokenLinkInput('');
   }, [selectedUser?.id]);
   const { serviceAccount, setServiceAccount } = useNotifications();
   const [notifSchedules, setNotifSchedules] = useState<any[]>([]);
+  const [coupons, setCoupons] = useState<any[]>([]);
+  const [couponLogs, setCouponLogs] = useState<any[]>([]);
+  const [referralLogs, setReferralLogs] = useState<any[]>([]);
+  const [adLogs, setAdLogs] = useState<any[]>([]);
+  const [newCouponForm, setNewCouponForm] = useState({ code: '', value: 100, count: 1 });
   const [customTemplates, setCustomTemplates] = useState({
     challenge: { title: 'New Challenge!', body: '{player} has challenged you to a match!' },
     rankUp: { title: 'Rank Increased!', body: 'Congratulations! You reached Rank {rank}!' },
@@ -72,6 +113,12 @@ export default function AdminPanel() {
   const [scheduleTime, setScheduleTime] = useState('');
   const [searchTokenUser, setSearchTokenUser] = useState('');
   const [certPreviewData, setCertPreviewData] = useState<any>(null);
+  const [newAdTitle, setNewAdTitle] = useState('');
+  const [newAdMediaType, setNewAdMediaType] = useState<'video' | 'image' | 'text'>('video');
+  const [newAdMediaUrl, setNewAdMediaUrl] = useState('');
+  const [newAdDuration, setNewAdDuration] = useState(15);
+  const [newAdRewardValue, setNewAdRewardValue] = useState('');
+  const [isAddingAd, setIsAddingAd] = useState(false);
   const [custForm, setCustForm] = useState({
     correctSound: 'https://assets.mixkit.co/active_storage/sfx/2013/2013-preview.mp3',
     incorrectSound: 'https://assets.mixkit.co/active_storage/sfx/2014/2014-preview.mp3',
@@ -142,7 +189,7 @@ export default function AdminPanel() {
     onValue(ref(db, 'notificationSchedules'), s => {
       if (s.exists()) {
         const data = s.val();
-        setNotifSchedules(Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })));
+        setNotifSchedules(Object.entries(data).filter(([_, val]) => val !== null).map(([key, val]: [string, any]) => ({ ...val, id: key })));
       } else {
         setNotifSchedules([]);
       }
@@ -153,7 +200,30 @@ export default function AdminPanel() {
         setCustomTemplates(prev => ({ ...prev, ...s.val() }));
       }
     });
+
+    onValue(ref(db, 'specialMessages'), s => {
+      if (s.exists()) {
+        const data = s.val();
+        const allMsgs: SpecialMessage[] = [];
+        Object.keys(data).forEach(uId => {
+          const userMsgs = data[uId];
+          Object.keys(userMsgs).forEach(mId => {
+            allMsgs.push({ ...userMsgs[mId], id: mId, userId: uId });
+          });
+        });
+        setSpecialMessages(allMsgs.sort((a, b) => b.timestamp - a.timestamp));
+      } else {
+        setSpecialMessages([]);
+      }
+    });
   }, []);
+
+  useEffect(() => {
+    const dbRef = ref(db, dbExplorerPath.join('/') || '/');
+    return onValue(dbRef, (snapshot) => {
+      setDbExplorerData(snapshot.exists() ? snapshot.val() : null);
+    });
+  }, [dbExplorerPath]);
 
   const handleServiceAccountUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -304,7 +374,113 @@ export default function AdminPanel() {
 
     return () => clearInterval(interval);
   }, [serviceAccount, notifSchedules]);
-  
+
+  useEffect(() => {
+    onValue(ref(db, 'coupons'), s => {
+      if (s.exists()) {
+        setCoupons(Object.values(s.val()));
+      } else {
+        setCoupons([]);
+      }
+    });
+    onValue(ref(db, 'couponLogs'), s => {
+      if (s.exists()) {
+        const allLogs: any[] = [];
+        Object.values(s.val()).forEach((userLogs: any) => {
+          Object.values(userLogs).forEach(log => allLogs.push(log));
+        });
+        setCouponLogs(allLogs.sort((a, b) => b.timestamp - a.timestamp));
+      } else {
+        setCouponLogs([]);
+      }
+    });
+    onValue(ref(db, 'referralLogs'), s => {
+      if (s.exists()) {
+        setReferralLogs(Object.values(s.val()).sort((a: any, b: any) => b.timestamp - a.timestamp));
+      } else {
+        setReferralLogs([]);
+      }
+    });
+    onValue(ref(db, 'adLogs'), s => {
+      if (s.exists()) {
+        setAdLogs(Object.values(s.val()).sort((a: any, b: any) => b.timestamp - a.timestamp));
+      } else {
+        setAdLogs([]);
+      }
+    });
+  }, []);
+
+  const generateCoupons = async () => {
+    if (newCouponForm.value <= 0) return;
+    const count = Math.min(100, Math.max(1, newCouponForm.count));
+    const value = newCouponForm.value;
+    const createdBy = adminUser?.username || adminUser?.name || 'admin';
+    const timestamp = Date.now();
+
+    try {
+      const updates: any = {};
+      for (let i = 0; i < count; i++) {
+        let code = newCouponForm.code;
+        if (!code || count > 1) {
+          code = Math.random().toString(36).substring(2, 8).toUpperCase();
+        }
+        
+        updates[`coupons/${code}`] = {
+          code,
+          value,
+          isUsed: false,
+          createdAt: timestamp,
+          createdBy
+        };
+      }
+      await update(ref(db), updates);
+      await alert({ title: 'Success', description: `Generated ${count} coupon(s) of value ${value} coins.`, type: 'success' });
+      setNewCouponForm({ code: '', value: 100, count: 1 });
+    } catch (err: any) {
+      await alert({ title: 'Error', description: err.message, type: 'error' });
+    }
+  };
+
+  const deleteCoupon = async (code: string) => {
+    const verified = await confirm({
+      title: 'Delete Coupon',
+      description: `Permanently delete coupon "${code}"?`,
+      type: 'error'
+    });
+    if (!verified) return;
+    await remove(ref(db, `coupons/${code}`));
+  };
+
+  const clearCouponLogs = async () => {
+    const verified = await confirm({
+      title: 'Clear Logs',
+      description: 'Delete all coupon redemption logs?',
+      type: 'error'
+    });
+    if (!verified) return;
+    await remove(ref(db, 'couponLogs'));
+  };
+
+  const clearReferralLogs = async () => {
+    const verified = await confirm({
+      title: 'Clear Referral Logs',
+      description: 'Delete all referral logs?',
+      type: 'error'
+    });
+    if (!verified) return;
+    await remove(ref(db, 'referralLogs'));
+  };
+
+  const clearAdLogs = async () => {
+    const verified = await confirm({
+      title: 'Clear Impression History',
+      description: 'Delete all ad log history? This is permanent.',
+      type: 'error'
+    });
+    if (!verified) return;
+    await remove(ref(db, 'adLogs'));
+  };
+
   // Create state
   const [newTopic, setNewTopic] = useState({
     name: '',
@@ -346,8 +522,11 @@ export default function AdminPanel() {
     opt2En: '', opt2Hi: '',
     opt3En: '', opt3Hi: '',
     opt4En: '', opt4Hi: '',
-    correct: 1, topicId: '', subTopicId: '', subSubTopicId: '',
-    explanationEn: '', explanationHi: ''
+    correct: 1, topicId: '', 
+    explanationEn: '', explanationHi: '',
+    hintEn: '', hintHi: '',
+    questionImage: '',
+    opt1Image: '', opt2Image: '', opt3Image: '', opt4Image: ''
   });
 
     // Player creation state
@@ -357,11 +536,18 @@ export default function AdminPanel() {
     const [newPlayerPassword, setNewPlayerPassword] = useState('');
     const [isCreatingUser, setIsCreatingUser] = useState(false);
 
+    // Bot creation state
+    const [isAddingBot, setIsAddingBot] = useState(false);
+    const [newBotName, setNewBotName] = useState('');
+    const [newBotUsername, setNewBotUsername] = useState('');
+    const [newBotXP, setNewBotXP] = useState(0);
+    const [isCreatingBot, setIsCreatingBot] = useState(false);
+
   useEffect(() => {
     onValue(ref(db, 'users'), s => {
       if (s.exists()) {
         const data = s.val();
-        const allUsers = Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })) as User[];
+        const allUsers = Object.entries(data).filter(([_, val]) => val !== null).map(([key, val]: [string, any]) => ({ ...val, id: key })) as User[];
         setUsers(allUsers);
       }
     });
@@ -369,7 +555,7 @@ export default function AdminPanel() {
     onValue(ref(db, 'topics'), s => {
       if (s.exists()) {
         const data = s.val();
-        const list = Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })) as Topic[];
+        const list = Object.entries(data).filter(([_, val]) => val !== null).map(([key, val]: [string, any]) => ({ ...val, id: key })) as Topic[];
         list.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
         setTopics(list);
       }
@@ -381,10 +567,14 @@ export default function AdminPanel() {
         const allTopicsData = s.val();
         let flatQuizzes: Quiz[] = [];
         Object.entries(allTopicsData).forEach(([topicId, topicData]: [string, any]) => {
-          const quizzesWithId = Object.entries(topicData).map(([qId, qVal]: [string, any]) => ({
-            ...qVal,
-            id: qId
-          }));
+          if (!topicData) return;
+          const quizzesWithId = Object.entries(topicData)
+            .filter(([_, qVal]) => qVal !== null)
+            .map(([qId, qVal]: [string, any]) => ({
+              ...qVal,
+              id: qId,
+              topicId: topicId
+            }));
           flatQuizzes = [...flatQuizzes, ...quizzesWithId];
         });
         setQuizzes(flatQuizzes);
@@ -394,14 +584,22 @@ export default function AdminPanel() {
     onValue(ref(db, 'feedback'), s => {
       if (s.exists()) {
         const data = s.val();
-        setFeedback(Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })));
+        setFeedback(Object.entries(data).filter(([_, val]) => val !== null).map(([key, val]: [string, any]) => ({ ...val, id: key })));
+      }
+    });
+    onValue(ref(db, 'ads'), s => {
+      if (s.exists()) {
+        const data = s.val();
+        setAds(Object.entries(data).filter(([_, val]) => val !== null).map(([key, val]: [string, any]) => ({ ...val, id: key })) as Ad[]);
+      } else {
+        setAds([]);
       }
     });
     onValue(ref(db, 'settings/activeSkin'), s => s.exists() && setCurrentSkin(s.val()));
     onValue(ref(db, 'events'), s => {
       if (s.exists()) {
         const data = s.val();
-        setEvents(Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })));
+        setEvents(Object.entries(data).filter(([_, val]) => val !== null).map(([key, val]: [string, any]) => ({ ...val, id: key })));
       } else {
         setEvents([]);
       }
@@ -421,9 +619,10 @@ export default function AdminPanel() {
         const data = snapshot.val();
         if (data) {
           const mapped = Object.entries(data)
+            .filter(([_, val]) => val !== null)
             .map(([key, val]: [string, any]) => ({ ...val, id: key }))
             .filter((h: any) => h.userId === selectedUser.id);
-          setUserHistory(mapped.sort((a: any, b: any) => b.timestamp - a.timestamp));
+          setUserHistory(mapped.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0)));
         } else {
           setUserHistory([]);
         }
@@ -602,7 +801,7 @@ export default function AdminPanel() {
         raheeCoins: 100,
         currentRound: 1,
         currentQuizIndex: 0,
-        lifelines: { fiftyFifty: 1, changeQuiz: 1 },
+        lifelines: { fiftyFifty: 1, changeQuiz: 1, audiencePoll: 1, hint: 1 },
         language: 'en',
         scores: {},
         selectedTopicId: null
@@ -628,8 +827,108 @@ export default function AdminPanel() {
       }
       await alert({ title: 'Error', description: msg, type: 'error' });
     } finally {
-      setIsCreatingUser(false);
+      setIsCreatingBot(false);
     }
+  };
+
+  const createBot = async () => {
+    if (!newBotName || !newBotUsername) {
+      await alert({ title: 'Error', description: 'Name and Username are required', type: 'error' });
+      return;
+    }
+
+    const cleanUsername = newBotUsername.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
+    const finalEmail = `${cleanUsername}@bot.rahee.games`;
+    
+    setIsCreatingBot(true);
+    try {
+      const usersRef = ref(db, 'users');
+      const usernameQuery = query(usersRef, orderByChild('username'), equalTo(cleanUsername));
+      const nameCheck = await get(usernameQuery);
+      
+      if (nameCheck.exists()) {
+        await alert({ title: 'Error', description: 'Username already taken', type: 'error' });
+        setIsCreatingBot(false);
+        return;
+      }
+
+      const bRef = push(ref(db, 'users'));
+      const uid = bRef.key || '';
+
+      const bot: User = {
+        id: uid,
+        name: newBotName,
+        email: finalEmail,
+        username: cleanUsername,
+        role: 'user',
+        status: 'approved',
+        isBot: true,
+        xp: newBotXP || 0,
+        rank: Math.floor((newBotXP || 0) / 1600) + 1,
+        currentRound: 1,
+        currentQuizIndex: 0,
+        selectedTopicId: 'general',
+        language: 'en',
+        raheeCoins: 100,
+        lifelines: {
+          fiftyFifty: 1,
+          changeQuiz: 1,
+          audiencePoll: 1,
+          hint: 1
+        },
+        scores: {}
+      };
+
+      await set(bRef, bot);
+
+      await alert({ title: 'Success', description: 'Bot created successfully!', type: 'success' });
+      setIsAddingBot(false);
+      setNewBotName('');
+      setNewBotUsername('');
+      setNewBotXP(0);
+
+    } catch (err: any) {
+      console.error("Failed to create bot:", err);
+      await alert({ title: 'Error', description: err.message, type: 'error' });
+    } finally {
+      setIsCreatingBot(false);
+    }
+  };
+
+  const exportBotsCsv = () => {
+    const botPlayers = users.filter(u => u.isBot);
+    const data = botPlayers.map(b => ({
+      name: b.name,
+      username: b.username,
+      xp: b.xp,
+      rank: b.rank,
+      email: b.email
+    }));
+    
+    const csv = Papa.unparse(data);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `bots_export_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const exportSampleBotsCsv = () => {
+    const data = [
+      { name: 'Bot Alpha', username: 'bot_alpha', xp: 5000 },
+      { name: 'Bot Beta', username: 'bot_beta', xp: 1200 },
+      { name: 'Bot Gamma', username: 'bot_gamma', xp: 8500 }
+    ];
+    const csv = Papa.unparse(data);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.setAttribute('href', URL.createObjectURL(blob));
+    link.setAttribute('download', 'sample_bots.csv');
+    link.click();
   };
 
   const addTopic = async () => {
@@ -820,15 +1119,16 @@ export default function AdminPanel() {
     const quiz: any = {
       id: quizId,
       topicId: newQuiz.topicId || topics[0]?.id,
-      subTopicId: newQuiz.subTopicId || null,
-      subSubTopicId: newQuiz.subSubTopicId || null,
       question: { en: newQuiz.questionEn, hi: newQuiz.questionHi || newQuiz.questionEn },
       options: {
         en: [newQuiz.opt1En, newQuiz.opt2En, newQuiz.opt3En, newQuiz.opt4En].filter(o => o),
         hi: [newQuiz.opt1Hi || newQuiz.opt1En, newQuiz.opt2Hi || newQuiz.opt2En, newQuiz.opt3Hi || newQuiz.opt3En, newQuiz.opt4Hi || newQuiz.opt4En].filter(o => o)
       },
       correctAnswerIndex: newQuiz.correct - 1,
-      explanation: { en: newQuiz.explanationEn, hi: newQuiz.explanationHi || newQuiz.explanationEn }
+      explanation: { en: newQuiz.explanationEn, hi: newQuiz.explanationHi || newQuiz.explanationEn },
+      hint: { en: newQuiz.hintEn, hi: newQuiz.hintHi || newQuiz.hintEn },
+      questionImage: newQuiz.questionImage || '',
+      optionImages: [newQuiz.opt1Image, newQuiz.opt2Image, newQuiz.opt3Image, newQuiz.opt4Image].map(img => img || '')
     };
 
     await set(ref(db, `topicQuizzes/${quiz.topicId}/${quizId}`), quiz);
@@ -838,8 +1138,11 @@ export default function AdminPanel() {
       opt2En: '', opt2Hi: '',
       opt3En: '', opt3Hi: '',
       opt4En: '', opt4Hi: '',
-      correct: 1, topicId: '', subTopicId: '', subSubTopicId: '',
-      explanationEn: '', explanationHi: ''
+      correct: 1, topicId: '', 
+      explanationEn: '', explanationHi: '',
+      hintEn: '', hintHi: '',
+      questionImage: '',
+      opt1Image: '', opt2Image: '', opt3Image: '', opt4Image: ''
     });
     setEditingQuizId(null);
     if (editingQuizId) {
@@ -865,10 +1168,15 @@ export default function AdminPanel() {
       opt4Hi: q.options?.hi?.[3] || '',
       correct: q.correctAnswerIndex + 1,
       topicId: q.topicId,
-      subTopicId: q.subTopicId || '',
-      subSubTopicId: q.subSubTopicId || '',
       explanationEn: q.explanation?.en || '',
-      explanationHi: q.explanation?.hi || ''
+      explanationHi: q.explanation?.hi || '',
+      hintEn: q.hint?.en || '',
+      hintHi: q.hint?.hi || '',
+      questionImage: q.questionImage || '',
+      opt1Image: q.optionImages?.[0] || '',
+      opt2Image: q.optionImages?.[1] || '',
+      opt3Image: q.optionImages?.[2] || '',
+      opt4Image: q.optionImages?.[3] || ''
     });
     setEditingQuizId(q.id);
     // Scroll to form for convenience on mobile
@@ -891,17 +1199,22 @@ export default function AdminPanel() {
         q.options?.hi?.[3] || '',
         q.correctAnswerIndex + 1,
         q.topicId,
-        q.subTopicId || '',
-        q.subSubTopicId || '',
         q.explanation?.en || '',
-        q.explanation?.hi || ''
+        q.explanation?.hi || '',
+        q.hint?.en || '',
+        q.hint?.hi || '',
+        q.questionImage || '',
+        q.optionImages?.[0] || '',
+        q.optionImages?.[1] || '',
+        q.optionImages?.[2] || '',
+        q.optionImages?.[3] || ''
       ];
       return parts.join(', ');
     }).join('\n');
     setBulkText(csvContent);
     await alert({
       title: "Data Loaded",
-      description: 'Loaded all quizzes. Format: ID, Q_EN, Q_HI, O1_EN, O1_HI, O2_EN, O2_HI, O3_EN, O3_HI, O4_EN, O4_HI, Correct, Topic, SubTopic, SubSubTopic, Exp_EN, Exp_HI',
+      description: 'Loaded all quizzes. Format: ID, Q_EN, Q_HI, O1_EN, O1_HI, O2_EN, O2_HI, O3_EN, O3_HI, O4_EN, O4_HI, Correct, Topic, Exp_EN, Exp_HI, HINT_EN, HINT_HI, Q_IMG, O1_IMG, O2_IMG, O3_IMG, O4_IMG',
       type: 'info'
     });
   };
@@ -922,15 +1235,15 @@ export default function AdminPanel() {
       const parts = line.split(',').map(p => p.trim());
       
       if (parts.length >= 10) {
-        let id, qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, subTopic, subSubTopic, expEn, expHi;
+        let id, qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, expEn, expHi, hEn, hHi, qImg, o1Img, o2Img, o3Img, o4Img;
         
         // Check if first part is a numeric ID or looks like a question
         const isFirstPartId = !isNaN(parseInt(parts[0])) && parts[0].length < 10;
         
         if (isFirstPartId) {
-          [id, qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, subTopic, subSubTopic, expEn, expHi] = parts;
+          [id, qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, expEn, expHi, hEn, hHi, qImg, o1Img, o2Img, o3Img, o4Img] = parts;
         } else {
-          [qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, subTopic, subSubTopic, expEn, expHi] = parts;
+          [qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, expEn, expHi, hEn, hHi, qImg, o1Img, o2Img, o3Img, o4Img] = parts;
           lastIdNum++;
           id = lastIdNum.toString();
         }
@@ -944,12 +1257,16 @@ export default function AdminPanel() {
           },
           correctAnswerIndex: (parseInt(corr) || 1) - 1,
           topicId: topic || topics[0]?.id || 'general',
-          subTopicId: subTopic || null,
-          subSubTopicId: subSubTopic || null,
           explanation: { 
             en: expEn || '', 
             hi: expHi || expEn || '' 
-          }
+          },
+          hint: {
+            en: hEn || '',
+            hi: hHi || hEn || ''
+          },
+          questionImage: qImg || '',
+          optionImages: [o1Img || '', o2Img || '', o3Img || '', o4Img || '']
         };
         await set(ref(db, `topicQuizzes/${quiz.topicId}/${id}`), quiz);
         count++;
@@ -988,8 +1305,6 @@ export default function AdminPanel() {
              const quiz: any = {
                id,
                topicId: row.topicId || row.TopicId || (topics[0]?.id || 'general'),
-               subTopicId: row.subTopicId || row.SubTopicId || null,
-               subSubTopicId: row.subSubTopicId || row.SubSubTopicId || null,
                question: { 
                  en: row.questionEn || row.QuestionEn || row.question || row.Question || '', 
                  hi: row.questionHi || row.QuestionHi || row.questionEn || row.QuestionEn || row.question || row.Question || '' 
@@ -1012,7 +1327,18 @@ export default function AdminPanel() {
                explanation: { 
                  en: row.explanationEn || row.ExplanationEn || row.explanation || row.Explanation || row.expEn || row.ExpEn || row.exp || row.Exp || '', 
                  hi: row.explanationHi || row.ExplanationHi || row.explanation || row.Explanation || row.expHi || row.ExpHi || row.exp || row.Exp || '' 
-               }
+               },
+               hint: {
+                 en: row.hintEn || row.HintEn || row.hint || row.Hint || '',
+                 hi: row.hintHi || row.HintHi || row.hint || row.Hint || ''
+               },
+               questionImage: row.questionImage || row.QuestionImage || row.qImage || row.QImage || '',
+               optionImages: [
+                 row.opt1Image || row.Opt1Image || row.o1Image || row.O1Image || '',
+                 row.opt2Image || row.Opt2Image || row.o2Image || row.O2Image || '',
+                 row.opt3Image || row.Opt3Image || row.o3Image || row.O3Image || '',
+                 row.opt4Image || row.Opt4Image || row.o4Image || row.O4Image || ''
+               ]
              };
              await set(ref(db, `topicQuizzes/${quiz.topicId}/${id}`), quiz);
           }
@@ -1037,7 +1363,9 @@ export default function AdminPanel() {
               raheeCoins: 0,
               lifelines: {
                 'fiftyFifty': 0,
-                'changeQuiz': 0
+                'changeQuiz': 0,
+                'audiencePoll': 0,
+                'hint': 0
               },
               scores: {}
             };
@@ -1146,10 +1474,15 @@ export default function AdminPanel() {
       opt4Hi: 'Option 4 Hindi',
       correct: '1',
       topicId: newQuiz.topicId || (topics[0]?.id || 'general'),
-      subTopicId: newQuiz.subTopicId || '',
-      subSubTopicId: newQuiz.subSubTopicId || '',
       explanationEn: 'Explanation in English',
-      explanationHi: 'Explanation in Hindi'
+      explanationHi: 'Explanation in Hindi',
+      hintEn: 'Hint in English',
+      hintHi: 'Hint in Hindi',
+      questionImage: 'https://example.com/question.jpg',
+      opt1Image: 'https://example.com/opt1.jpg',
+      opt2Image: '',
+      opt3Image: '',
+      opt4Image: ''
     }];
 
     const csv = Papa.unparse(sampleData);
@@ -1188,10 +1521,15 @@ export default function AdminPanel() {
       opt4Hi: q.options?.hi?.[3] || '',
       correct: q.correctAnswerIndex + 1,
       topicId: q.topicId,
-      subTopicId: q.subTopicId || '',
-      subSubTopicId: q.subSubTopicId || '',
       explanationEn: q.explanation?.en || '',
-      explanationHi: q.explanation?.hi || ''
+      explanationHi: q.explanation?.hi || '',
+      hintEn: q.hint?.en || '',
+      hintHi: q.hint?.hi || '',
+      questionImage: q.questionImage || '',
+      opt1Image: q.optionImages?.[0] || '',
+      opt2Image: q.optionImages?.[1] || '',
+      opt3Image: q.optionImages?.[2] || '',
+      opt4Image: q.optionImages?.[3] || ''
     }));
 
     const csv = Papa.unparse(csvData);
@@ -1208,6 +1546,591 @@ export default function AdminPanel() {
 
   const setGlobalSkin = async (skinId: string) => {
     await set(ref(db, 'settings/activeSkin'), skinId);
+  };
+
+  const renderAdsSection = () => {
+    const totalAds = ads.length;
+    const activeAds = ads.filter(a => a.active).length;
+    const inactiveAds = totalAds - activeAds;
+
+    const handleCreateAd = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!newAdTitle || !newAdMediaUrl) {
+        await alert({ title: 'Error', description: 'Please fill in all required fields.', type: 'error' });
+        return;
+      }
+
+      const newAdRef = push(ref(db, 'ads'));
+      const newAd: Ad = {
+        id: newAdRef.key!,
+        title: newAdTitle,
+        mediaType: newAdMediaType,
+        mediaUrl: newAdMediaUrl,
+        active: true,
+        durationSeconds: Number(newAdDuration) || 15,
+        rewardValue: newAdRewardValue || '',
+        createdAt: Date.now()
+      };
+
+      try {
+        await set(newAdRef, newAd);
+        setNewAdTitle('');
+        setNewAdMediaUrl('');
+        setNewAdDuration(15);
+        setNewAdRewardValue('');
+        setIsAddingAd(false);
+        await alert({ title: 'Success', description: 'Ad published successfully.', type: 'success' });
+      } catch (err: any) {
+        await alert({ title: 'Error', description: err.message || 'Failed to save ad.', type: 'error' });
+      }
+    };
+
+    const toggleAdStatus = async (ad: Ad) => {
+      try {
+        await update(ref(db, `ads/${ad.id}`), { active: !ad.active });
+      } catch (err: any) {
+        await alert({ title: 'Error', description: err.message, type: 'error' });
+      }
+    };
+
+    const handleDeleteAd = async (id: string) => {
+      const isConfirmed = await confirm({
+        title: 'Delete Ad',
+        description: 'Are you sure you want to delete this ad? This action is permanent.',
+        type: 'warning'
+      });
+      if (!isConfirmed) return;
+
+      try {
+        await remove(ref(db, `ads/${id}`));
+        await alert({ title: 'Deleted', description: 'Ad deleted successfully.', type: 'success' });
+      } catch (err: any) {
+        await alert({ title: 'Error', description: err.message, type: 'error' });
+      }
+    };
+
+    return (
+      <div className="space-y-8 pb-32">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-black uppercase tracking-tighter text-black dark:text-white">Ad Manager & Rewards Engine</h2>
+            <p className="text-[10px] font-bold text-black/30 dark:text-white/30 uppercase tracking-[0.2em]">Manage in-game promotional ads & rewards</p>
+          </div>
+          <button
+            onClick={() => setIsAddingAd(true)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-primary text-black rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 transition-all shadow-lg shadow-primary/20"
+          >
+            <Plus size={14} />
+            Create Promotional Ad
+          </button>
+        </div>
+
+        {/* Ad Stats Row */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5">
+            <p className="text-[10px] font-black uppercase text-black/40 dark:text-white/40 mb-1">Total Campaigns</p>
+            <h4 className="text-3xl font-black text-primary">{totalAds}</h4>
+          </div>
+          <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5">
+            <p className="text-[10px] font-black uppercase text-black/40 dark:text-white/40 mb-1">Active Ads</p>
+            <h4 className="text-3xl font-black text-green-500">{activeAds}</h4>
+          </div>
+          <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5">
+            <p className="text-[10px] font-black uppercase text-black/40 dark:text-white/40 mb-1">Paused Ads</p>
+            <h4 className="text-3xl font-black text-red-500">{inactiveAds}</h4>
+          </div>
+        </div>
+
+        {/* Add Ad Drawer/Form */}
+        <AnimatePresence>
+          {isAddingAd && (
+            <motion.div
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-primary/20 space-y-6"
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-black uppercase tracking-tight text-black dark:text-white">Create New Promotional Ad Campaign</h3>
+                <button
+                  onClick={() => setIsAddingAd(false)}
+                  className="p-1 px-3 bg-red-500/15 text-red-500 rounded-lg text-[9px] font-bold uppercase tracking-widest"
+                >
+                  Cancel
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateAd} className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">Campaign Title</label>
+                  <input
+                    type="text"
+                    value={newAdTitle}
+                    onChange={(e) => setNewAdTitle(e.target.value)}
+                    placeholder="e.g. Mega Sale - 50% Off Rahee Cards!"
+                    className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/15 px-4 py-3 rounded-2xl text-xs font-bold focus:outline-none focus:border-primary text-black dark:text-white"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">Media Type</label>
+                  <select
+                    value={newAdMediaType}
+                    onChange={(e: any) => setNewAdMediaType(e.target.value)}
+                    className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/15 px-4 py-3 rounded-2xl text-xs font-bold focus:outline-none focus:border-primary text-black dark:text-white"
+                  >
+                    <option value="video">Video Stream URL</option>
+                    <option value="image">Banner Graphic URL</option>
+                    <option value="text">Slogan / Text Display</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1 col-span-1 md:col-span-2">
+                  <label className="text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">
+                    {newAdMediaType === 'text' ? 'Promotional Slogan / Message Content' : 'Media Asset URL'}
+                  </label>
+                  <input
+                    type="text"
+                    value={newAdMediaUrl}
+                    onChange={(e) => setNewAdMediaUrl(e.target.value)}
+                    placeholder={newAdMediaType === 'text' ? 'Enter short attractive copy...' : 'https://images.unsplash.com/... or youtube embed URL'}
+                    className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/15 px-4 py-3 rounded-2xl text-xs font-bold focus:outline-none focus:border-primary text-black dark:text-white"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">Force Ad Duration (Seconds)</label>
+                  <input
+                    type="number"
+                    value={newAdDuration}
+                    onChange={(e) => setNewAdDuration(Math.max(3, Number(e.target.value)))}
+                    className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/15 px-4 py-3 rounded-2xl text-xs font-bold focus:outline-none focus:border-primary text-black dark:text-white"
+                    min="3"
+                    max="60"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">Ad Target Label (Rewards Note)</label>
+                  <input
+                    type="text"
+                    value={newAdRewardValue}
+                    onChange={(e) => setNewAdRewardValue(e.target.value)}
+                    placeholder="e.g. +200 Coins Booster"
+                    className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/15 px-4 py-3 rounded-2xl text-xs font-bold focus:outline-none focus:border-primary text-black dark:text-white"
+                  />
+                </div>
+
+                <div className="col-span-1 md:col-span-2 pt-2">
+                  <button
+                    type="submit"
+                    className="w-full py-4 bg-primary text-black font-black uppercase tracking-widest text-xs rounded-2xl cursor-pointer hover:bg-primary/90 hover:scale-[1.01] transition-transform active:scale-95"
+                  >
+                    🚀 PUBLISH PROMOTION
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Existing Ads List */}
+        <div className="space-y-4">
+          <h3 className="text-lg font-black uppercase tracking-tight text-black dark:text-white">Active Promotional Feed</h3>
+
+          {totalAds === 0 ? (
+            <div className="bg-black/5 dark:bg-[#111] p-16 rounded-[3rem] border border-dashed border-black/10 dark:border-white/10 text-center">
+              <Play size={48} className="mx-auto mb-3 text-black/15 dark:text-white/15 animate-bounce" />
+              <p className="font-black uppercase tracking-widest text-black/30 dark:text-white/30 text-xs text-black dark:text-white">No Ads configured in database</p>
+              <p className="text-[10px] text-black/20 dark:text-white/20 mt-1">Add promotional ads for users to watch and claim free boosts!</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {ads.map((ad) => (
+                <div
+                  key={ad.id}
+                  className="p-5 bg-white dark:bg-[#111] rounded-[2.5rem] border border-black/5 dark:border-white/5 flex flex-col justify-between"
+                >
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-start">
+                      <span className="text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg bg-primary/20 text-primary">
+                        {ad.mediaType} • {ad.durationSeconds}s
+                      </span>
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => toggleAdStatus(ad)}
+                          className={`px-3 py-1 rounded-md text-[8px] font-extrabold uppercase tracking-widest ${
+                            ad.active
+                              ? 'bg-green-500/15 text-green-500 border border-green-500/20'
+                              : 'bg-yellow-500/15 text-yellow-500 border border-yellow-500/20'
+                          }`}
+                        >
+                          {ad.active ? 'ACTIVE' : 'PAUSED'}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteAd(ad.id)}
+                          className="p-1 px-2.5 bg-red-500/15 text-red-500 rounded-md border border-red-500/20 hover:bg-red-500 hover:text-white transition-all text-[8px] font-black"
+                        >
+                          DELETE
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h4 className="font-extrabold text-sm text-black dark:text-white uppercase leading-tight">{ad.title}</h4>
+                      {ad.rewardValue && (
+                        <p className="text-[9px] font-black text-purple-500 uppercase tracking-widest mt-1">
+                          Reward: {ad.rewardValue}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="p-3 bg-black/5 dark:bg-black/40 rounded-xl max-h-[140px] overflow-hidden text-ellipsis border border-black/5 dark:border-white/5">
+                      {ad.mediaType === 'image' && (
+                        <img
+                          src={ad.mediaUrl}
+                          alt="Banner Preview"
+                          className="w-full h-20 object-cover rounded-lg"
+                          referrerPolicy="no-referrer"
+                        />
+                      )}
+                      {ad.mediaType === 'text' && (
+                        <p className="text-[10px] font-medium text-black/60 dark:text-white/60 italic leading-relaxed text-center py-2">
+                          "{ad.mediaUrl}"
+                        </p>
+                      )}
+                      {ad.mediaType === 'video' && (
+                        <div className="w-full h-20 bg-[#151515] rounded-lg flex items-center justify-center text-white/40 text-[9px] font-bold uppercase tracking-widest gap-2">
+                          <span>🎥 Video Embed Link:</span>
+                          <span className="truncate max-w-[100px] text-[7px] text-gray-500">{ad.mediaUrl}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="border-t border-black/5 dark:border-white/5 mt-4 pt-3 text-[9px] font-bold text-black/30 dark:text-white/30 truncate uppercase tracking-widest">
+                    ID: {ad.id}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Ad Viewer / Impression Logs Table */}
+        <div className="space-y-4 mt-12">
+          <div className="flex items-center justify-between px-2">
+            <div>
+              <h3 className="text-lg font-black uppercase tracking-tight text-black dark:text-white">Ad Views & Impression Log</h3>
+              <p className="text-[9px] font-bold text-black/30 dark:text-white/30 uppercase tracking-[0.15em]">Real-time audit log of which players played which ad and when</p>
+            </div>
+            <button 
+              onClick={clearAdLogs} 
+              className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white border border-red-500/20 text-[8px] font-black uppercase tracking-widest rounded-lg transition-all"
+            >
+              Clear Logs
+            </button>
+          </div>
+
+          <div className="bg-black/5 dark:bg-[#111] rounded-[2rem] border border-black/5 dark:border-white/5 overflow-hidden">
+            <div className="max-h-[450px] overflow-y-auto custom-scrollbar">
+              {adLogs.length === 0 ? (
+                <div className="py-16 text-center opacity-30 italic text-xs uppercase tracking-widest font-bold">
+                  No ad impression logs found
+                </div>
+              ) : (
+                <table className="w-full text-left border-collapse">
+                  <thead className="sticky top-0 bg-white dark:bg-[#111] z-10 border-b border-black/5 dark:border-white/5">
+                    <tr>
+                      <th className="p-4 text-[9px] font-black uppercase text-black/40 dark:text-white/40">Player</th>
+                      <th className="p-4 text-[9px] font-black uppercase text-black/40 dark:text-white/40">Ad Title / ID</th>
+                      <th className="p-4 text-[9px] font-black uppercase text-black/40 dark:text-white/40">Reward Tier</th>
+                      <th className="p-4 text-[9px] font-black uppercase text-black/40 dark:text-white/40">Timestamp</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-black/5 dark:divide-white/5">
+                    {adLogs.map((log, i) => (
+                      <tr key={log.id || i} className="hover:bg-black/5 dark:hover:bg-white/5 transition-all">
+                        <td className="p-4">
+                          <p className="text-[10px] font-black text-black dark:text-white">{log.userName}</p>
+                          <p className="text-[8px] font-mono text-black/40 dark:text-white/40">ID: {log.userId}</p>
+                        </td>
+                        <td className="p-4">
+                          <p className="text-[10px] font-black text-[#32befa] uppercase tracking-tight">{log.adTitle}</p>
+                          <p className="text-[8px] font-mono text-black/30 dark:text-white/30 font-bold">Ad ID: {log.adId}</p>
+                        </td>
+                        <td className="p-4">
+                          <span className="text-[9px] font-black uppercase px-2 py-1 rounded bg-purple-500/10 text-purple-500 border border-purple-500/10">
+                            Tier {log.rewardType || 'Unknown'}
+                          </span>
+                        </td>
+                        <td className="p-4 text-[8px] font-bold text-black/45 dark:text-white/45">
+                          {new Date(log.timestamp).toLocaleDateString()} {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderMarketingSection = () => {
+    const usedCoupons = coupons.filter(c => c.isUsed).length;
+    const unusedCoupons = coupons.filter(c => !c.isUsed).length;
+
+    return (
+      <div className="space-y-8 pb-32">
+        <div className="flex items-center justify-between">
+           <div>
+              <h2 className="text-2xl font-black uppercase tracking-tighter text-black dark:text-white">Marketing & Growth</h2>
+              <p className="text-[10px] font-bold text-black/30 dark:text-white/30 uppercase tracking-[0.2em]">Coupons and Referral Systems</p>
+           </div>
+        </div>
+
+        {/* Stats Row */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+           <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5">
+              <p className="text-[10px] font-black uppercase text-black/40 dark:text-white/40 mb-1">Total Coupons</p>
+              <h4 className="text-3xl font-black text-primary">{coupons.length}</h4>
+           </div>
+           <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5">
+              <p className="text-[10px] font-black uppercase text-black/40 dark:text-white/40 mb-1">Used Coupons</p>
+              <h4 className="text-3xl font-black text-green-500">{usedCoupons}</h4>
+           </div>
+           <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5">
+              <p className="text-[10px] font-black uppercase text-black/40 dark:text-white/40 mb-1">Total Referrals</p>
+              <h4 className="text-3xl font-black text-[#32befa]">{referralLogs.length}</h4>
+           </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+           {/* Coupon Generator */}
+           <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[2.5rem] border border-black/5 dark:border-white/5 space-y-6">
+              <h3 className="text-lg font-black uppercase flex items-center gap-2">
+                 <Plus size={20} className="text-primary" />
+                 Generate Coupons
+              </h3>
+              <div className="space-y-4">
+                 <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40 ml-2">Custom Code (Optional)</label>
+                    <input 
+                      type="text"
+                      placeholder="e.g. WELCOME100"
+                      value={newCouponForm.code}
+                      onChange={e => setNewCouponForm({...newCouponForm, code: e.target.value})}
+                      className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary transition-all uppercase"
+                    />
+                 </div>
+                 <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                       <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40 ml-2">Coin Value</label>
+                       <input 
+                         type="number"
+                         value={newCouponForm.value}
+                         onChange={e => setNewCouponForm({...newCouponForm, value: parseInt(e.target.value)})}
+                         className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary transition-all"
+                       />
+                    </div>
+                    <div className="space-y-2">
+                       <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40 ml-2">Quantity</label>
+                       <input 
+                         type="number"
+                         min="1"
+                         max="100"
+                         value={newCouponForm.count}
+                         onChange={e => setNewCouponForm({...newCouponForm, count: parseInt(e.target.value)})}
+                         className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary transition-all"
+                       />
+                    </div>
+                 </div>
+                 <button 
+                   onClick={generateCoupons}
+                   className="w-full py-4 bg-primary text-black font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+                 >
+                    <Zap size={18} />
+                    Generate Now
+                 </button>
+              </div>
+           </div>
+
+           {/* Referrals & Growth Settings */}
+           <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[2.5rem] border border-black/5 dark:border-white/5 space-y-6">
+              <h3 className="text-lg font-black uppercase flex items-center gap-2">
+                 <TrendingUp size={20} className="text-[#32befa]" />
+                 Referral Settings
+              </h3>
+              <div className="space-y-6">
+                 <div className="p-6 bg-white/5 dark:bg-black/20 rounded-3xl border border-black/5 dark:border-white/5">
+                    <div className="flex items-center justify-between mb-4">
+                       <span className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">Reward per Referral</span>
+                       <span className="text-xl font-black text-[#32befa] flex items-center gap-1">
+                          <Coins size={20} />
+                          {settings?.referralReward || 500}
+                       </span>
+                    </div>
+                    <p className="text-[9px] text-black/30 dark:text-white/30 font-bold uppercase leading-relaxed mb-6">Both the referrer and the joiner receive this amount upon account creation with code.</p>
+                    <div className="flex gap-2">
+                       {[100, 200, 500, 1000].map(val => (
+                          <button 
+                            key={val}
+                            onClick={async () => {
+                               await update(ref(db, 'settings'), { referralReward: val });
+                            }}
+                            className={cn(
+                               "flex-1 py-3 rounded-xl text-[10px] font-black transition-all",
+                               settings?.referralReward === val ? "bg-[#32befa] text-black" : "bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40 hover:bg-black/10"
+                            )}
+                          >
+                             {val}
+                          </button>
+                       ))}
+                    </div>
+                 </div>
+              </div>
+           </div>
+        </div>
+
+        {/* Coupons List */}
+        <div className="space-y-4">
+           <div className="flex items-center justify-between px-2">
+              <h3 className="text-sm font-black text-black/40 dark:text-white/40 uppercase tracking-widest">Active Coupons</h3>
+              <button 
+                onClick={async () => {
+                   const v = await confirm({ title: 'Delete Unused?', description: 'Delete all unused coupons?', type: 'error' });
+                   if (!v) return;
+                   const unused = coupons.filter(c => !c.isUsed);
+                   const updates: any = {};
+                   unused.forEach(c => updates[`coupons/${c.code}`] = null);
+                   await update(ref(db), updates);
+                }}
+                className="text-[8px] font-black text-red-500 uppercase hover:underline"
+              >
+                 Purge Unused
+              </button>
+           </div>
+           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {coupons.slice().reverse().slice(0, 24).map(c => (
+                 <div key={c.code} className="bg-black/5 dark:bg-[#111] p-4 rounded-2xl border border-black/5 dark:border-white/5 relative group">
+                    <div className="flex justify-between items-start mb-2">
+                       <span className="text-[10px] font-black tracking-widest text-[#32befa] bg-[#32befa]/5 px-2 py-0.5 rounded">{c.value} CR</span>
+                       <button onClick={() => deleteCoupon(c.code)} className="opacity-0 group-hover:opacity-100 p-1 text-red-500/30 hover:text-red-500 transition-all">
+                          <Trash2 size={12} />
+                       </button>
+                    </div>
+                    <code className="block text-sm font-black text-black dark:text-white mb-2 font-mono truncate select-all">{c.code}</code>
+                    <div className="flex items-center justify-between">
+                       <span className={cn(
+                          "text-[8px] font-black uppercase px-2 py-0.5 rounded",
+                          c.isUsed ? "bg-red-500/10 text-red-500" : "bg-green-500/10 text-green-500"
+                       )}>
+                          {c.isUsed ? 'USED' : 'ACTIVE'}
+                       </span>
+                       <span className="text-[8px] font-bold text-black/20 dark:text-white/20">{new Date(c.createdAt).toLocaleDateString()}</span>
+                    </div>
+                 </div>
+              ))}
+              {coupons.length === 0 && <div className="col-span-full py-12 text-center opacity-20 italic">No coupons found</div>}
+           </div>
+        </div>
+
+        {/* Logs Tables */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+           {/* Redemption Logs */}
+           <div className="space-y-4">
+              <div className="flex items-center justify-between px-2">
+                 <h3 className="text-sm font-black text-black/40 dark:text-white/40 uppercase tracking-widest">Redemption History</h3>
+                 <button onClick={clearCouponLogs} className="text-[8px] font-black text-red-500/40 hover:text-red-500 uppercase transition-all">Clear Logs</button>
+              </div>
+              <div className="bg-black/5 dark:bg-[#111] rounded-[2rem] border border-black/5 dark:border-white/5 overflow-hidden">
+                 <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
+                    <table className="w-full text-left border-collapse">
+                       <thead className="sticky top-0 bg-white dark:bg-[#111] z-10 border-b border-black/5 dark:border-white/5">
+                          <tr>
+                             <th className="p-4 text-[9px] font-black uppercase text-black/40 dark:text-white/40">User</th>
+                             <th className="p-4 text-[9px] font-black uppercase text-black/40 dark:text-white/40">Code</th>
+                             <th className="p-4 text-[9px] font-black uppercase text-black/40 dark:text-white/40">Status</th>
+                             <th className="p-4 text-[9px] font-black uppercase text-black/40 dark:text-white/40">Time</th>
+                          </tr>
+                       </thead>
+                       <tbody className="divide-y divide-black/5 dark:divide-white/5">
+                          {couponLogs.map((log, i) => (
+                             <tr key={i} className="hover:bg-black/5 dark:hover:bg-white/5 transition-all">
+                                <td className="p-4">
+                                   <p className="text-[10px] font-black text-black dark:text-white">{log.userName}</p>
+                                   <p className="text-[8px] font-bold text-black/30 dark:text-white/30 truncate max-w-[80px]">@{log.userId}</p>
+                                </td>
+                                <td className="p-4 font-mono text-[10px] font-bold">{log.code}</td>
+                                <td className="p-4">
+                                   <span className={cn(
+                                      "text-[8px] font-black uppercase px-2 py-0.5 rounded",
+                                      log.isSuccess ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
+                                   )}>
+                                      {log.isSuccess ? 'Success' : 'Failed'}
+                                   </span>
+                                </td>
+                                <td className="p-4 text-[8px] font-bold text-black/30 dark:text-white/30">
+                                   {new Date(log.timestamp).toLocaleDateString()} {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </td>
+                             </tr>
+                          ))}
+                       </tbody>
+                    </table>
+                 </div>
+              </div>
+           </div>
+
+           {/* Referral Logs */}
+           <div className="space-y-4">
+              <div className="flex items-center justify-between px-2">
+                 <h3 className="text-sm font-black text-black/40 dark:text-white/40 uppercase tracking-widest">Referral Wins</h3>
+                 <button onClick={clearReferralLogs} className="text-[8px] font-black text-red-500/40 hover:text-red-500 uppercase transition-all">Reset Referrals</button>
+              </div>
+              <div className="bg-black/5 dark:bg-[#111] rounded-[2rem] border border-black/5 dark:border-white/5 overflow-hidden">
+                 <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
+                    <table className="w-full text-left border-collapse">
+                       <thead className="sticky top-0 bg-white dark:bg-[#111] z-10 border-b border-black/5 dark:border-white/5">
+                          <tr>
+                             <th className="p-4 text-[9px] font-black uppercase text-black/40 dark:text-white/40">Referrer</th>
+                             <th className="p-4 text-[9px] font-black uppercase text-black/40 dark:text-white/40">Joiner</th>
+                             <th className="p-4 text-[9px] font-black uppercase text-black/40 dark:text-white/40">Reward</th>
+                             <th className="p-4 text-[9px] font-black uppercase text-black/40 dark:text-white/40">Time</th>
+                          </tr>
+                       </thead>
+                       <tbody className="divide-y divide-black/5 dark:divide-white/5">
+                          {referralLogs.map((log, i) => (
+                             <tr key={i} className="hover:bg-black/5 dark:hover:bg-white/5 transition-all">
+                                <td className="p-4">
+                                   <p className="text-[10px] font-black text-primary">{log.referrerName}</p>
+                                </td>
+                                <td className="p-4">
+                                   <p className="text-[10px] font-black text-black dark:text-white">{log.referredName}</p>
+                                </td>
+                                <td className="p-4">
+                                   <div className="flex items-center gap-1 text-green-500 font-black text-[10px]">
+                                      <TrendingUp size={10} />
+                                      {log.rewardValue}
+                                   </div>
+                                </td>
+                                <td className="p-4 text-[8px] font-bold text-black/30 dark:text-white/30">
+                                   {new Date(log.timestamp).toLocaleDateString()} {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </td>
+                             </tr>
+                          ))}
+                       </tbody>
+                    </table>
+                 </div>
+              </div>
+           </div>
+        </div>
+      </div>
+    );
   };
 
   const renderUserProfile = (u: User) => {
@@ -1335,6 +2258,24 @@ export default function AdminPanel() {
                                  className="bg-primary text-black px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:scale-105 active:scale-95 transition-all"
                                >
                                   Save
+                               </button>
+                            </div>
+                            <div className="pt-2">
+                               <button 
+                                 onClick={async () => {
+                                   const verified = await confirm({
+                                     title: "Unlink Tokens",
+                                     description: "Clear all notification tokens for this player?",
+                                     type: 'confirm'
+                                   });
+                                   if (verified) {
+                                      await remove(ref(db, `fcmTokens/${u.id}`));
+                                      await alert({ title: 'Success', description: 'Tokens cleared', type: 'success' });
+                                   }
+                                 }}
+                                 className="w-full py-2 bg-red-500/10 text-red-500 rounded-xl text-[10px] font-black uppercase hover:bg-red-500 hover:text-white transition-all border border-red-500/20"
+                               >
+                                  Unlink All Tokens
                                </button>
                             </div>
                          </div>
@@ -1772,6 +2713,36 @@ export default function AdminPanel() {
                                  const val = parseInt(e.target.value);
                                  if (!isNaN(val)) {
                                     await update(ref(db, `users/${u.id}/lifelines`), { changeQuiz: val });
+                                 }
+                              }}
+                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                           />
+                        </div>
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-1 ml-1">Poll Lifelines</p>
+                           <input 
+                              type="number"
+                              defaultValue={u.lifelines?.audiencePoll ?? 0}
+                              key={`poll-${u.id}-${u.lifelines?.audiencePoll}`}
+                              onChange={async (e) => {
+                                 const val = parseInt(e.target.value);
+                                 if (!isNaN(val)) {
+                                    await update(ref(db, `users/${u.id}/lifelines`), { audiencePoll: val });
+                                 }
+                              }}
+                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                           />
+                        </div>
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-1 ml-1">Hint Lifelines</p>
+                           <input 
+                              type="number"
+                              defaultValue={u.lifelines?.hint ?? 0}
+                              key={`hint-${u.id}-${u.lifelines?.hint}`}
+                              onChange={async (e) => {
+                                 const val = parseInt(e.target.value);
+                                 if (!isNaN(val)) {
+                                    await update(ref(db, `users/${u.id}/lifelines`), { hint: val });
                                  }
                               }}
                               className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
@@ -2382,6 +3353,357 @@ export default function AdminPanel() {
     );
   };
 
+  const [selectedChatUser, setSelectedChatUser] = useState<string | null>(null);
+
+  const renderSpecialAccessSection = () => {
+    const groupedMessages = specialMessages.reduce((acc, msg) => {
+      if (!acc[msg.userId]) {
+        acc[msg.userId] = {
+          userName: msg.userName,
+          messages: []
+        };
+      }
+      acc[msg.userId].messages.push(msg);
+      return acc;
+    }, {} as Record<string, { userName: string, messages: SpecialMessage[] }>);
+
+    const activeChat = selectedChatUser ? groupedMessages[selectedChatUser] : null;
+
+    return (
+      <div className="flex flex-col md:flex-row gap-6 h-[700px] pb-32">
+        {/* Sidebar List */}
+        <div className="w-full md:w-80 bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/5 rounded-[2.5rem] overflow-hidden flex flex-col">
+          <div className="p-6 border-b border-black/5 dark:border-white/5">
+            <h2 className="text-xl font-black uppercase tracking-tighter text-black dark:text-white">Access Hub</h2>
+            <p className="text-[8px] font-bold text-black/30 dark:text-white/30 uppercase tracking-widest mt-1">Pending Requests</p>
+          </div>
+          <div className="flex-1 overflow-y-auto scrollbar-hide">
+            {Object.keys(groupedMessages).length === 0 && (
+              <div className="p-10 text-center opacity-10">
+                <Shield size={32} className="mx-auto mb-2" />
+                <p className="text-[10px] font-black uppercase">No requests</p>
+              </div>
+            )}
+            {Object.entries(groupedMessages).map(([uId, data]: [string, any]) => (
+              <button 
+                key={uId}
+                onClick={() => setSelectedChatUser(uId)}
+                className={cn(
+                  "w-full p-4 flex items-center gap-3 transition-all border-l-4",
+                  selectedChatUser === uId 
+                    ? "bg-primary/10 border-primary" 
+                    : "border-transparent hover:bg-black/5 dark:hover:bg-white/5"
+                )}
+              >
+                <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-black uppercase text-sm">
+                  {data.userName?.[0] || 'U'}
+                </div>
+                <div className="text-left flex-1 min-w-0">
+                  <p className="font-bold text-xs text-black dark:text-white truncate uppercase">{data.userName}</p>
+                  <p className="text-[8px] font-bold text-black/40 dark:text-white/40 truncate italic">
+                    {data.messages?.[0]?.text || 'No messages'}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[8px] font-black text-primary uppercase">
+                    {(data as any).messages?.length || 0}
+                  </p>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Chat Window */}
+        <div className="flex-1 bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/5 rounded-[2.5rem] overflow-hidden flex flex-col relative shadow-2xl">
+          {activeChat ? (
+            <>
+              {/* WhatsApp Style Header */}
+              <div className="p-6 border-b border-black/5 dark:border-white/5 flex items-center justify-between bg-white/5 backdrop-blur-md">
+                 <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 bg-primary rounded-full flex items-center justify-center text-black font-black uppercase shadow-lg shadow-primary/20">
+                       {activeChat.userName[0]}
+                    </div>
+                    <div>
+                       <h3 className="font-black text-sm uppercase tracking-tight text-black dark:text-white">{activeChat.userName}</h3>
+                       <p className="text-[8px] font-black text-primary uppercase animate-pulse">Requesting Access</p>
+                    </div>
+                 </div>
+                 <button 
+                    onClick={async () => {
+                      const verified = await confirm({ title: "Delete Thread?", description: "Remove all messages for this user?", type: 'error' });
+                      if (verified) {
+                        await remove(ref(db, `specialMessages/${selectedChatUser}`));
+                        setSelectedChatUser(null);
+                      }
+                    }}
+                    className="p-3 text-red-500/40 hover:text-red-500 hover:bg-red-500/10 rounded-2xl transition-all"
+                 >
+                    <Trash2 size={20} />
+                 </button>
+              </div>
+
+              {/* Message History */}
+              <div className="flex-1 overflow-y-auto p-8 space-y-6 scrollbar-hide flex flex-col-reverse">
+                {[...activeChat.messages].map((msg) => (
+                  <div key={msg.id} className="space-y-4">
+                    {/* Player Message */}
+                    <div className="flex items-start gap-3">
+                       <div className="bg-white/80 dark:bg-white/5 border border-black/5 dark:border-white/5 p-4 rounded-[2rem] rounded-tl-none max-w-[80%] relative group shadow-sm transition-all hover:bg-white dark:hover:bg-white/10">
+                          <p className="text-xs font-bold leading-relaxed text-black/80 dark:text-white/80">{msg.text}</p>
+                          <div className="flex items-center justify-between mt-2 gap-4">
+                             <p className="text-[8px] font-black text-black/20 dark:text-white/20 uppercase">
+                               {new Date(msg.timestamp).toLocaleTimeString()}
+                             </p>
+                             <button 
+                                onClick={async () => {
+                                  const newText = prompt("Edit message:", msg.text);
+                                  if (newText) await update(ref(db, `specialMessages/${msg.userId}/${msg.id}`), { text: newText });
+                                }}
+                                className="opacity-0 group-hover:opacity-100 text-[8px] font-black text-primary uppercase transition-all"
+                             >
+                               Edit
+                             </button>
+                          </div>
+                       </div>
+                    </div>
+
+                    {/* Admin Reply */}
+                    {msg.adminReply && (
+                      <div className="flex flex-col items-end gap-1">
+                        <div className="bg-primary p-4 rounded-[2rem] rounded-tr-none max-w-[80%] shadow-lg shadow-primary/20 relative group overflow-hidden">
+                           <p className="text-xs font-black text-black leading-relaxed">{msg.adminReply}</p>
+                           <div className="flex items-center justify-between mt-2 gap-4">
+                              <div className="flex items-center gap-1 text-[8px] font-black text-black/40">
+                                 <Clock size={10} />
+                                 {Math.max(0, Math.ceil(((msg.replyExpiresAt || 0) - Date.now()) / 1000))}s
+                              </div>
+                              <button 
+                                 onClick={async () => {
+                                   await update(ref(db, `specialMessages/${msg.userId}/${msg.id}`), { adminReply: null, replyExpiresAt: null });
+                                 }}
+                                 className="opacity-0 group-hover:opacity-100 text-[8px] font-black text-red-700 uppercase"
+                              >
+                                Delete
+                              </button>
+                           </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Reply Input Trigger */}
+                    {!msg.adminReply && (
+                      <div className="flex justify-center">
+                        <button 
+                          onClick={() => {
+                            const r = prompt("Reply to request (expires in 1 min):");
+                            if (r) update(ref(db, `specialMessages/${msg.userId}/${msg.id}`), { adminReply: r, replyExpiresAt: Date.now() + 60000 });
+                          }}
+                          className="text-[8px] font-black text-primary uppercase py-2 px-4 bg-primary/5 rounded-full border border-primary/20 hover:bg-primary hover:text-black transition-all"
+                        >
+                          Quick Reply
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-20 opacity-10">
+              <MessageSquare size={80} className="mb-6" />
+              <h3 className="text-2xl font-black uppercase tracking-tighter">Select a Request</h3>
+              <p className="text-xs font-bold uppercase tracking-widest mt-2">Manage hidden player access messages</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+
+  const renderDatabaseExplorer = () => {
+    const isObject = (val: any) => typeof val === 'object' && val !== null && !Array.isArray(val);
+    const isArray = (val: any) => Array.isArray(val);
+    
+    return (
+      <div className="space-y-6 pb-32">
+        <div className="flex items-center justify-between px-2">
+           <div>
+              <h2 className="text-2xl font-black uppercase tracking-tighter text-black dark:text-white">Database Explorer</h2>
+              <p className="text-[10px] font-bold text-black/30 dark:text-white/30 uppercase tracking-[0.2em]">Live Realtime Database Management</p>
+           </div>
+           <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setDbExplorerPath([])}
+                className="bg-primary/10 text-primary p-2 rounded-xl border border-primary/20 hover:bg-primary hover:text-black transition-all"
+              >
+                <RotateCcw size={16} />
+              </button>
+           </div>
+        </div>
+
+        {/* Path Breadcrumbs */}
+        <div className="flex items-center gap-2 px-4 py-3 bg-black/5 dark:bg-white/5 rounded-2xl border border-black/5 dark:border-white/5 overflow-x-auto scrollbar-hide">
+           <button 
+             onClick={() => setDbExplorerPath([])}
+             className="text-[10px] font-black uppercase tracking-widest text-primary hover:underline whitespace-nowrap"
+           >
+             ROOT
+           </button>
+           {dbExplorerPath.map((p, i) => (
+             <React.Fragment key={i}>
+                <ChevronRight size={12} className="text-black/20 dark:text-white/20 shrink-0" />
+                <button 
+                  onClick={() => setDbExplorerPath(dbExplorerPath.slice(0, i + 1))}
+                  className="text-[10px] font-black uppercase tracking-widest text-primary hover:underline whitespace-nowrap"
+                >
+                  {p}
+                </button>
+             </React.Fragment>
+           ))}
+        </div>
+
+        {/* Data View */}
+        <div className="bg-white dark:bg-[#0a0a0a] border border-black/5 dark:border-white/5 rounded-[2.5rem] overflow-hidden shadow-2xl">
+           <div className="p-6 border-b border-black/5 dark:border-white/5 bg-black/[0.02] dark:bg-white/[0.02] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                 <div className="w-10 h-10 bg-primary/20 rounded-xl flex items-center justify-center text-primary">
+                    {dbExplorerPath.length === 0 ? <Database size={20} /> : <Folder size={20} />}
+                 </div>
+                 <div>
+                    <h3 className="font-black text-sm uppercase tracking-tight text-black dark:text-white">
+                       {dbExplorerPath.length === 0 ? 'Home' : dbExplorerPath[dbExplorerPath.length - 1]}
+                    </h3>
+                    <p className="text-[8px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">
+                       {dbExplorerPath.length === 0 ? 'Global Tree' : `Path: /${dbExplorerPath.join('/')}`}
+                    </p>
+                 </div>
+              </div>
+              <button 
+                onClick={async () => {
+                  const key = prompt("Enter Key Name:");
+                  if (!key) return;
+                  const value = prompt("Enter Value (JSON supported):");
+                  if (value === null) return;
+                  let parsedValue: any = value;
+                  try {
+                    parsedValue = JSON.parse(value);
+                  } catch (e) {}
+                  
+                  await set(ref(db, `${dbExplorerPath.join('/')}/${key}`), parsedValue);
+                }}
+                className="bg-primary text-black px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all"
+              >
+                <Plus size={14} /> Add Property
+              </button>
+           </div>
+
+           <div className="divide-y divide-black/5 dark:divide-white/5">
+              {dbExplorerData === null || dbExplorerData === undefined ? (
+                 <div className="p-20 text-center opacity-10">
+                    <Database size={64} className="mx-auto mb-4" />
+                    <p className="font-black uppercase tracking-widest text-black dark:text-white">No data found at this path</p>
+                 </div>
+              ) : typeof dbExplorerData !== 'object' ? (
+                 <div className="p-10 text-center">
+                    <div className="bg-primary/5 p-6 rounded-3xl border border-primary/20 inline-block">
+                       <p className="text-2xl font-black text-primary font-mono">{JSON.stringify(dbExplorerData)}</p>
+                       <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mt-2">
+                          Type: {typeof dbExplorerData}
+                       </p>
+                       <div className="flex gap-2 mt-6">
+                          <button 
+                             onClick={async () => {
+                               const newValue = prompt("Edit Value:", JSON.stringify(dbExplorerData));
+                               if (newValue === null) return;
+                               let parsed: any = newValue;
+                               try { parsed = JSON.parse(newValue); } catch (e) {}
+                               await set(ref(db, dbExplorerPath.join('/')), parsed);
+                             }}
+                             className="flex-1 bg-primary text-black py-3 rounded-xl font-black text-[10px] uppercase tracking-widest"
+                          >
+                             Update
+                          </button>
+                          <button 
+                             onClick={async () => {
+                               if (await confirm({ title: "Delete Node?", description: "This will remove the current value.", type: 'error' })) {
+                                  await remove(ref(db, dbExplorerPath.join('/')));
+                                  setDbExplorerPath(prev => prev.slice(0, -1));
+                               }
+                             }}
+                             className="px-6 bg-red-500/10 text-red-500 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest"
+                          >
+                             <Trash2 size={14} />
+                          </button>
+                       </div>
+                    </div>
+                 </div>
+              ) : (
+                 Object.entries(dbExplorerData).map(([key, value]: [string, any]) => (
+                    <div key={key} className="group p-4 flex items-center hover:bg-primary/[0.02] transition-colors gap-4">
+                       <div className="w-8 h-8 rounded-lg bg-black/5 dark:bg-white/5 flex items-center justify-center text-black/30 dark:text-white/30 group-hover:bg-primary/20 group-hover:text-primary transition-all">
+                          {isObject(value) || isArray(value) ? <Folder size={14} /> : <FileText size={14} />}
+                       </div>
+                       
+                       <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                             <span className="font-black text-xs text-black dark:text-white uppercase tracking-tight truncate">{key}</span>
+                             <span className="text-[8px] font-bold text-black/20 dark:text-white/20 uppercase tracking-[0.2em] font-mono shrink-0">
+                                {typeof value} {isArray(value) ? '[]' : ''}
+                             </span>
+                          </div>
+                          {!isObject(value) && !isArray(value) && (
+                             <p className="text-[10px] font-bold text-black/50 dark:text-white/50 truncate font-mono">
+                                {JSON.stringify(value)}
+                             </p>
+                          )}
+                       </div>
+
+                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                          <button 
+                             onClick={async () => {
+                               const newValue = prompt(`Update value for "${key}":`, JSON.stringify(value));
+                               if (newValue === null) return;
+                               let parsed: any = newValue;
+                               try { parsed = JSON.parse(newValue); } catch (e) {}
+                               await set(ref(db, `${dbExplorerPath.join('/')}/${key}`), parsed);
+                             }}
+                             className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                             title="Edit Value"
+                          >
+                             <Edit2 size={14} />
+                          </button>
+                          <button 
+                             onClick={async () => {
+                               if (await confirm({ title: `Delete "${key}"?`, description: "This cannot be undone.", type: 'error' })) {
+                                  await remove(ref(db, `${dbExplorerPath.join('/')}/${key}`));
+                               }
+                             }}
+                             className="p-2 text-red-500/40 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
+                             title="Delete"
+                          >
+                             <Trash2 size={14} />
+                          </button>
+                          {(isObject(value) || isArray(value)) && (
+                             <button 
+                               onClick={() => setDbExplorerPath([...dbExplorerPath, key])}
+                               className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors ml-2"
+                               title="Open Folder"
+                             >
+                                <ChevronRight size={14} />
+                             </button>
+                          )}
+                       </div>
+                    </div>
+                 ))
+              )}
+           </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderSection = () => {
     switch(activeSubTab) {
       case 'users':
@@ -2448,38 +3770,61 @@ export default function AdminPanel() {
                        </button>
                     </motion.div>
                   )}
-                  <div className="space-y-2">
+                  <div className="space-y-4">
                     {realPlayers.length === 0 ? (
                       <p className="text-white/20 italic p-4 text-center">No real players found</p>
                     ) : (
                       realPlayers.map(u => (
-                        <div 
+                        <motion.div 
                           key={u.id} 
+                          whileHover={{ scale: 1.01 }}
+                          whileTap={{ scale: 0.99 }}
                           onClick={() => setSelectedUser(u)}
-                          className="w-full bg-black/5 dark:bg-[#111] p-4 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between hover:bg-black/10 dark:hover:bg-white/5 transition-all group cursor-pointer"
+                          className="w-full bg-white dark:bg-[#111] p-4 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between hover:border-primary/20 transition-all group cursor-pointer shadow-sm"
                         >
-                          <div className="text-left">
-                            <p className="font-bold flex items-center gap-2 text-black dark:text-white">
-                              {u.name}
-                              {u.status === 'pending' && <span className="text-[8px] bg-yellow-500/20 text-yellow-500 px-1.5 py-0.5 rounded font-black uppercase">PENDING</span>}
-                              {u.extraTriesRequested && <span className="text-[8px] bg-primary/20 text-primary px-1.5 py-0.5 rounded font-black uppercase">RESET REQ</span>}
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  // Link token logic or just open detail? The error log said this was "Link FCM Token" button
-                                  // In the actual code it just sets selected user... wait
-                                  setSelectedUser(u);
-                                }}
-                                className="opacity-0 group-hover:opacity-100 p-1 bg-primary/10 text-primary rounded-md hover:bg-primary hover:text-black transition-all"
-                                title="Link FCM Token"
-                              >
-                                <Bell size={10} />
-                              </button>
+                          <div className="text-left flex-1">
+                            <div className="flex items-center justify-between">
+                              <p className="font-bold flex items-center gap-2 text-black dark:text-white text-sm truncate">
+                                {u.name}
+                                {u.status === 'pending' && <span className="text-[8px] bg-yellow-500/20 text-yellow-500 px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest">PENDING</span>}
+                                {u.extraTriesRequested && <span className="text-[8px] bg-primary/20 text-primary px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest">RESET REQ</span>}
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[9px] font-black text-primary/60 dark:text-primary uppercase tracking-widest bg-primary/5 dark:bg-primary/10 px-2 py-0.5 rounded-full border border-primary/10">
+                                  KEY: {u.password || 'N/A'}
+                                </span>
+                                {u.isBot && (
+                                  <button 
+                                     onClick={async (e) => {
+                                        e.stopPropagation();
+                                        const verified = await confirm({
+                                           title: "Impersonate Bot",
+                                           description: `Do you want to login as bot "${u.name}"?`,
+                                           type: 'confirm'
+                                        });
+                                        if (verified) {
+                                           impersonateBot(u);
+                                           await alert({ title: 'Success', description: `Now playing as ${u.name}`, type: 'success' });
+                                        }
+                                     }}
+                                     className="p-1 px-2 bg-primary text-black rounded-full hover:scale-110 transition-all"
+                                     title="Play as Bot"
+                                  >
+                                     <Play size={10} fill="currentColor" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            <p className="text-[10px] text-black/40 dark:text-white/40 font-bold uppercase tracking-widest mt-1 flex items-center gap-2">
+                               <span className="text-primary truncate max-w-[120px]">@{u.username || 'no_username'}</span>
+                               <span className="opacity-20">•</span>
+                               <span>RANK #{getUserRank(u.id)}</span>
+                               <span className="opacity-20">•</span>
+                               <span className="text-primary">{u.xp} XP</span>
                             </p>
-                            <p className="text-[10px] text-black/40 dark:text-white/40 font-bold uppercase tracking-widest">RANK #{getUserRank(u.id)} • {u.xp} XP</p>
                           </div>
-                          <ChevronRight size={16} className="text-black/10 dark:text-white/10 group-hover:text-primary transition-all group-hover:translate-x-1" />
-                        </div>
+                          <ChevronRight size={20} className="text-black/10 dark:text-white/10 group-hover:text-primary transition-all group-hover:translate-x-1 ml-4" />
+                        </motion.div>
                       ))
                     )}
                   </div>
@@ -2489,32 +3834,71 @@ export default function AdminPanel() {
                   <div className="flex items-center justify-between px-2">
                      <h3 className="text-xl font-black uppercase tracking-tighter">Bot Players ({botsList.length})</h3>
                   </div>
-                  <div className="grid grid-cols-1 gap-2 max-h-[500px] overflow-y-auto scrollbar-hide pr-1">
+                  <div className="grid grid-cols-1 gap-3 max-h-[600px] overflow-y-auto scrollbar-hide pr-1">
                     {botsList.length === 0 ? (
                        <p className="text-center p-8 text-white/10 italic">Zero bots active</p>
                     ) : (
                        botsList.map(b => (
-                          <div key={b.id} className="bg-black/40 p-4 rounded-2xl border border-white/5 flex items-center justify-between">
-                             <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 bg-white/5 rounded-lg flex items-center justify-center text-white/20">
-                                   <Bot size={16} />
+                          <motion.div 
+                            key={b.id} 
+                            whileHover={{ scale: 1.01 }}
+                            whileTap={{ scale: 0.99 }}
+                            className="bg-white/5 dark:bg-black/40 p-4 rounded-2xl border border-white/5 flex items-center justify-between group shadow-xl"
+                          >
+                             <div className="flex items-center gap-3 flex-1 min-w-0">
+                                <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center text-primary border border-white/5">
+                                   <Bot size={20} />
                                 </div>
-                                <div className="text-left">
-                                   <p className="font-bold text-sm tracking-tight">{b.name}</p>
-                                   <p className="text-[10px] font-bold text-white/20 uppercase">{b.xp} XP • RANK #{getUserRank(b.id)}</p>
+                                <div className="text-left flex-1 truncate">
+                                   <div className="flex items-center gap-2">
+                                      <p className="font-black text-sm tracking-tight truncate text-white uppercase">{b.name}</p>
+                                      <span className="text-[8px] font-black text-primary uppercase tracking-widest bg-primary/10 px-1.5 py-0.5 rounded">@{b.username}</span>
+                                   </div>
+                                   <p className="text-[9px] font-bold text-white/40 uppercase tracking-widest mt-1 flex items-center gap-2">
+                                      <span>{b.xp} XP</span>
+                                      <span className="opacity-20">•</span>
+                                      <span>RANK #{getUserRank(b.id)}</span>
+                                      <span className="opacity-20">•</span>
+                                      <span className="text-primary font-black">KEY: {b.password || 'BOT'}</span>
+                                   </p>
                                 </div>
                              </div>
-                             <button onClick={() => deleteUser(b.id)} className="p-2 text-white/10 hover:text-red-500 transition-colors">
-                                <Trash2 size={16} />
-                             </button>
-                          </div>
+                             <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all ml-3">
+                                <motion.button 
+                                   whileHover={{ scale: 1.1 }}
+                                   whileTap={{ scale: 0.9 }}
+                                   onClick={async () => {
+                                      const verified = await confirm({
+                                         title: "Impersonate Bot",
+                                         description: `Do you want to login as bot "${b.name}"?`,
+                                         type: 'confirm'
+                                      });
+                                      if (verified) {
+                                         impersonateBot(b);
+                                         await alert({ title: 'Success', description: `Now playing as ${b.name}`, type: 'success' });
+                                      }
+                                   }}
+                                   className="w-10 h-10 bg-primary text-black rounded-xl flex items-center justify-center shadow-lg shadow-primary/20"
+                                   title="Play as Bot"
+                                >
+                                   <Play size={16} fill="currentColor" />
+                                </motion.button>
+                                <button 
+                                   onClick={() => deleteUser(b.id)}
+                                   className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center text-white/40 hover:text-red-500 hover:bg-red-500/10 transition-all border border-white/5"
+                                   title="Delete Bot"
+                                >
+                                   <Trash2 size={16} />
+                                </button>
+                             </div>
+                          </motion.div>
                        ))
                     )}
-                  </div>
-               </div>
-            </div>
-          </div>
-        );
+                 </div>
+              </div>
+           </div>
+        </div>
+      );
       case 'topics':
         const currentTopic = topics.find(t => t.id === editingTopicId);
         const currentNode = getCurrentNode();
@@ -2677,21 +4061,32 @@ export default function AdminPanel() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {topics.map((t, tIdx) => (
-                <div key={`${t.id}-${tIdx}`} className="bg-black/5 dark:bg-[#111] p-5 rounded-[2rem] border border-black/5 dark:border-white/5 flex justify-between items-center group">
-                  <div className="flex-1 truncate pr-4">
-                    <span className="font-black text-black dark:text-white uppercase tracking-tighter text-lg truncate block">{t.name}</span>
-                    <div className="flex flex-wrap gap-2 mt-1">
-                      {t.children && <span className="text-[8px] font-black uppercase tracking-widest bg-[#32befa]/10 text-[#32befa] px-2 py-0.5 rounded-full">{Object.keys(t.children).length} Sub-topics</span>}
+                <motion.div 
+                  key={`${t.id}-${tIdx}`} 
+                  whileHover={{ scale: 1.02 }}
+                  className="bg-white dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/10 flex justify-between items-center group shadow-sm hover:border-primary/20 transition-all font-sans"
+                >
+                  <div className="flex-1 truncate pr-4 text-left">
+                    <span className="font-black text-black dark:text-white uppercase tracking-tighter text-base truncate block">{t.name}</span>
+                    <div className="flex flex-wrap gap-2 mt-1.5">
+                      {t.children && <span className="text-[10px] font-black uppercase tracking-widest bg-primary/10 text-primary px-2 py-0.5 rounded-full border border-primary/10">{Object.keys(t.children).length} Sub-topics</span>}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <div className="flex flex-col gap-1 mr-2">
-                       <button onClick={() => moveTopic(t.id, 'up')} className="text-black/20 dark:text-white/20 hover:text-primary transition-all p-0.5 bg-black/5 dark:bg-white/5 rounded"><ChevronUp size={12} /></button>
-                       <button onClick={() => moveTopic(t.id, 'down')} className="text-black/20 dark:text-white/20 hover:text-primary transition-all p-0.5 bg-black/5 dark:bg-white/5 rounded"><ChevronDown size={12} /></button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex flex-col gap-1 mr-1">
+                       <button onClick={() => moveTopic(t.id, 'up')} className="text-black/20 dark:text-white/20 hover:text-primary transition-all p-1 bg-black/5 dark:bg-white/5 rounded-lg"><ChevronUp size={14} /></button>
+                       <button onClick={() => moveTopic(t.id, 'down')} className="text-black/20 dark:text-white/20 hover:text-primary transition-all p-1 bg-black/5 dark:bg-white/5 rounded-lg"><ChevronDown size={14} /></button>
                     </div>
-                    <button onClick={() => { setEditingTopicId(t.id); setTopicPath([]); }} className="bg-[#32befa]/10 text-[#32befa] px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all">Manage</button>
+                    <motion.button 
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => { setEditingTopicId(t.id); setTopicPath([]); }} 
+                      className="bg-primary text-black px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-primary/20"
+                    >
+                      Manage
+                    </motion.button>
                     <button onClick={async () => { 
                       const verified = await confirm({
                         title: "Delete Topic",
@@ -2699,9 +4094,9 @@ export default function AdminPanel() {
                         type: 'error'
                       });
                       if(verified) remove(ref(db, `topics/${t.id}`)); 
-                    }} className="text-red-500/20 group-hover:text-red-500 transition-all p-2"><Trash2 size={16} /></button>
+                    }} className="text-black/10 dark:text-white/10 group-hover:text-red-500 transition-all p-2"><Trash2 size={20} /></button>
                   </div>
-                </div>
+                </motion.div>
               ))}
             </div>
           </div>
@@ -3416,8 +4811,9 @@ export default function AdminPanel() {
                           opt3En: '', opt3Hi: '',
                           opt4En: '', opt4Hi: '',
                           correct: 1, topicId: '', 
-                          subTopicId: '', subSubTopicId: '',
-                          explanationEn: '', explanationHi: ''
+                          hintEn: '', hintHi: '',
+                          questionImage: '',
+                          opt1Image: '', opt2Image: '', opt3Image: '', opt4Image: ''
                         });
                       }}
                       className="ml-auto text-xs font-black text-red-500 hover:underline uppercase"
@@ -3431,25 +4827,41 @@ export default function AdminPanel() {
                     <input type="text" placeholder="Question (EN)" value={newQuiz.questionEn} onChange={e => setNewQuiz({...newQuiz, questionEn: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-4 rounded-xl outline-none focus:border-[#32befa] transition-all text-sm text-black dark:text-white" />
                     <input type="text" placeholder="Question (HI)" value={newQuiz.questionHi} onChange={e => setNewQuiz({...newQuiz, questionHi: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-4 rounded-xl outline-none focus:border-[#32befa] transition-all text-sm text-black dark:text-white" />
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <input type="text" placeholder="Opt 1 (EN)" value={newQuiz.opt1En} onChange={e => setNewQuiz({...newQuiz, opt1En: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
-                    <input type="text" placeholder="Opt 1 (HI)" value={newQuiz.opt1Hi} onChange={e => setNewQuiz({...newQuiz, opt1Hi: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <input type="text" placeholder="Opt 2 (EN)" value={newQuiz.opt2En} onChange={e => setNewQuiz({...newQuiz, opt2En: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
-                    <input type="text" placeholder="Opt 2 (HI)" value={newQuiz.opt2Hi} onChange={e => setNewQuiz({...newQuiz, opt2Hi: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <input type="text" placeholder="Opt 3 (EN)" value={newQuiz.opt3En} onChange={e => setNewQuiz({...newQuiz, opt3En: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
-                    <input type="text" placeholder="Opt 3 (HI)" value={newQuiz.opt3Hi} onChange={e => setNewQuiz({...newQuiz, opt3Hi: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <input type="text" placeholder="Opt 4 (EN)" value={newQuiz.opt4En} onChange={e => setNewQuiz({...newQuiz, opt4En: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
-                    <input type="text" placeholder="Opt 4 (HI)" value={newQuiz.opt4Hi} onChange={e => setNewQuiz({...newQuiz, opt4Hi: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                  <input type="text" placeholder="Question Image URL" value={newQuiz.questionImage} onChange={e => setNewQuiz({...newQuiz, questionImage: e.target.value})} className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                  
+                  <div className="space-y-4 pt-4 border-t border-black/5 dark:border-white/5">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <input type="text" placeholder="Opt 1 (EN)" value={newQuiz.opt1En} onChange={e => setNewQuiz({...newQuiz, opt1En: e.target.value})} className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                        <input type="text" placeholder="Opt 1 (HI)" value={newQuiz.opt1Hi} onChange={e => setNewQuiz({...newQuiz, opt1Hi: e.target.value})} className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                        <input type="text" placeholder="Opt 1 Image URL" value={newQuiz.opt1Image} onChange={e => setNewQuiz({...newQuiz, opt1Image: e.target.value})} className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-2 rounded-lg outline-none text-[10px] text-black dark:text-white" />
+                      </div>
+                      <div className="space-y-2">
+                        <input type="text" placeholder="Opt 2 (EN)" value={newQuiz.opt2En} onChange={e => setNewQuiz({...newQuiz, opt2En: e.target.value})} className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                        <input type="text" placeholder="Opt 2 (HI)" value={newQuiz.opt2Hi} onChange={e => setNewQuiz({...newQuiz, opt2Hi: e.target.value})} className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                        <input type="text" placeholder="Opt 2 Image URL" value={newQuiz.opt2Image} onChange={e => setNewQuiz({...newQuiz, opt2Image: e.target.value})} className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-2 rounded-lg outline-none text-[10px] text-black dark:text-white" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <input type="text" placeholder="Opt 3 (EN)" value={newQuiz.opt3En} onChange={e => setNewQuiz({...newQuiz, opt3En: e.target.value})} className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                        <input type="text" placeholder="Opt 3 (HI)" value={newQuiz.opt3Hi} onChange={e => setNewQuiz({...newQuiz, opt3Hi: e.target.value})} className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                        <input type="text" placeholder="Opt 3 Image URL" value={newQuiz.opt3Image} onChange={e => setNewQuiz({...newQuiz, opt3Image: e.target.value})} className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-2 rounded-lg outline-none text-[10px] text-black dark:text-white" />
+                      </div>
+                      <div className="space-y-2">
+                        <input type="text" placeholder="Opt 4 (EN)" value={newQuiz.opt4En} onChange={e => setNewQuiz({...newQuiz, opt4En: e.target.value})} className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                        <input type="text" placeholder="Opt 4 (HI)" value={newQuiz.opt4Hi} onChange={e => setNewQuiz({...newQuiz, opt4Hi: e.target.value})} className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                        <input type="text" placeholder="Opt 4 Image URL" value={newQuiz.opt4Image} onChange={e => setNewQuiz({...newQuiz, opt4Image: e.target.value})} className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-2 rounded-lg outline-none text-[10px] text-black dark:text-white" />
+                      </div>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <input type="text" placeholder="Explanation (EN)" value={newQuiz.explanationEn} onChange={e => setNewQuiz({...newQuiz, explanationEn: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
                     <input type="text" placeholder="Explanation (HI)" value={newQuiz.explanationHi} onChange={e => setNewQuiz({...newQuiz, explanationHi: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <input type="text" placeholder="Hint (EN)" value={newQuiz.hintEn} onChange={e => setNewQuiz({...newQuiz, hintEn: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
+                    <input type="text" placeholder="Hint (HI)" value={newQuiz.hintHi} onChange={e => setNewQuiz({...newQuiz, hintHi: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
                   </div>
                   <div className="grid grid-cols-1 gap-3">
                     <select value={newQuiz.correct} onChange={e => setNewQuiz({...newQuiz, correct: parseInt(e.target.value)})} className="flex-1 bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl text-xs font-bold text-black/60 dark:text-white/60">
@@ -3551,7 +4963,7 @@ export default function AdminPanel() {
                 <textarea 
                   value={bulkText}
                   onChange={e => setBulkText(e.target.value)}
-                  placeholder="Format: ID, Q_EN, Q_HI, O1_EN, O1_HI, O2_EN, O2_HI, O3_EN, O3_HI, O4_EN, O4_HI, Correct, Topic, SubTopic, SubSubTopic, Class, Subject, Exp_EN, Exp_HI"
+                  placeholder="Format: ID, Q_EN, Q_HI, O1_EN, O1_HI, O2_EN, O2_HI, O3_EN, O3_HI, O4_EN, O4_HI, Correct, Topic, Exp_EN, Exp_HI"
                   className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-4 rounded-2xl h-48 outline-none focus:border-[#32befa] transition-all text-[10px] font-mono leading-relaxed text-black dark:text-white opacity-60 focus:opacity-100"
                 />
                 <button onClick={addBulkQuizzes} className="w-full mt-4 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-black dark:text-white font-black p-4 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 transition-all">BATCH PROCESS</button>
@@ -3560,55 +4972,263 @@ export default function AdminPanel() {
 
             {/* List Section */}
             <div className="space-y-4">
-               <div className="flex items-center justify-between">
+               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                  <h3 className="font-black text-sm uppercase tracking-widest text-black/40 dark:text-white/40">Registered Quizzes ({quizzes.length})</h3>
-                 <div className="flex items-center gap-4">
+                 <div className="flex items-center gap-2 flex-wrap">
+                    <button 
+                      onClick={() => {
+                        if (selectedQuizKeys.length === quizzes.length) {
+                          setSelectedQuizKeys([]);
+                        } else {
+                          const allKeys = quizzes.map(q => `${q.topicId}_${q.id}`);
+                          setSelectedQuizKeys(allKeys);
+                        }
+                      }}
+                      className="text-[8px] font-black bg-[#32befa]/20 text-[#32befa] px-3 py-1.5 rounded-lg border border-[#32befa]/20 hover:bg-[#32befa]/30 transition-all uppercase"
+                    >
+                      {selectedQuizKeys.length === quizzes.length ? 'Deselect All' : 'Select All'}
+                    </button>
+
+                    {/* Bulk Selection/Deselection of Entire Topics including Sub-topics */}
+                    <select
+                      onChange={(e) => {
+                        const targetTopicId = e.target.value;
+                        if (!targetTopicId) return;
+                        const matchingKeys = quizzes
+                          .filter(q => q.topicId === targetTopicId)
+                          .map(q => `${q.topicId}_${q.id}`);
+                        
+                        setSelectedQuizKeys(prev => {
+                          const union = new Set([...prev, ...matchingKeys]);
+                          return Array.from(union);
+                        });
+                        e.target.value = '';
+                      }}
+                      className="text-[8px] font-black bg-[#32befa]/10 hover:bg-[#32befa]/20 text-[#32befa] px-2 py-1.5 rounded-lg border border-[#32befa]/20 transition-all uppercase cursor-pointer outline-none max-w-[150px] truncate"
+                    >
+                      <option value="" className="text-black bg-white dark:bg-zinc-900 dark:text-zinc-300 font-bold">Select Entire Topic...</option>
+                      {allFlattenedTopics.map(t => (
+                        <option key={`sel-${t.id}`} value={t.id} className="text-black bg-white dark:bg-zinc-900 dark:text-zinc-300">
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      onChange={(e) => {
+                        const targetTopicId = e.target.value;
+                        if (!targetTopicId) return;
+                        const matchingKeys = quizzes
+                          .filter(q => q.topicId === targetTopicId)
+                          .map(q => `${q.topicId}_${q.id}`);
+                        
+                        setSelectedQuizKeys(prev => prev.filter(key => !matchingKeys.includes(key)));
+                        e.target.value = '';
+                      }}
+                      className="text-[8px] font-black bg-red-500/10 hover:bg-red-550/20 text-red-500 px-2 py-1.5 rounded-lg border border-red-500/20 transition-all uppercase cursor-pointer outline-none max-w-[150px] truncate"
+                    >
+                      <option value="" className="text-black bg-white dark:bg-zinc-900 dark:text-zinc-300 font-bold">Deselect Entire Topic...</option>
+                      {allFlattenedTopics.map(t => (
+                        <option key={`desel-${t.id}`} value={t.id} className="text-black bg-white dark:bg-zinc-900 dark:text-zinc-300">
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
                     <button onClick={reindexQuizzes} className="text-[8px] font-black bg-yellow-500/10 text-yellow-500 px-3 py-1.5 rounded-lg border border-yellow-500/20 hover:bg-yellow-500/20 transition-all uppercase">Re-index IDs</button>
                     <span className="text-[10px] font-bold text-[#32befa]">LATEST UPLOADS</span>
                  </div>
                </div>
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 {quizzes.slice().reverse().map(q => (
-                   <div key={q.id} className="bg-black/5 dark:bg-black/60 border border-black/5 dark:border-white/5 p-5 rounded-[2rem] group relative overflow-hidden">
-                      <div className="absolute top-0 left-0 w-1 h-full bg-[#32befa] opacity-0 group-hover:opacity-100 transition-all" />
-                      <div className="flex justify-between items-start mb-4">
-                        <div className="flex items-center gap-2">
-                           {!isNaN(parseInt(q.id)) && (
-                              <span className="w-5 h-5 flex items-center justify-center bg-[#32befa] text-black text-[10px] font-black rounded-lg">
-                                 {q.id}
-                              </span>
-                           )}
-                           <span className="text-[8px] bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40 px-2 py-0.5 rounded font-black uppercase tracking-widest">{q.topicId}</span>
-                           {q.subTopicId && <span className="text-[8px] bg-[#32befa]/10 text-[#32befa] px-2 py-0.5 rounded font-black uppercase tracking-widest">{q.subTopicId}</span>}
-                           {q.subSubTopicId && <span className="text-[8px] bg-yellow-500/10 text-yellow-500 px-2 py-0.5 rounded font-black uppercase tracking-widest">{q.subSubTopicId}</span>}
-                        </div>
-                        <div className="flex gap-2">
-                           <button onClick={() => editQuizInForm(q)} className="text-black/10 dark:text-white/10 hover:text-primary transition-colors"><Edit2 size={16} /></button>
-                           <button onClick={async () => {
-                             const verified = await confirm({
-                               title: "Delete Quiz",
-                               description: 'Delete this quiz?',
-                               type: 'error'
-                             });
-                             if(verified) {
-                               await remove(ref(db, `topicQuizzes/${q.topicId}/${q.id}`));
-                             }
-                           }} className="text-black/10 dark:text-white/10 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
-                        </div>
-                      </div>
-                      <h4 className="font-bold text-sm leading-tight mb-4 text-black dark:text-white">{q.question?.en || 'Untitled Question'}</h4>
-                      <div className="grid grid-cols-2 gap-2">
-                        {q.options?.en?.map((opt, i) => (
-                           <div key={`${q.id}-opt-${i}`} className={cn(
-                             "p-2 rounded-xl text-[10px] font-bold truncate",
-                             i === q.correctAnswerIndex ? "bg-green-500/10 text-green-500 border border-green-500/20" : "bg-black/5 dark:bg-white/5 text-black/20 dark:text-white/20"
-                           )}>
-                             {opt}
-                           </div>
-                        ))}
-                      </div>
+
+               {/* Bulk actions bar if items are selected */}
+               {selectedQuizKeys.length > 0 && (
+                 <div className="sticky top-0 z-50 bg-black/95 dark:bg-zinc-950 text-white p-4 rounded-3xl flex flex-col lg:flex-row lg:items-center justify-between gap-4 shadow-2xl border border-white/10 backdrop-blur-lg animate-in slide-in-from-top duration-200">
+                   <div className="flex items-center gap-3">
+                     <span className="bg-[#32befa] text-black w-6 h-6 rounded-full flex items-center justify-center text-xs font-black animate-scale">{selectedQuizKeys.length}</span>
+                     <div>
+                       <span className="text-xs font-black uppercase tracking-widest block text-[#32befa]">Quizzes Selected</span>
+                       <span className="text-[10px] text-zinc-400">Topic Transfer & Bulk Delete Options</span>
+                     </div>
                    </div>
-                 ))}
+
+                   {/* Actions Controls container */}
+                   <div className="flex flex-wrap items-center gap-3">
+                     {/* Move Topic section */}
+                     <div className="flex items-center gap-2 bg-white/5 p-1 rounded-2xl border border-white/10">
+                       <select 
+                         value={bulkTargetTopicId} 
+                         onChange={(e) => setBulkTargetTopicId(e.target.value)}
+                         className="bg-transparent text-white border-0 text-[10px] font-bold outline-none py-1.5 px-3 min-w-[140px] focus:ring-0 cursor-pointer"
+                       >
+                         <option value="" className="text-black bg-white">Move to Topic/Node...</option>
+                         {allFlattenedTopics.map(t => (
+                           <option key={t.id} value={t.id} className="text-black bg-white">
+                             {t.label}
+                           </option>
+                         ))}
+                       </select>
+                       <button 
+                         onClick={async () => {
+                           if (!bulkTargetTopicId) {
+                             await alert({
+                               title: "Notice",
+                               description: "Please select a target topic / node from the dropdown.",
+                               type: "error"
+                             });
+                             return;
+                           }
+                           const targetTopic = allFlattenedTopics.find(t => t.id === bulkTargetTopicId);
+                           const targetLabel = targetTopic ? targetTopic.name : bulkTargetTopicId;
+                           
+                           const verified = await confirm({
+                             title: "Bulk Relocate Quizzes",
+                             description: `Relocate the ${selectedQuizKeys.length} selected quizzes to topic/node "${targetLabel}"?`,
+                             type: 'error'
+                           });
+                           
+                           if (verified) {
+                             const promises = selectedQuizKeys.map(async (key) => {
+                               const [oldTopicId, id] = key.split('_');
+                               const q = quizzes.find(item => `${item.topicId}_${item.id}` === key);
+                               if (q) {
+                                 const updatedQuiz = { ...q, topicId: bulkTargetTopicId };
+                                 // 1. Set at the new topic location
+                                 await set(ref(db, `topicQuizzes/${bulkTargetTopicId}/${id}`), updatedQuiz);
+                                 // 2. Remove from the old topic location
+                                 await remove(ref(db, `topicQuizzes/${oldTopicId}/${id}`));
+                               }
+                             });
+                             await Promise.all(promises);
+                             setSelectedQuizKeys([]);
+                             setBulkTargetTopicId('');
+                             await alert({
+                               title: "Success",
+                               description: `Successfully relocated ${promises.length} quizzes to "${targetLabel}".`,
+                               type: 'success'
+                             });
+                           }
+                         }}
+                         disabled={!bulkTargetTopicId}
+                         className={cn(
+                           "text-[10px] font-black uppercase py-1.5 px-4 rounded-xl flex items-center gap-1.5 transition-all text-black",
+                           bulkTargetTopicId 
+                             ? "bg-[#32befa] hover:bg-[#28afd9] active:scale-95 cursor-pointer" 
+                             : "bg-zinc-800 text-zinc-500 cursor-not-allowed border border-white/5"
+                         )}
+                       >
+                          <Folder size={12} /> Move
+                       </button>
+                     </div>
+
+                     {/* Action Separator in desktop */}
+                     <div className="hidden lg:block w-px h-6 bg-white/10" />
+
+                     {/* Delete option */}
+                     <button 
+                       onClick={async () => {
+                         const verified = await confirm({
+                           title: "Bulk Delete Quizzes",
+                           description: `Are you sure you want to delete the ${selectedQuizKeys.length} selected quizzes? This action cannot be undone.`,
+                           type: 'error'
+                         });
+                         if (verified) {
+                           const promises = selectedQuizKeys.map(async (key) => {
+                             const [topicId, id] = key.split('_');
+                             await remove(ref(db, `topicQuizzes/${topicId}/${id}`));
+                           });
+                           await Promise.all(promises);
+                           setSelectedQuizKeys([]);
+                           await alert({
+                             title: "Success",
+                             description: `Successfully deleted ${promises.length} quizzes.`,
+                             type: 'success'
+                           });
+                         }
+                       }}
+                       className="bg-red-500/10 hover:bg-red-500 text-red-450 hover:text-white border border-red-500/20 text-[10px] font-black uppercase py-2 px-4 rounded-xl shadow-lg transition-all active:scale-95 flex items-center gap-1.5"
+                     >
+                        <Trash2 size={12} /> Delete Selected
+                     </button>
+
+                     {/* Clear button */}
+                     <button 
+                       onClick={() => {
+                         setSelectedQuizKeys([]);
+                         setBulkTargetTopicId('');
+                       }}
+                       className="text-[10px] text-zinc-400 hover:text-white font-black uppercase py-2 px-3 border border-transparent hover:border-white/10 rounded-xl transition-all"
+                     >
+                       Cancel
+                     </button>
+                   </div>
+                 </div>
+               )}
+
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                 {quizzes.slice().reverse().map(q => {
+                   const compoundKey = `${q.topicId}_${q.id}`;
+                   const isChecked = selectedQuizKeys.includes(compoundKey);
+                   return (
+                     <div key={compoundKey} className={cn(
+                       "border p-5 rounded-[2rem] group relative overflow-hidden transition-all duration-200",
+                       isChecked 
+                         ? "bg-red-500/5 border-red-500/30" 
+                         : "bg-black/5 dark:bg-black/60 border-black/5 dark:border-white/5"
+                     )}>
+                        <div className={cn(
+                          "absolute top-0 left-0 w-1 h-full bg-[#32befa] opacity-0 group-hover:opacity-100 transition-all",
+                          isChecked && "bg-red-500 opacity-100"
+                        )} />
+                        <div className="flex justify-between items-start mb-4">
+                          <div className="flex items-center gap-3">
+                             <input 
+                               type="checkbox" 
+                               checked={isChecked}
+                               onChange={(e) => {
+                                 if (e.target.checked) {
+                                   setSelectedQuizKeys(prev => [...prev, compoundKey]);
+                                 } else {
+                                   setSelectedQuizKeys(prev => prev.filter(k => k !== compoundKey));
+                                 }
+                               }}
+                               className="w-4 h-4 rounded text-[#32befa] border-black/20 dark:border-white/20 bg-transparent cursor-pointer focus:ring-0 active:scale-90 transition-transform"
+                             />
+                             {!isNaN(parseInt(q.id)) && (
+                                <span className="w-5 h-5 flex items-center justify-center bg-[#32befa] text-black text-[10px] font-black rounded-lg">
+                                   {q.id}
+                                </span>
+                             )}
+                             <span className="text-[8px] bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40 px-2 py-0.5 rounded font-black uppercase tracking-widest">{q.topicId}</span>
+                          </div>
+                          <div className="flex gap-2">
+                             <button onClick={() => editQuizInForm(q)} className="text-black/10 dark:text-white/10 hover:text-primary transition-colors"><Edit2 size={16} /></button>
+                             <button onClick={async () => {
+                               const verified = await confirm({
+                                 title: "Delete Quiz",
+                                 description: 'Delete this quiz?',
+                                 type: 'error'
+                               });
+                               if(verified) {
+                                 await remove(ref(db, `topicQuizzes/${q.topicId}/${q.id}`));
+                                 // Remove from selection if it was selected
+                                 setSelectedQuizKeys(prev => prev.filter(k => k !== compoundKey));
+                               }
+                             }} className="text-black/10 dark:text-white/10 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
+                          </div>
+                        </div>
+                        <h4 className="font-bold text-sm leading-tight mb-4 text-black dark:text-white">{q.question?.en || 'Untitled Question'}</h4>
+                        <div className="grid grid-cols-2 gap-2">
+                          {q.options?.en?.map((opt, i) => (
+                             <div key={`${q.id}-opt-${i}`} className={cn(
+                               "p-2 rounded-xl text-[10px] font-bold truncate",
+                               i === q.correctAnswerIndex ? "bg-green-500/10 text-green-500 border border-green-500/20" : "bg-black/5 dark:bg-white/5 text-black/20 dark:text-white/20"
+                             )}>
+                               {opt}
+                             </div>
+                          ))}
+                        </div>
+                     </div>
+                   );
+                 })}
                </div>
                {quizzes.length === 0 && <p className="text-center text-black/20 dark:text-white/20 italic p-12">No quizzes created yet</p>}
             </div>
@@ -3618,43 +5238,131 @@ export default function AdminPanel() {
         const botPlayers = users.filter(u => u.isBot);
         return (
           <div className="space-y-6 pb-32">
-             <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5">
-                <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-lg font-black flex items-center gap-2 uppercase tracking-tighter text-black dark:text-white">
-                    <Bot size={20} className="text-[#32befa]" />
-                    Bot Engine
+             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Manual Add Bot Section */}
+                <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5">
+                  <h3 className="text-lg font-black mb-6 flex items-center gap-2 uppercase tracking-tighter text-black dark:text-white">
+                    <Plus size={20} className="text-[#32befa]" />
+                    Manual Bot Entry
                   </h3>
-                  <label className="flex items-center gap-2 bg-[#32befa] text-black px-4 py-2 rounded-xl font-black text-xs cursor-pointer hover:scale-105 transition-all">
-                    <Upload size={16} />
-                    BULK DATA
-                    <input type="file" accept=".csv" className="hidden" onChange={e => handleCsvUpload(e, 'bots')} />
-                  </label>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 gap-3">
+                      <input 
+                        type="text" 
+                        placeholder="Bot Display Name" 
+                        value={newBotName} 
+                        onChange={e => setNewBotName(e.target.value)} 
+                        className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-4 rounded-xl outline-none focus:border-[#32befa] transition-all text-sm text-black dark:text-white font-bold" 
+                      />
+                      <input 
+                        type="text" 
+                        placeholder="Bot Username" 
+                        value={newBotUsername} 
+                        onChange={e => setNewBotUsername(e.target.value)} 
+                        className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-4 rounded-xl outline-none focus:border-[#32befa] transition-all text-sm text-black dark:text-white font-mono" 
+                      />
+                      <div className="space-y-1 px-1">
+                        <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40">Starting XP: {newBotXP}</label>
+                        <input 
+                          type="range" min="0" max="50000" step="100"
+                          value={newBotXP}
+                          onChange={e => setNewBotXP(parseInt(e.target.value))}
+                          className="w-full accent-[#32befa]"
+                        />
+                      </div>
+                    </div>
+                    <button 
+                      onClick={createBot} 
+                      disabled={isCreatingBot}
+                      className={cn(
+                        "w-full font-black p-4 rounded-xl shadow-[0_10px_20px_rgba(50,190,250,0.2)] active:scale-95 transition-all text-black bg-[#32befa]",
+                        isCreatingBot && "opacity-50 cursor-not-allowed"
+                      )}
+                    >
+                      {isCreatingBot ? 'GENERATING...' : 'ADD SIMULATOR'}
+                    </button>
+                  </div>
                 </div>
-                <p className="text-[10px] text-black/30 dark:text-white/30 font-bold uppercase tracking-widest leading-relaxed">
-                  CSV Pattern: name, xp
-                </p>
+
+                {/* Bulk & Export Section */}
+                <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5">
+                   <div className="flex justify-between items-center mb-6">
+                     <h3 className="text-lg font-black flex items-center gap-2 uppercase tracking-tighter text-black dark:text-white">
+                       <Bot size={20} className="text-[#32befa]" />
+                       Bot Engine
+                     </h3>
+                     <div className="flex items-center gap-2">
+                        <button 
+                          onClick={exportSampleBotsCsv}
+                          className="bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 px-3 py-1.5 rounded-xl text-[10px] font-black hover:bg-yellow-500 hover:text-black transition-all uppercase"
+                        >
+                          Sample
+                        </button>
+                        <button 
+                          onClick={exportBotsCsv}
+                          className="bg-green-500/10 text-green-500 border border-green-500/20 px-3 py-1.5 rounded-xl text-[10px] font-black hover:bg-green-500 hover:text-black transition-all uppercase"
+                        >
+                          Export
+                        </button>
+                     </div>
+                   </div>
+                   
+                   <div className="space-y-4">
+                      <div className="p-6 border-2 border-dashed border-black/10 dark:border-white/10 rounded-3xl flex flex-col items-center justify-center text-center space-y-3 group hover:border-[#32befa]/50 transition-all">
+                        <div className="w-12 h-12 bg-black/5 dark:bg-white/5 rounded-2xl flex items-center justify-center text-black/20 dark:text-white/20 group-hover:text-[#32befa] transition-all">
+                          <Upload size={24} />
+                        </div>
+                        <div>
+                          <p className="text-xs font-black uppercase text-black dark:text-white">Bulk Data Upload</p>
+                          <p className="text-[10px] text-black/40 dark:text-white/40 font-bold">CSV Required Fields: name, xp</p>
+                        </div>
+                        <label className="bg-[#32befa] text-black px-6 py-2 rounded-xl font-black text-[10px] cursor-pointer hover:scale-105 active:scale-95 transition-all">
+                           CHOOSE FILE
+                           <input type="file" accept=".csv" className="hidden" onChange={e => handleCsvUpload(e, 'bots')} />
+                        </label>
+                      </div>
+                   </div>
+                </div>
              </div>
 
              <div className="space-y-4">
-               <h3 className="text-sm font-black text-black/20 dark:text-white/20 uppercase tracking-widest">Active Simulators ({botPlayers.length})</h3>
+               <div className="flex items-center justify-between px-2">
+                 <h3 className="text-sm font-black text-black/20 dark:text-white/20 uppercase tracking-widest">Active Simulators ({botPlayers.length})</h3>
+                 <span className="text-[10px] font-black text-[#32befa] bg-[#32befa]/10 px-3 py-1 rounded-full uppercase tracking-tighter">Instance List</span>
+               </div>
+               
                {botPlayers.length === 0 ? (
-                  <p className="text-center p-8 text-black/10 dark:text-white/10 italic">Zero bots active</p>
+                  <div className="bg-black/5 dark:bg-white/5 p-12 rounded-[2rem] border border-black/5 dark:border-white/5 text-center">
+                    <p className="text-black/20 dark:text-white/20 italic font-medium">Zero bots active in the system</p>
+                  </div>
                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                     {botPlayers.map(b => (
-                       <div key={b.id} className="bg-black/5 dark:bg-[#111] p-4 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between text-black dark:text-white">
+                       <div key={b.id} className="bg-black/5 dark:bg-[#111] p-5 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between text-black dark:text-white hover:border-[#32befa]/30 transition-all group">
                           <div className="flex items-center gap-3">
-                             <div className="w-8 h-8 bg-[#32befa]/20 rounded-lg flex items-center justify-center text-[#32befa]">
-                                <Bot size={16} />
+                             <div className="w-10 h-10 bg-[#32befa]/10 rounded-xl flex items-center justify-center text-[#32befa] group-hover:bg-[#32befa] group-hover:text-black transition-all">
+                                <Bot size={20} />
                              </div>
                              <div>
-                                <p className="font-bold text-sm tracking-tight">{b.name}</p>
-                                <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase">{b.xp} XP • LVL {b.rank}</p>
+                                <p className="font-black text-sm tracking-tight leading-none mb-1">{b.name}</p>
+                                <p className="text-[9px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">{b.xp} XP • LVL {b.rank}</p>
                              </div>
                           </div>
-                          <button onClick={() => deleteUser(b.id)} className="p-2 text-black/10 dark:text-white/10 hover:text-red-500 transition-colors">
-                             <Trash2 size={16} />
-                          </button>
+                          <div className="flex items-center gap-1">
+                             <button 
+                                onClick={async () => {
+                                   const verified = await confirm({
+                                      title: "Delete Bot",
+                                      description: `Permanently delete ${b.name}?`,
+                                      type: 'error'
+                                   });
+                                   if(verified) deleteUser(b.id);
+                                }} 
+                                className="p-2 text-black/10 dark:text-white/10 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
+                             >
+                                <Trash2 size={16} />
+                             </button>
+                          </div>
                        </div>
                     ))}
                   </div>
@@ -3770,9 +5478,144 @@ export default function AdminPanel() {
                    </div>
                 </div>
               </div>
+
+              {/* Hidden Access PIN */}
+              <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                    <Shield size={24} />
+                  </div>
+                  <div>
+                    <h4 className="font-black uppercase tracking-tight">Hidden Access PIN</h4>
+                    <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Secret Access Code</p>
+                  </div>
+                </div>
+                
+                <div className="space-y-4">
+                   <p className="text-sm font-bold text-black/60 dark:text-white/60 leading-relaxed">
+                     This PIN is required to access the hidden "Special Quiz Access" feature.
+                   </p>
+                   <div className="relative">
+                     <input 
+                       type="text"
+                       value={settings?.specialPin || ''}
+                       onChange={async (e) => {
+                         await update(ref(db, 'settings'), { specialPin: e.target.value });
+                       }}
+                       placeholder="Set Secret PIN"
+                       className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary text-sm transition-all"
+                     />
+                     <Shield className="absolute right-4 top-1/2 -translate-y-1/2 text-black/10 dark:text-white/10" size={20} />
+                   </div>
+                </div>
+              </div>
+
+              {/* Push Notifications Toggle */}
+              <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                    <Bell size={24} />
+                  </div>
+                  <div>
+                    <h4 className="font-black uppercase tracking-tight">Push Notifications</h4>
+                    <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Global Master Switch</p>
+                  </div>
+                </div>
+                
+                <div className="space-y-4">
+                   <p className="text-sm font-bold text-black/60 dark:text-white/60 leading-relaxed">
+                     When disabled, all automated push notifications (Challenges, Social, Rank Ups) will be blocked globally. Manual notifications from the dashboard will still work if the Admin SDK is loaded.
+                   </p>
+                   <button 
+                     onClick={async () => {
+                       const newState = !settings?.pushNotificationsEnabled;
+                       await update(ref(db, 'settings'), { pushNotificationsEnabled: newState });
+                     }}
+                     className={cn(
+                       "w-full py-6 rounded-3xl font-black uppercase tracking-widest text-xs transition-all border shadow-lg",
+                       settings?.pushNotificationsEnabled 
+                         ? "bg-green-500 text-white border-green-400 shadow-green-500/20" 
+                         : "bg-red-500 text-white border-red-400 shadow-red-500/20"
+                     )}
+                   >
+                     {settings?.pushNotificationsEnabled ? 'NOTIFICATIONS ARE ACTIVE' : 'NOTIFICATIONS ARE DISABLED'}
+                   </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Game Update Code Settings */}
+            <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
+              <div className="flex items-center gap-4 mb-2">
+                <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                  <AlertTriangle size={24} />
+                </div>
+                <div>
+                  <h4 className="font-black uppercase tracking-tight text-black dark:text-white">Game Update Settings</h4>
+                  <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Update Code & Redirect Configuration</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 block">Target Update Code</label>
+                  <input
+                    type="text"
+                    value={localUpdateCode}
+                    onChange={(e) => setLocalUpdateCode(e.target.value)}
+                    placeholder="e.g. 100"
+                    className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary text-sm transition-all"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 block">Platform Update URL</label>
+                  <input
+                    type="text"
+                    value={localUpdateUrl}
+                    onChange={(e) => setLocalUpdateUrl(e.target.value)}
+                    placeholder="e.g. https://play.google.com/store"
+                    className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary text-sm transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 block">Update Alert Message</label>
+                <textarea
+                  value={localUpdateMessage}
+                  onChange={(e) => setLocalUpdateMessage(e.target.value)}
+                  placeholder="Enter the message to display on the update required popup..."
+                  rows={2}
+                  className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary text-sm transition-all resize-none"
+                />
+              </div>
+
+              <button
+                onClick={async () => {
+                  if (!localUpdateCode) {
+                    await alert({ title: 'Validation Error', description: 'Please enter a valid update code.', type: 'error' });
+                    return;
+                  }
+                  await update(ref(db, 'settings'), {
+                    code: localUpdateCode,
+                    updateCodeSettings: {
+                      code: localUpdateCode,
+                      updateUrl: localUpdateUrl,
+                      message: localUpdateMessage
+                    }
+                  });
+                  await alert({ title: 'Settings Saved', description: 'Game update settings saved successfully!', type: 'success' });
+                }}
+                className="w-full py-6 bg-primary text-black rounded-3xl font-black uppercase tracking-widest text-xs transition-all border border-primary/20 shadow-lg shadow-primary/10 hover:scale-[1.01] active:scale-95"
+              >
+                Save Update Settings
+              </button>
             </div>
           </div>
         );
+      case 'special_access':
+        return renderSpecialAccessSection();
       case 'appearance':
         return (
           <div className="space-y-6 pb-32">
@@ -3883,6 +5726,12 @@ export default function AdminPanel() {
              </div>
           </div>
         );
+      case 'database':
+         return renderDatabaseExplorer();
+      case 'marketing':
+        return renderMarketingSection();
+      case 'ads':
+        return renderAdsSection();
       case 'verification':
         const pendingUsers = users.filter(u => u.pendingAvatarUrl);
         return (
@@ -3971,76 +5820,146 @@ export default function AdminPanel() {
         );
       case 'requests':
         const unapprovedUsers = users.filter(u => u.status === 'pending');
+        const retryRequests = users.filter(u => u.extraTriesRequested);
         return (
-          <div className="space-y-8 pb-32">
-            <div className="flex items-center justify-between px-2">
-               <div>
-                  <h2 className="text-2xl font-black uppercase tracking-tighter text-black dark:text-white">Approval Requests</h2>
+          <div className="space-y-12 pb-32">
+            {/* Registration Requests */}
+            <div className="space-y-6">
+              <div className="flex items-center justify-between px-2">
+                <div>
+                  <h2 className="text-2xl font-black uppercase tracking-tighter text-black dark:text-white">Registration Requests</h2>
                   <p className="text-[10px] font-bold text-black/30 dark:text-white/30 uppercase tracking-[0.2em]">Users waiting for arena access</p>
-               </div>
-               <div className="bg-primary/10 text-primary px-4 py-2 rounded-xl border border-primary/20 text-xs font-black uppercase tracking-widest">
+                </div>
+                <div className="bg-primary/10 text-primary px-4 py-2 rounded-xl border border-primary/20 text-xs font-black uppercase tracking-widest">
                   {unapprovedUsers.length} Pending
-               </div>
+                </div>
+              </div>
+
+              {unapprovedUsers.length === 0 ? (
+                <div className="bg-black/5 dark:bg-[#111] p-12 rounded-[3rem] border border-black/5 dark:border-white/5 text-center">
+                  <Shield size={48} className="mx-auto mb-4 text-black/10 dark:text-white/10" />
+                  <p className="font-black uppercase tracking-widest text-black/20 dark:text-white/20 text-xs text-black/40">All users are approved</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {unapprovedUsers.map(u => (
+                    <motion.div 
+                      key={u.id}
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5 space-y-6 flex flex-col"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-primary/20 rounded-full flex items-center justify-center text-primary font-black">
+                          {u.name?.[0]?.toUpperCase() || 'P'}
+                        </div>
+                        <div>
+                          <p className="font-black text-sm text-black dark:text-white uppercase leading-none">{u.name}</p>
+                          <p className="text-[8px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mt-1">@{u.id}</p>
+                        </div>
+                      </div>
+
+                      <div className="bg-white/5 dark:bg-black/20 p-4 rounded-2xl border border-black/10 dark:border-white/5 flex-1">
+                        <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mb-1">Email</p>
+                        <p className="text-xs text-black/70 dark:text-white/70 truncate">{u.email}</p>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={async () => {
+                            const v = await confirm({ title: 'Approve User?', description: `Allow ${u.name} to play Rahee Quiz?`, type: 'confirm' });
+                            if (!v) return;
+                            await update(ref(db, `users/${u.id}`), { status: 'approved' });
+                            await alert({ title: 'User Approved', description: `${u.name} can now login.`, type: 'success' });
+                          }}
+                          className="flex-1 bg-green-500 text-white font-black uppercase tracking-widest text-[10px] py-4 rounded-2xl shadow-lg shadow-green-500/20 active:scale-95 transition-all flex items-center justify-center gap-2"
+                        >
+                          <CheckCircle size={14} />
+                          Approve
+                        </button>
+                        <button 
+                          onClick={async () => {
+                            const v = await confirm({ title: 'Reject User?', description: `Reject ${u.name}'s registration?`, type: 'error' });
+                            if (!v) return;
+                            await remove(ref(db, `users/${u.id}`));
+                            await alert({ title: 'Rejected', description: 'User registration removed.', type: 'info' });
+                          }}
+                          className="px-6 bg-red-500 text-white font-black uppercase tracking-widest text-[10px] py-4 rounded-2xl shadow-lg shadow-red-500/20 active:scale-95 transition-all"
+                        >
+                          <XCircle size={14} />
+                        </button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {unapprovedUsers.length === 0 ? (
-              <div className="bg-black/5 dark:bg-[#111] p-20 rounded-[3rem] border border-black/5 dark:border-white/5 text-center">
-                <Shield size={64} className="mx-auto mb-4 text-black/10 dark:text-white/10" />
-                <p className="font-black uppercase tracking-widest text-black/20 dark:text-white/20">All users are approved</p>
+            {/* Retry Extension Requests */}
+            <div className="space-y-6">
+              <div className="flex items-center justify-between px-2 pt-12 border-t border-black/5 dark:border-white/5">
+                <div>
+                  <h2 className="text-2xl font-black uppercase tracking-tighter text-black dark:text-white">Retry Extensions</h2>
+                  <p className="text-[10px] font-bold text-black/30 dark:text-white/30 uppercase tracking-[0.2em]">Players requesting additional attempts</p>
+                </div>
+                <div className="bg-primary/10 text-primary px-4 py-2 rounded-xl border border-primary/20 text-xs font-black uppercase tracking-widest">
+                  {retryRequests.length} Requests
+                </div>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {unapprovedUsers.map(u => (
-                  <motion.div 
-                    key={u.id}
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5 space-y-6 flex flex-col"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-primary/20 rounded-full flex items-center justify-center text-primary font-black">
-                        {u.name?.[0]?.toUpperCase() || 'P'}
-                      </div>
-                      <div>
-                        <p className="font-black text-sm text-black dark:text-white uppercase leading-none">{u.name}</p>
-                        <p className="text-[8px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mt-1">@{u.id}</p>
-                      </div>
-                    </div>
 
-                    <div className="bg-white/5 dark:bg-black/20 p-4 rounded-2xl border border-black/10 dark:border-white/5 flex-1">
-                       <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mb-1">Email</p>
-                       <p className="text-xs text-black/70 dark:text-white/70 truncate">{u.email}</p>
-                    </div>
+              {retryRequests.length === 0 ? (
+                <div className="bg-black/5 dark:bg-[#111] p-12 rounded-[3rem] border border-black/5 dark:border-white/5 text-center">
+                  <RotateCcw size={48} className="mx-auto mb-4 text-black/10 dark:text-white/10" />
+                  <p className="font-black uppercase tracking-widest text-black/20 dark:text-white/20 text-xs text-black/40">No pending retry requests</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {retryRequests.map(u => (
+                    <motion.div 
+                      key={u.id}
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5 space-y-6 flex flex-col"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-primary/20 rounded-full flex items-center justify-center text-primary font-black">
+                          {u.name?.[0]?.toUpperCase() || 'P'}
+                        </div>
+                        <div>
+                          <p className="font-black text-sm text-black dark:text-white uppercase leading-none">{u.name}</p>
+                          <p className="text-[8px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mt-1">@{u.id}</p>
+                        </div>
+                      </div>
 
-                    <div className="flex gap-2">
-                      <button 
-                         onClick={async () => {
-                           const v = await confirm({ title: 'Approve User?', description: `Allow ${u.name} to play Rahee Quiz?`, type: 'confirm' });
-                           if (!v) return;
-                           await update(ref(db, `users/${u.id}`), { status: 'approved' });
-                           await alert({ title: 'User Approved', description: `${u.name} can now login.`, type: 'success' });
-                         }}
-                         className="flex-1 bg-green-500 text-white font-black uppercase tracking-widest text-[10px] py-4 rounded-2xl shadow-lg shadow-green-500/20 active:scale-95 transition-all flex items-center justify-center gap-2"
-                      >
-                         <CheckCircle size={14} />
-                         Approve
-                      </button>
-                      <button 
-                         onClick={async () => {
-                           const v = await confirm({ title: 'Reject User?', description: `Reject ${u.name}'s registration?`, type: 'error' });
-                           if (!v) return;
-                           await remove(ref(db, `users/${u.id}`));
-                           await alert({ title: 'Rejected', description: 'User registration removed.', type: 'info' });
-                         }}
-                         className="px-6 bg-red-500 text-white font-black uppercase tracking-widest text-[10px] py-4 rounded-2xl shadow-lg shadow-red-500/20 active:scale-95 transition-all"
-                      >
-                         <XCircle size={14} />
-                      </button>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            )}
+                      <div className="bg-white/5 dark:bg-black/20 p-4 rounded-2xl border border-black/10 dark:border-white/5 flex-1">
+                        <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mb-1">XP / Round</p>
+                        <p className="text-xs text-black/70 dark:text-white/70">{u.xp} XP • Round {u.currentRound}</p>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => allowExtraTries(u.id)}
+                          className="flex-1 bg-primary text-black font-black uppercase tracking-widest text-[10px] py-4 rounded-2xl active:scale-95 transition-all flex items-center justify-center gap-2"
+                        >
+                          <CheckCircle size={14} />
+                          Approve
+                        </button>
+                        <button 
+                          onClick={async () => {
+                            const v = await confirm({ title: 'Reject Request?', description: `Reject ${u.name}'s extension request?`, type: 'error' });
+                            if (!v) return;
+                            await update(ref(db, `users/${u.id}`), { extraTriesRequested: false });
+                          }}
+                          className="px-6 bg-red-500 text-white font-black uppercase tracking-widest text-[10px] py-4 rounded-2xl active:scale-95 transition-all"
+                        >
+                          <XCircle size={14} />
+                        </button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         );
       case 'customization':
@@ -4096,7 +6015,7 @@ export default function AdminPanel() {
              <h2 className="text-xl font-black tracking-tighter text-black dark:text-white">ADMIN</h2>
           </div>
 
-          <nav className="flex-1 space-y-2">
+          <nav className="flex-1 space-y-2 pb-16">
              {[
                { id: 'users', label: 'Players', icon: Users },
                { id: 'requests', label: 'Requests', icon: Clock },
@@ -4108,25 +6027,33 @@ export default function AdminPanel() {
                { id: 'notifications', label: 'Notifications', icon: Bell },
                { id: 'verification', label: 'Verifications', icon: ImageIcon },
                { id: 'feedback', label: 'Support', icon: MessageSquare },
+               { id: 'database', label: 'Database', icon: Database },
+               { id: 'marketing', label: 'Marketing', icon: Zap },
+               { id: 'ads', label: 'Ad Manager', icon: Play },
+               { id: 'special_access', label: 'Special Access', icon: Shield },
                { id: 'config', label: 'Config', icon: SettingsIcon },
                { id: 'appearance', label: 'Skin', icon: Palette },
                { id: 'customization', label: 'Customization', icon: Edit2 },
              ].map(tab => (
-               <button
+               <motion.button
                  key={tab.id}
+                 whileHover={{ scale: 1.02 }}
+                 whileTap={{ scale: 0.98 }}
                  onClick={() => { 
                    setActiveSubTab(tab.id); 
                    setSelectedUser(null);
                    setIsSidebarOpen(false);
                  }}
                  className={cn(
-                   "w-full flex items-center gap-3 px-4 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all",
-                   activeSubTab === tab.id ? "bg-primary text-black" : "text-black/40 dark:text-white/40 hover:bg-black/5 dark:hover:bg-white/5"
+                   "w-full flex items-center gap-2 px-3 py-2.5 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all",
+                   activeSubTab === tab.id 
+                     ? "bg-primary text-black shadow-lg shadow-primary/20" 
+                     : "text-black/40 dark:text-white/40 hover:bg-black/5 dark:hover:bg-white/5 border border-transparent hover:border-black/5 dark:hover:border-white/5"
                  )}
                >
-                 <tab.icon size={18} />
+                 <tab.icon size={14} />
                  {tab.label}
-               </button>
+               </motion.button>
              ))}
           </nav>
           
@@ -4144,9 +6071,10 @@ export default function AdminPanel() {
           <AnimatePresence mode="wait">
             <motion.div
               key={activeSubTab + (selectedUser ? selectedUser.id : '')}
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="w-full max-w-7xl mx-auto space-y-8"
             >
                {renderSection()}
             </motion.div>

@@ -1,7 +1,7 @@
 import React from 'react';
 import { User } from '../types';
 import { motion } from 'motion/react';
-import { Trophy, Star, Target, Zap, Award, CheckCircle2, XCircle, HelpCircle } from 'lucide-react';
+import { Trophy, Star, Target, Zap, Award, CheckCircle2, XCircle, HelpCircle, Clock, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface ScoreCardProps {
@@ -17,12 +17,13 @@ export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCoun
     (acc, curr) => {
       acc.correct += curr.correct;
       acc.total += curr.total;
+      acc.unattempted += (curr.unattempted || 0);
       return acc;
     },
-    { correct: 0, total: 0 }
+    { correct: 0, total: 0, unattempted: 0 }
   );
 
-  const incorrect = aggregateStats.total - aggregateStats.correct;
+  const incorrect = aggregateStats.total - aggregateStats.correct - aggregateStats.unattempted;
   const unsolved = Math.max(0, totalQuizzesCount - aggregateStats.total);
 
   const accuracy = aggregateStats.total > 0 
@@ -62,8 +63,18 @@ export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCoun
               </h2>
             </div>
           </div>
-          <div className="bg-black/5 dark:bg-white/5 backdrop-blur-md p-3 rounded-2xl border border-black/5 dark:border-white/10">
-            <Trophy className="text-yellow-500" size={24} />
+          <div className="flex flex-col gap-2">
+            {onClose && (
+              <button 
+                onClick={onClose}
+                className="p-3 bg-black/10 dark:bg-white/10 rounded-2xl text-black/60 dark:text-white/60 hover:bg-red-500 hover:text-white transition-all active:scale-90"
+              >
+                <X size={20} />
+              </button>
+            )}
+            <div className="bg-black/5 dark:bg-white/5 backdrop-blur-md p-3 rounded-2xl border border-black/5 dark:border-white/10 flex items-center justify-center">
+              <Trophy className="text-yellow-500" size={24} />
+            </div>
           </div>
         </div>
 
@@ -71,7 +82,7 @@ export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCoun
         <div className="flex gap-1 mt-6">
           {[1, 2, 3, 4, 5].map((star) => (
             <Star 
-              key={star}
+              key={`scorecard-star-${star}`}
               size={18}
               className={cn(
                 "transition-all duration-500",
@@ -131,6 +142,14 @@ export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCoun
               <span className="text-[10px] font-bold text-black/60 dark:text-white/60 uppercase tracking-widest">Incorrect Answers</span>
             </div>
             <span className="font-black text-red-500">{incorrect}</span>
+          </div>
+
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <Clock size={16} className="text-black/40 dark:text-white/40" />
+              <span className="text-[10px] font-bold text-black/60 dark:text-white/60 uppercase tracking-widest">Untapped / Timeout</span>
+            </div>
+            <span className="font-black text-black/40 dark:text-white/40">{aggregateStats.unattempted}</span>
           </div>
           
           <div className="flex justify-between items-center">

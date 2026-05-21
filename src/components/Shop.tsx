@@ -1,16 +1,19 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Coins, Zap, RefreshCw, X, CheckCircle, ShoppingBag, Heart } from 'lucide-react';
+import { Coins, Zap, RefreshCw, ShoppingBag, Heart, Users, Lightbulb, Ticket, Loader2 } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
 import { useDialog } from '../contexts/DialogContext';
 import { db } from '../firebase/config';
-import { ref, update } from 'firebase/database';
+import { ref, update, get, push } from 'firebase/database';
+import { User, Coupon } from '../types';
 import { translations } from '../translations';
 import { cn } from '../lib/utils';
 
 export default function Shop({ onClose, language }: { onClose: () => void, language: string }) {
   const { currentUser } = useUser();
   const { alert } = useDialog();
+  const [couponCode, setCouponCode] = useState('');
+  const [isRedeeming, setIsRedeeming] = useState(false);
   const t = translations[language as 'en' | 'hi'] || translations.en;
 
   const items = [
@@ -24,13 +27,31 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
       bg: 'bg-yellow-500/10',
     },
     {
+      id: 'audiencePoll',
+      name: 'Audience Poll',
+      desc: language === 'en' ? 'Get voting percentages favoring the correct answer' : 'सही उत्तर के पक्ष में मतदान प्रतिशत प्राप्त करें',
+      cost: 75,
+      icon: Users,
+      color: 'text-green-500',
+      bg: 'bg-green-500/10',
+    },
+    {
+      id: 'hint',
+      name: 'Hint / Clue',
+      desc: language === 'en' ? 'Get a useful hint to help you solve the quiz' : 'प्रश्नोत्तरी हल करने में मदद के लिए उपयोगी संकेत प्राप्त करें',
+      cost: 50,
+      icon: Lightbulb,
+      color: 'text-primary',
+      bg: 'bg-primary/10',
+    },
+    {
       id: 'changeQuiz',
       name: t.changeQuiz,
       desc: language === 'en' ? 'Skip the current quiz and move to the next one' : 'वर्तमान प्रश्नोत्तरी छोड़ें और अगले प्रश्न पर जाएँ',
       cost: 100,
       icon: RefreshCw,
-      color: 'text-primary',
-      bg: 'bg-primary/10',
+      color: 'text-red-500',
+      bg: 'bg-red-500/10',
     }
   ];
 
@@ -70,7 +91,7 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
       return;
     }
 
-    const currentCount = currentUser.lifelines?.[itemId as 'fiftyFifty' | 'changeQuiz'] || 0;
+    const currentCount = currentUser.lifelines?.[itemId as keyof User['lifelines']] || 0;
     const newLifelines = {
       ...currentUser.lifelines,
       [itemId]: currentCount + 1
@@ -88,8 +109,72 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
     });
   };
 
+  const redeemCoupon = async () => {
+    if (!currentUser || !couponCode.trim()) return;
+    setIsRedeeming(true);
+    const code = couponCode.trim().toUpperCase();
+
+    try {
+      const couponRef = ref(db, `coupons/${code}`);
+      const snapshot = await get(couponRef);
+
+      if (!snapshot.exists()) {
+        // Log failure
+        await push(ref(db, `couponLogs/${currentUser.id}`), {
+          userId: currentUser.id,
+          userName: currentUser.name || currentUser.username || 'Unknown',
+          code,
+          isSuccess: false,
+          error: 'Invalid Code',
+          timestamp: Date.now()
+        });
+        await alert({ title: "Invalid Code", description: "This coupon code does not exist.", type: 'error' });
+      } else {
+        const coupon = snapshot.val() as Coupon;
+        if (coupon.isUsed) {
+           await push(ref(db, `couponLogs/${currentUser.id}`), {
+            userId: currentUser.id,
+            userName: currentUser.name || currentUser.username || 'Unknown',
+            code,
+            isSuccess: false,
+            error: 'Already Used',
+            timestamp: Date.now()
+          });
+          await alert({ title: "Used Coupon", description: "This coupon has already been redeemed.", type: 'error' });
+        } else {
+          // Success!
+          const updates: any = {};
+          updates[`coupons/${code}/isUsed`] = true;
+          updates[`coupons/${code}/usedBy`] = currentUser.id;
+          updates[`coupons/${code}/usedByName`] = currentUser.name || '';
+          updates[`coupons/${code}/usedByUsername`] = currentUser.username || '';
+          updates[`coupons/${code}/usedAt`] = Date.now();
+          updates[`users/${currentUser.id}/raheeCoins`] = (currentUser.raheeCoins || 0) + coupon.value;
+          
+          await update(ref(db), updates);
+          
+          // Log success
+          await push(ref(db, `couponLogs/${currentUser.id}`), {
+            userId: currentUser.id,
+            userName: currentUser.name || currentUser.username || 'Unknown',
+            code,
+            isSuccess: true,
+            timestamp: Date.now()
+          });
+
+          await alert({ title: "Redeem Successful!", description: `You have successfully redeemed ${coupon.value} Rahee Coins!`, type: 'success' });
+          setCouponCode('');
+        }
+      }
+    } catch (err: any) {
+      await alert({ title: "Error", description: err.message, type: 'error' });
+    } finally {
+      setIsRedeeming(false);
+    }
+  };
+
   return (
-    <div className="bg-white dark:bg-[#0a0a0a] rounded-[2.5rem] border border-black/5 dark:border-white/5 overflow-hidden flex flex-col h-full max-h-[85vh]">
+    <div className="bg-white dark:bg-[#050505] rounded-[2.5rem] border border-black/5 dark:border-white/5 overflow-hidden flex flex-col h-full max-h-[85vh]">
       {/* Header */}
       <div className="p-8 flex items-center justify-between border-b border-black/5 dark:border-white/5 bg-white/40 dark:bg-black/40 backdrop-blur-xl">
         <div className="flex items-center gap-4">
@@ -128,7 +213,7 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
                   <div className="flex items-center gap-2 mb-1">
                     <h3 className="text-lg font-black text-black dark:text-white">{item.name}</h3>
                     <span className="text-[8px] font-black uppercase tracking-widest text-black/20 dark:text-white/20 px-1.5 py-0.5 bg-black/5 dark:bg-white/5 rounded border border-black/5 dark:border-white/5">
-                        {currentUser?.lifelines?.[item.id as 'fiftyFifty' | 'changeQuiz'] || 0} Owned
+                        {currentUser?.lifelines?.[item.id as keyof User['lifelines']] || 0} Owned
                     </span>
                   </div>
                   <p className="text-black/40 dark:text-white/40 text-xs font-medium leading-relaxed max-w-sm">{item.desc}</p>
@@ -179,6 +264,44 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
               </motion.button>
             ))}
           </div>
+        </section>
+
+        {/* Coupons Section */}
+        <section className="space-y-4">
+           <p className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 px-2">Coupon Redemption</p>
+           <div className="p-8 bg-black/5 dark:bg-white/5 rounded-3xl border border-black/5 dark:border-white/5 flex flex-col items-center gap-6">
+              <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center text-primary">
+                 <Ticket size={32} />
+              </div>
+              <div className="text-center space-y-1">
+                 <h3 className="text-lg font-black text-black dark:text-white uppercase tracking-tight">Redeem Coupon Code</h3>
+                 <p className="text-xs text-black/40 dark:text-white/40 font-medium">Enter your special code to win Rahee Coins instantly.</p>
+              </div>
+              <div className="w-full flex flex-col sm:flex-row gap-2">
+                 <input 
+                   type="text"
+                   placeholder="Enter code here..."
+                   value={couponCode}
+                   onChange={e => setCouponCode(e.target.value)}
+                   className="flex-1 bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-black text-center sm:text-left outline-none focus:border-primary transition-all uppercase placeholder:normal-case placeholder:font-bold"
+                 />
+                 <button 
+                   onClick={redeemCoupon}
+                   disabled={isRedeeming || !couponCode.trim()}
+                   className={cn(
+                     "px-8 py-4 bg-primary text-black rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-primary/20 hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2",
+                     (isRedeeming || !couponCode.trim()) && "opacity-50 cursor-not-allowed scale-100"
+                   )}
+                 >
+                    {isRedeeming ? (
+                       <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                       <Zap size={16} />
+                    )}
+                    Redeem Code
+                 </button>
+              </div>
+           </div>
         </section>
       </div>
     </div>

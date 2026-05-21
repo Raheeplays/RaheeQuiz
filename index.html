@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My Google AI Studio App</title>
+    <script>
+      (function() {
+        const isDark = localStorage.getItem('theme_dark') === 'true';
+        if (isDark) {
+          document.documentElement.classList.add('dark');
+          document.documentElement.style.backgroundColor = '#050505';
+          document.documentElement.style.color = '#ffffff';
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

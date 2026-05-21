@@ -20,7 +20,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [customization, setCustomization] = useState<Settings['customization']>();
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem('theme_dark');
-    return saved ? JSON.parse(saved) : true; // Default dark
+    return saved ? JSON.parse(saved) : false; // Default light now as requested but can toggle
   });
 
   const [soundEnabled, setSoundEnabled] = useState(() => {
@@ -87,7 +87,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   return (
     <ThemeContext.Provider value={{ 
       isDark, 
-      setIsDark, 
+      setIsDark,
       soundEnabled, 
       setSoundEnabled, 
       vibrationEnabled, 

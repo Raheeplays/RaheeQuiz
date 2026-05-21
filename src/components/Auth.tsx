@@ -113,7 +113,9 @@ export default function Auth() {
       raheeCoins: 100,
       lifelines: {
         'fiftyFifty': 1,
-        'changeQuiz': 1
+        'changeQuiz': 1,
+        'audiencePoll': 1,
+        'hint': 1
       },
       scores: {}
     };

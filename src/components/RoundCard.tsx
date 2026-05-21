@@ -1,17 +1,18 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Trophy, Star, CheckCircle2, XCircle, ArrowRight } from 'lucide-react';
+import { Trophy, Star, CheckCircle2, XCircle, ArrowRight, Clock } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface RoundCardProps {
   round: number;
   correctCount: number;
   incorrectCount: number;
+  unattemptedCount?: number;
   total: number;
   onNext: () => void;
 }
 
-export default function RoundCard({ round, correctCount, incorrectCount, total, onNext }: RoundCardProps) {
+export default function RoundCard({ round, correctCount, incorrectCount, unattemptedCount = 0, total, onNext }: RoundCardProps) {
   const accuracy = (correctCount / total) * 100;
   
   // Calculate star rating (0 to 5)
@@ -65,21 +66,29 @@ export default function RoundCard({ round, correctCount, incorrectCount, total, 
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-2 gap-3 w-full mb-8">
-          <div className="bg-green-500/5 dark:bg-green-500/10 border border-green-500/10 p-4 rounded-3xl">
-            <div className="flex items-center justify-center gap-2 mb-1">
-              <CheckCircle2 size={14} className="text-green-500" />
-              <span className="text-[10px] font-black uppercase tracking-widest text-green-500/60">Correct</span>
+        <div className="grid grid-cols-3 gap-2 w-full mb-8">
+          <div className="bg-green-500/5 dark:bg-green-500/10 border border-green-500/10 p-4 rounded-3xl flex flex-col items-center">
+            <div className="flex items-center justify-center gap-1.5 mb-1">
+              <CheckCircle2 size={12} className="text-green-500" />
+              <span className="text-[8px] font-black uppercase tracking-widest text-green-500/60">Correct</span>
             </div>
-            <p className="text-2xl font-black text-green-500">{correctCount}</p>
+            <p className="text-xl font-black text-green-500">{correctCount}</p>
           </div>
 
-          <div className="bg-red-500/5 dark:bg-red-500/10 border border-red-500/10 p-4 rounded-3xl">
-            <div className="flex items-center justify-center gap-2 mb-1">
-              <XCircle size={14} className="text-red-500" />
-              <span className="text-[10px] font-black uppercase tracking-widest text-red-500/60">Incorrect</span>
+          <div className="bg-red-500/5 dark:bg-red-500/10 border border-red-500/10 p-4 rounded-3xl flex flex-col items-center">
+            <div className="flex items-center justify-center gap-1.5 mb-1">
+              <XCircle size={12} className="text-red-500" />
+              <span className="text-[8px] font-black uppercase tracking-widest text-red-500/60">Wrong</span>
             </div>
-            <p className="text-2xl font-black text-red-500">{incorrectCount}</p>
+            <p className="text-xl font-black text-red-500">{incorrectCount}</p>
+          </div>
+
+          <div className="bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 p-4 rounded-3xl flex flex-col items-center">
+            <div className="flex items-center justify-center gap-1.5 mb-1">
+              <Clock size={12} className="text-black/40 dark:text-white/40" />
+              <span className="text-[8px] font-black uppercase tracking-widest text-black/40">Untapped</span>
+            </div>
+            <p className="text-xl font-black text-black/40 dark:text-white/40">{unattemptedCount}</p>
           </div>
         </div>
 

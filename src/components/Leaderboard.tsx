@@ -24,7 +24,9 @@ export default function Leaderboard() {
     const unsubscribe = onValue(playersRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        const list = Object.entries(data).map(([key, val]: [string, any]) => ({ ...val, id: key })) as User[];
+        const list = Object.entries(data)
+          .filter(([_, val]) => val !== null)
+          .map(([key, val]: [string, any]) => ({ ...val, id: key })) as User[];
         setPlayers(list);
       }
       setLoading(false);
@@ -199,7 +201,7 @@ export default function Leaderboard() {
          {loading ? (
            <>
              {[1, 2, 3, 4, 5].map((i) => (
-               <div key={i} className="p-4 rounded-2xl flex items-center justify-between bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/5">
+               <div key={`leader-skeleton-${i}`} className="p-4 rounded-2xl flex items-center justify-between bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/5">
                  <div className="flex items-center gap-4">
                    <Skeleton className="w-8 h-8 rounded-full" />
                    <div className="space-y-2">
@@ -221,7 +223,7 @@ export default function Leaderboard() {
                className={cn(
                  "p-4 rounded-2xl flex items-center justify-between border transition-all",
                  player.id === currentUser?.id ? "ring-2 ring-primary bg-primary/5 border-primary/20 shadow-lg shadow-primary/10" : 
-                 player.isBot ? "bg-black/5 dark:bg-black border-black/5 dark:border-white/5" : "bg-white dark:bg-[#111] border-black/10 dark:border-white/10 shadow-sm dark:shadow-md"
+                 "bg-white dark:bg-[#111] border-black/10 dark:border-white/10 shadow-sm dark:shadow-md"
                )}
              >
                 <div className="flex items-center gap-4">
@@ -239,7 +241,6 @@ export default function Leaderboard() {
                       <p className="font-bold flex items-center gap-2 text-black dark:text-white">
                         {player.name}
                         {player.id === currentUser?.id && <span className="bg-primary text-black text-[8px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest">You</span>}
-                        {player.isBot && currentUser?.role === 'admin' && <Bot size={12} className="text-black/20 dark:text-white/20" />}
                       </p>
                       <p className="text-[10px] text-black/40 dark:text-white/40 font-bold uppercase tracking-widest leading-none">Rank #{idx + 1}</p>
                    </div>

@@ -27,9 +27,9 @@ export default function Layout({ children, activeTab, setActiveTab, setShowSetti
   ];
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-white dark:bg-black text-black dark:text-white transition-colors duration-300">
+    <div className="flex flex-col h-screen overflow-hidden bg-white dark:bg-[#050505] text-black dark:text-white transition-colors duration-300">
       {/* Main Content Area with desktop constraints */}
-      <div className="flex-1 overflow-y-auto pb-24 w-full lg:max-w-4xl lg:mx-auto lg:border-x lg:border-black/5 lg:dark:border-white/5 relative bg-white dark:bg-black">
+      <div className="flex-1 overflow-y-auto pb-24 w-full lg:max-w-4xl lg:mx-auto lg:border-x lg:border-black/5 lg:dark:border-white/5 relative bg-white dark:bg-[#050505]">
         {children}
       </div>
 
