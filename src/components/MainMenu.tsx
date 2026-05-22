@@ -306,23 +306,8 @@ export default function MainMenu() {
     }
   }, [isImpersonating]);
 
-  useEffect(() => {
-    if (showQuiz) {
-      const dbVersionCode = settings?.code || settings?.updateCodeSettings?.code;
-      if (dbVersionCode && dbVersionCode !== CURRENT_VERSION_CODE) {
-        setShowQuiz(false);
-        setShowUpdateModal(true);
-      }
-    }
-  }, [showQuiz, settings]);
-
   const checkGameStart = (onSuccess: () => void) => {
-    const dbVersionCode = settings?.code || settings?.updateCodeSettings?.code;
-    if (dbVersionCode && dbVersionCode !== CURRENT_VERSION_CODE) {
-      setShowUpdateModal(true);
-    } else {
-      onSuccess();
-    }
+    onSuccess();
   };
 
   const handleStartQuiz = () => {
@@ -2340,7 +2325,7 @@ export default function MainMenu() {
            </motion.div>
         )}
          {/* Game Update Required Modal */}
-         {showUpdateModal && (
+         {false && (
             <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 overflow-y-auto">
                <motion.div 
                  initial={{ opacity: 0 }} 

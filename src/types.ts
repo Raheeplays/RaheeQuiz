@@ -13,6 +13,8 @@ export interface User {
   rank: number;
   currentRound: number;
   currentQuizIndex: number;
+  AppCode?: string | number;
+  CustomAppCodePath?: string;
   isBot?: boolean;
   avatar?: string;
   avatarUrl?: string;

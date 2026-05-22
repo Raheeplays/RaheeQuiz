@@ -82,6 +82,30 @@ export default function AdminPanel() {
   const [localUpdateUrl, setLocalUpdateUrl] = useState('');
   const [localUpdateMessage, setLocalUpdateMessage] = useState('');
 
+  const [globalUpdateCode, setGlobalUpdateCode] = useState('');
+  const [globalUpdateUrl, setGlobalUpdateUrl] = useState('');
+  const [globalUpdateMessage, setGlobalUpdateMessage] = useState('');
+  const [globalCheckedPathPattern, setGlobalCheckedPathPattern] = useState('users/{userId}/AppCode');
+
+  // Database AppCode path transference tool states
+  const [transferenceSourcePath, setTransferenceSourcePath] = useState('users/{userId}/AppCode');
+  const [transferenceTargetPath, setTransferenceTargetPath] = useState('UserDevices/{userId}/appCode');
+  const [isTransferring, setIsTransferring] = useState(false);
+
+  useEffect(() => {
+    const updateRef = ref(db, 'Update');
+    const unsubscribe = onValue(updateRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const val = snapshot.val();
+        setGlobalUpdateCode(val.Code !== undefined ? String(val.Code) : '');
+        setGlobalUpdateUrl(val.Url || '');
+        setGlobalUpdateMessage(val.Message || '');
+        setGlobalCheckedPathPattern(val.CheckedPathPattern || 'users/{userId}/AppCode');
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
   useEffect(() => {
     if (settings) {
       setLocalUpdateCode(settings.code || settings.updateCodeSettings?.code || '');
@@ -2441,7 +2465,7 @@ export default function AdminPanel() {
                       )}
 
                       <div className="mt-6 border-t border-black/5 dark:border-white/5 pt-6">
-                        <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-3 ml-1">Topic Lock Settings</p>
+                        <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-3 ml-1">Topic Lock & AppCode Settings</p>
                         <div className="space-y-2">
                           <div className="flex items-center justify-between p-4 bg-white dark:bg-black rounded-2xl border border-black/5 dark:border-white/5">
                              <span className="text-black/40 dark:text-white/40 text-[10px] font-black uppercase tracking-widest">Allow Topic Switch</span>
@@ -2468,6 +2492,59 @@ export default function AdminPanel() {
                                 <option value="">NO FIXED TOPIC</option>
                                 {topics.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                              </select>
+                          </div>
+                          <div className="flex flex-col gap-1.5 p-4 bg-white dark:bg-black rounded-2xl border border-black/5 dark:border-white/5">
+                             <div className="flex items-center justify-between">
+                               <span className="text-black/40 dark:text-white/40 text-[10px] font-black uppercase tracking-widest">User AppCode</span>
+                               <span className="text-[9px] font-mono font-bold text-primary px-1.5 py-0.5 rounded bg-primary/10">AppCode</span>
+                             </div>
+                             <div className="flex gap-2 mt-1">
+                               <input 
+                                  type="text"
+                                  placeholder="e.g. 786"
+                                  defaultValue={u.AppCode !== undefined ? String(u.AppCode) : ''}
+                                  key={`appcode-${u.id}-${u.AppCode}`}
+                                  onBlur={async (e) => {
+                                     const val = e.target.value.trim();
+                                     await update(ref(db, `users/${u.id}`), { AppCode: val === '' ? null : val });
+                                  }}
+                                  className="flex-1 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 rounded-lg p-3 text-xs font-bold font-mono outline-none text-black dark:text-white focus:border-primary"
+                               />
+                               {globalUpdateCode && (
+                                  <button
+                                    onClick={async () => {
+                                      await update(ref(db, `users/${u.id}`), { AppCode: globalUpdateCode });
+                                    }}
+                                    className="p-2 px-3 bg-primary/10 hover:bg-primary/20 border border-primary/20 text-primary rounded-lg text-[10px] font-black uppercase tracking-widest transition-all"
+                                    title={`Link this user AppCode to current required code: ${globalUpdateCode}`}
+                                  >
+                                    Link {globalUpdateCode}
+                                  </button>
+                               )}
+                             </div>
+                          </div>
+
+                          <div className="flex flex-col gap-1.5 p-4 bg-white dark:bg-black rounded-2xl border border-black/5 dark:border-white/5">
+                             <div className="flex items-center justify-between">
+                               <span className="text-black/40 dark:text-white/40 text-[10px] font-black uppercase tracking-widest">Custom AppCode DB Check Path Override</span>
+                               <span className="text-[9px] font-mono font-bold text-blue-500 px-1.5 py-0.5 rounded bg-blue-500/10">Override</span>
+                             </div>
+                             <div className="flex flex-col gap-2 mt-1">
+                               <input 
+                                  type="text"
+                                  placeholder="e.g. UserDevices/{userId}/appCode"
+                                  defaultValue={u.CustomAppCodePath !== undefined ? String(u.CustomAppCodePath) : ''}
+                                  key={`custom-path-${u.id}-${u.CustomAppCodePath || ''}`}
+                                  onBlur={async (e) => {
+                                     const val = e.target.value.trim();
+                                     await update(ref(db, `users/${u.id}`), { CustomAppCodePath: val === '' ? null : val });
+                                  }}
+                                  className="w-full bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 rounded-lg p-3 text-xs font-bold font-mono outline-none text-[#000] dark:text-[#fff] focus:border-blue-500"
+                               />
+                               <span className="text-[9px] text-black/40 dark:text-white/40 leading-normal text-left">
+                                 Define a custom verification path Specifically for this user. Uses <code className="text-primary font-mono">{`{userId}`}</code>. Overrides the global pattern.
+                               </span>
+                             </div>
                           </div>
                         </div>
                       </div>
@@ -5548,69 +5625,294 @@ export default function AdminPanel() {
             <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
               <div className="flex items-center gap-4 mb-2">
                 <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
-                  <AlertTriangle size={24} />
+                  <Database size={24} />
                 </div>
                 <div>
-                  <h4 className="font-black uppercase tracking-tight text-black dark:text-white">Game Update Settings</h4>
-                  <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Update Code & Redirect Configuration</p>
+                  <h4 className="font-black uppercase tracking-tight text-black dark:text-white">Global "Update/Code" Settings</h4>
+                  <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Real-time binding check system at path "Update/Code"</p>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 block">Target Update Code</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 block">Global Update Code</label>
+                    <span className="text-[9px] font-mono font-bold text-emerald-500 bg-emerald-500/10 px-1.5 py-0.2 rounded">Update/Code</span>
+                  </div>
                   <input
                     type="text"
-                    value={localUpdateCode}
-                    onChange={(e) => setLocalUpdateCode(e.target.value)}
-                    placeholder="e.g. 100"
-                    className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary text-sm transition-all"
+                    value={globalUpdateCode}
+                    onChange={(e) => setGlobalUpdateCode(e.target.value)}
+                    placeholder="e.g. 786"
+                    className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold font-mono outline-none focus:border-primary text-sm transition-all text-emerald-500"
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 block">Platform Update URL</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 block">Global Update URL</label>
+                    <span className="text-[9px] font-mono font-bold text-orange-500 bg-orange-500/10 px-1.5 py-0.2 rounded">Update/Url</span>
+                  </div>
                   <input
                     type="text"
-                    value={localUpdateUrl}
-                    onChange={(e) => setLocalUpdateUrl(e.target.value)}
+                    value={globalUpdateUrl}
+                    onChange={(e) => setGlobalUpdateUrl(e.target.value)}
                     placeholder="e.g. https://play.google.com/store"
                     className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary text-sm transition-all"
                   />
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 block">Update Alert Message</label>
-                <textarea
-                  value={localUpdateMessage}
-                  onChange={(e) => setLocalUpdateMessage(e.target.value)}
-                  placeholder="Enter the message to display on the update required popup..."
-                  rows={2}
-                  className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary text-sm transition-all resize-none"
-                />
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 block">Global Update Message</label>
+                    <span className="text-[9px] font-mono font-bold text-indigo-500 bg-indigo-500/10 px-1.5 py-0.2 rounded">Update/Message</span>
+                  </div>
+                  <textarea
+                    value={globalUpdateMessage}
+                    onChange={(e) => setGlobalUpdateMessage(e.target.value)}
+                    placeholder="Enter message to display on the update required popup..."
+                    rows={2}
+                    className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary text-sm transition-all resize-none text-black dark:text-white"
+                  />
+                </div>
+
+                <div className="space-y-2 border-t border-black/5 dark:border-white/5 pt-4">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 block">Database Verification Path Pattern</label>
+                    <span className="text-[9px] font-mono font-bold text-blue-500 bg-blue-500/10 px-1.5 py-0.2 rounded">Update/CheckedPathPattern</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={globalCheckedPathPattern}
+                    onChange={(e) => setGlobalCheckedPathPattern(e.target.value)}
+                    placeholder="e.g. users/{userId}/AppCode"
+                    className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold font-mono outline-none focus:border-blue-500 text-sm transition-all text-blue-550 dark:text-blue-400"
+                  />
+                  <p className="text-[10px] text-black/50 dark:text-white/40 leading-relaxed">
+                    Specify the dynamic check node inside your Realtime Database. Use <code className="text-blue-500 bg-blue-500/5 px-1 py-0.5 rounded font-mono font-black">{`{userId}`}</code> which replaces dynamically with the active user's ID at runtime.
+                  </p>
+
+                  <div className="pt-1.5 flex flex-wrap gap-1.5">
+                    <span className="text-[9px] font-black uppercase text-black/30 dark:text-white/30 mr-1 self-center">Presets:</span>
+                    {[
+                      { name: 'Users AppCode (Default)', val: 'users/{userId}/AppCode' },
+                      { name: 'Devices Path', val: 'UserDevices/{userId}/appCode' },
+                      { name: 'Custom Node Check', val: 'appCodes/{userId}' },
+                      { name: 'Direct Root Node', val: '{userId}/AppCode' }
+                    ].map((ps) => (
+                      <button
+                        key={ps.val}
+                        type="button"
+                        onClick={() => setGlobalCheckedPathPattern(ps.val)}
+                        className={`text-[9px] font-bold px-2 py-1 rounded-md transition-all ${globalCheckedPathPattern === ps.val ? 'bg-blue-500 text-white' : 'bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-black/60 dark:text-white/60'}`}
+                      >
+                        {ps.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
-              <button
-                onClick={async () => {
-                  if (!localUpdateCode) {
-                    await alert({ title: 'Validation Error', description: 'Please enter a valid update code.', type: 'error' });
-                    return;
-                  }
-                  await update(ref(db, 'settings'), {
-                    code: localUpdateCode,
-                    updateCodeSettings: {
-                      code: localUpdateCode,
-                      updateUrl: localUpdateUrl,
-                      message: localUpdateMessage
+              <div className="flex flex-col gap-3 pt-2">
+                <button
+                  onClick={async () => {
+                    if (!globalUpdateCode.trim()) {
+                      await alert({ title: 'Validation Error', description: 'Please enter a valid update code.', type: 'error' });
+                      return;
                     }
-                  });
-                  await alert({ title: 'Settings Saved', description: 'Game update settings saved successfully!', type: 'success' });
-                }}
-                className="w-full py-6 bg-primary text-black rounded-3xl font-black uppercase tracking-widest text-xs transition-all border border-primary/20 shadow-lg shadow-primary/10 hover:scale-[1.01] active:scale-95"
-              >
-                Save Update Settings
-              </button>
+                    if (!globalCheckedPathPattern.trim()) {
+                      await alert({ title: 'Validation Error', description: 'Please enter a path pattern expression template.', type: 'error' });
+                      return;
+                    }
+                    await update(ref(db, 'Update'), {
+                      Code: globalUpdateCode.trim(),
+                      Url: globalUpdateUrl.trim(),
+                      Message: globalUpdateMessage.trim(),
+                      CheckedPathPattern: globalCheckedPathPattern.trim()
+                    });
+                    
+                    // Also mirror into our legacy settings object if needed
+                    await update(ref(db, 'settings'), {
+                      code: globalUpdateCode.trim(),
+                      updateCodeSettings: {
+                        code: globalUpdateCode.trim(),
+                        updateUrl: globalUpdateUrl.trim(),
+                        message: globalUpdateMessage.trim()
+                      }
+                    });
+
+                    await alert({ title: 'Update Node Saved', description: 'Real-time "Update" node and dynamically monitored check path saved successfully!', type: 'success' });
+                  }}
+                  className="w-full py-5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs transition-all border border-emerald-500/20 shadow-lg shadow-emerald-500/10 hover:scale-[1.01] active:scale-95"
+                >
+                  Save Global "Update" Node (Code & Path Pattern)
+                </button>
+
+                {/* DB Transference & Cloning utility card */}
+                <div className="mt-4 p-5 bg-black/10 dark:bg-black/50 rounded-[2rem] border border-black/5 dark:border-white/5 space-y-4">
+                  <div>
+                    <h5 className="text-xs font-black uppercase text-black/80 dark:text-white/80 flex items-center gap-2">
+                      <Share2 size={14} className="text-blue-500 animate-pulse" />
+                      Database AppCode Path Transference Tool
+                    </h5>
+                    <p className="text-[10px] text-black/50 dark:text-white/40 mt-1 leading-normal">
+                      Transfer all users' registration AppCodes dynamically from one node/subbranch in your database to another!
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">Source Path Pattern</label>
+                      <input
+                        type="text"
+                        placeholder="users/{userId}/AppCode"
+                        value={transferenceSourcePath}
+                        onChange={(e) => setTransferenceSourcePath(e.target.value)}
+                        className="w-full bg-white dark:bg-black font-mono text-[11px] p-2.5 rounded-xl border border-black/10 dark:border-white/10"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">Target Destination Path</label>
+                      <input
+                        type="text"
+                        placeholder="UserDevices/{userId}/appCode"
+                        value={transferenceTargetPath}
+                        onChange={(e) => setTransferenceTargetPath(e.target.value)}
+                        className="w-full bg-white dark:bg-black font-mono text-[11px] p-2.5 rounded-xl border border-black/10 dark:border-white/10 text-emerald-500"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={async () => {
+                      if (!transferenceSourcePath.trim() || !transferenceTargetPath.trim()) {
+                        await alert({ title: 'Validation Error', description: 'Both source and target path patterns must be provided.', type: 'error' });
+                        return;
+                      }
+
+                      const confirmed = await confirm({
+                        title: 'Confirm Database Migration?',
+                        description: `This tool will fetch all current users. For each user, it will copy the value stored at "${transferenceSourcePath}" to their new target sub-node "${transferenceTargetPath}". Do you want to proceed?`,
+                        type: 'confirm'
+                      });
+                      if (!confirmed) return;
+
+                      setIsTransferring(true);
+                      try {
+                        const usersSnapshot = await get(ref(db, 'users'));
+                        if (!usersSnapshot.exists()) {
+                          await alert({ title: 'Error', description: 'No users branch found in database.', type: 'error' });
+                          setIsTransferring(false);
+                          return;
+                        }
+
+                        const usersData = usersSnapshot.val();
+                        const userIds = Object.keys(usersData);
+                        const updates: any = {};
+                        let successCount = 0;
+
+                        for (const uid of userIds) {
+                          const solvedSrc = transferenceSourcePath.replace(/{userId}/g, uid);
+                          const solvedTgt = transferenceTargetPath.replace(/{userId}/g, uid);
+
+                          const srcValSnapshot = await get(ref(db, solvedSrc));
+                          if (srcValSnapshot.exists()) {
+                            updates[solvedTgt] = srcValSnapshot.val();
+                            successCount++;
+                          } else if (usersData[uid]?.AppCode !== undefined) {
+                            // Fallback check: Look up user item object properties directly if path was local user child
+                            updates[solvedTgt] = String(usersData[uid].AppCode).trim();
+                            successCount++;
+                          }
+                        }
+
+                        if (successCount > 0) {
+                          await update(ref(db), updates);
+                          await alert({
+                            title: 'Transference Complete',
+                            description: `Successfully migrated & paired AppCodes of ${successCount} users into target branch: "${transferenceTargetPath}" safely with full data integrity!`,
+                            type: 'success'
+                          });
+                        } else {
+                          await alert({
+                            title: 'Validation Failed',
+                            description: 'No AppCode data found at the specified source path pattern to transfer. Check your source path.',
+                            type: 'error'
+                          });
+                        }
+                      } catch (err: any) {
+                        await alert({
+                          title: 'Migration Failure',
+                          description: err.message,
+                          type: 'error'
+                        });
+                      } finally {
+                        setIsTransferring(false);
+                      }
+                    }}
+                    disabled={isTransferring}
+                    className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 text-white rounded-xl font-black uppercase tracking-widest text-[10px] transition-all hover:scale-[1.01] flex items-center justify-center gap-2"
+                  >
+                    {isTransferring ? (
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    ) : (
+                      <Share2 size={12} />
+                    )}
+                    {isTransferring ? 'Cloning & Migrating Paths...' : 'Execute Path Transference'}
+                  </button>
+                </div>
+
+                <button
+                  onClick={async () => {
+                    if (!globalUpdateCode.trim()) {
+                      await alert({ title: 'Requirements Missed', description: 'Please enter a global update code first before linking users.', type: 'error' });
+                      return;
+                    }
+
+                    const confirmed = await confirm({
+                      title: 'Bulk Match AppCode',
+                      description: `Are you sure you want to set "users/{userId}/AppCode" of ALL users to "${globalUpdateCode.trim()}"? This will link/bypass the update blocker block for all existing users immediately.`,
+                      type: 'confirm'
+                    });
+                    if (!confirmed) return;
+
+                    try {
+                      const usersSnapshot = await get(ref(db, 'users'));
+                      if (usersSnapshot.exists()) {
+                        const allUsers = usersSnapshot.val();
+                        const updates: any = {};
+                        Object.keys(allUsers).forEach((userId) => {
+                          updates[`users/${userId}/AppCode`] = globalUpdateCode.trim();
+                        });
+                        await update(ref(db), updates);
+                        await alert({
+                          title: 'Success',
+                          description: `Successfully matched & linked ${Object.keys(allUsers).length} users' AppCode to "${globalUpdateCode.trim()}" in Firebase RTDB.`,
+                          type: 'success'
+                        });
+                      } else {
+                        await alert({
+                          title: 'Error',
+                          description: 'No users found in database to link.',
+                          type: 'error'
+                        });
+                      }
+                    } catch (err: any) {
+                      await alert({
+                        title: 'Bulk Sync Failed',
+                        description: err.message,
+                        type: 'error'
+                      });
+                    }
+                  }}
+                  className="w-full py-5 bg-indigo-600 hover:bg-indigo-500 border border-indigo-550/20 text-white rounded-2xl font-black uppercase tracking-widest text-xs transition-all flex items-center justify-center gap-2 hover:scale-[1.01] active:scale-95"
+                >
+                  <Users size={16} />
+                  Link All Users' AppCode to "{globalUpdateCode}"
+                </button>
+              </div>
             </div>
           </div>
         );

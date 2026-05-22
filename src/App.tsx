@@ -8,7 +8,7 @@ import Auth from './components/Auth';
 import WaitingRoom from './components/WaitingRoom';
 import MainMenu from './components/MainMenu';
 import NotificationManager from './components/NotificationManager';
-import UpdateGuard from './components/UpdateGuard';
+import UpdateBlocker from './components/UpdateBlocker';
 import { AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 
@@ -34,24 +34,22 @@ function AppContent() {
   );
 
   return (
-    <UpdateGuard>
-      <div className={containerClass}>
-        {loading ? (
-          <div className="flex flex-col items-center justify-center min-h-screen">
-            <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-          </div>
-        ) : !currentUser ? (
-          <Auth />
-        ) : currentUser.status === 'pending' ? (
-          <WaitingRoom />
-        ) : (
-          <>
-            <NotificationManager />
-            <MainMenu />
-          </>
-        )}
-      </div>
-    </UpdateGuard>
+    <div className={containerClass}>
+      {loading ? (
+        <div className="flex flex-col items-center justify-center min-h-screen">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+        </div>
+      ) : !currentUser ? (
+        <Auth />
+      ) : currentUser.status === 'pending' ? (
+        <WaitingRoom />
+      ) : (
+        <UpdateBlocker>
+          <NotificationManager />
+          <MainMenu />
+        </UpdateBlocker>
+      )}
+    </div>
   );
 }
 
