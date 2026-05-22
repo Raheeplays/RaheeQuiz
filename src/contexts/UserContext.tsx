@@ -24,6 +24,18 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const logout = async () => {
+    const activeUserId = impersonatedUser?.id || currentUser?.id;
+    if (activeUserId) {
+      const nowTimeStr = new Date().toLocaleString('en-US', {
+        dateStyle: 'medium',
+        timeStyle: 'medium'
+      });
+      try {
+        await update(ref(db, `users/${activeUserId}`), { lastPlayedTime: nowTimeStr });
+      } catch (err) {
+        console.error("Failed to update lastPlayedTime on logout:", err);
+      }
+    }
     await auth.signOut();
     setImpersonatedUser(null);
     setCurrentUser(null);
@@ -139,12 +151,21 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
             // --- Daily Login & Streak Logic ---
             const today = new Date().toISOString().split('T')[0];
+            const nowTimeStr = new Date().toLocaleString('en-US', {
+              dateStyle: 'medium',
+              timeStyle: 'medium'
+            });
+            
+            // Set current precise last login time and date
+            userData.lastLoginTime = nowTimeStr;
+            updates.lastLoginTime = nowTimeStr;
+            needsUpdate = true;
+
             if (userData.lastLoginDate !== today) {
               userData.raheeCoins = (userData.raheeCoins || 0) + 100;
               userData.lastLoginDate = today;
               updates.raheeCoins = userData.raheeCoins;
               updates.lastLoginDate = today;
-              needsUpdate = true;
             }
 
             // Streak check
@@ -214,6 +235,31 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       if (unsubscribeDb) unsubscribeDb();
     };
   }, []);
+
+  // Synchronize dynamic exit lastPlayedTime
+  useEffect(() => {
+    const activeUserId = impersonatedUser?.id || currentUser?.id;
+    if (!activeUserId) return;
+
+    const recordExitPlayedTime = () => {
+      const nowTimeStr = new Date().toLocaleString('en-US', {
+        dateStyle: 'medium',
+        timeStyle: 'medium'
+      });
+      update(ref(db, `users/${activeUserId}`), {
+        lastPlayedTime: nowTimeStr
+      }).catch((e) => console.error("Error setting exit lastPlayedTime:", e));
+    };
+
+    window.addEventListener('beforeunload', recordExitPlayedTime);
+    window.addEventListener('pagehide', recordExitPlayedTime);
+
+    return () => {
+      window.removeEventListener('beforeunload', recordExitPlayedTime);
+      window.removeEventListener('pagehide', recordExitPlayedTime);
+      recordExitPlayedTime();
+    };
+  }, [currentUser?.id, impersonatedUser?.id]);
 
   return (
     <UserContext.Provider value={{ 

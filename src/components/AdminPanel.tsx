@@ -86,6 +86,7 @@ export default function AdminPanel() {
   const [globalUpdateUrl, setGlobalUpdateUrl] = useState('');
   const [globalUpdateMessage, setGlobalUpdateMessage] = useState('');
   const [globalCheckedPathPattern, setGlobalCheckedPathPattern] = useState('users/{userId}/AppCode');
+  const [globalUpdateHelpMessage, setGlobalUpdateHelpMessage] = useState('Please Contact Developer Or Admin For More Info');
 
   // Database AppCode path transference tool states
   const [transferenceSourcePath, setTransferenceSourcePath] = useState('users/{userId}/AppCode');
@@ -101,6 +102,7 @@ export default function AdminPanel() {
         setGlobalUpdateUrl(val.Url || '');
         setGlobalUpdateMessage(val.Message || '');
         setGlobalCheckedPathPattern(val.CheckedPathPattern || 'users/{userId}/AppCode');
+        setGlobalUpdateHelpMessage(val.HelpMessage || 'Please Contact Developer Or Admin For More Info');
       }
     });
     return () => unsubscribe();
@@ -5678,6 +5680,20 @@ export default function AdminPanel() {
                   />
                 </div>
 
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 block">Global Contact Help Message</label>
+                    <span className="text-[9px] font-mono font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.2 rounded">Update/HelpMessage</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={globalUpdateHelpMessage}
+                    onChange={(e) => setGlobalUpdateHelpMessage(e.target.value)}
+                    placeholder="e.g. Please Contact Developer Or Admin For More Info"
+                    className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary text-sm transition-all text-black dark:text-white"
+                  />
+                </div>
+
                 <div className="space-y-2 border-t border-black/5 dark:border-white/5 pt-4">
                   <div className="flex items-center justify-between">
                     <label className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 block">Database Verification Path Pattern</label>
@@ -5730,7 +5746,8 @@ export default function AdminPanel() {
                       Code: globalUpdateCode.trim(),
                       Url: globalUpdateUrl.trim(),
                       Message: globalUpdateMessage.trim(),
-                      CheckedPathPattern: globalCheckedPathPattern.trim()
+                      CheckedPathPattern: globalCheckedPathPattern.trim(),
+                      HelpMessage: globalUpdateHelpMessage.trim()
                     });
                     
                     // Also mirror into our legacy settings object if needed

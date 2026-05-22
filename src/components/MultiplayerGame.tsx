@@ -62,6 +62,22 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
     }
   }, [currentUser?.id]);
 
+  // Track last played time when player quits the multiplayer game screen to go back to main screen
+  useEffect(() => {
+    return () => {
+      if (currentUser?.id) {
+        const nowTimeStr = new Date().toLocaleString('en-US', {
+          dateStyle: 'medium',
+          timeStyle: 'medium'
+        });
+        update(ref(db, `users/${currentUser.id}`), {
+          lastPlayedTime: nowTimeStr,
+          lastPlayedDate: new Date().toISOString().split('T')[0]
+        }).catch((e) => console.error("Failed to update lastPlayedTime on multiplayer exit:", e));
+      }
+    };
+  }, [currentUser?.id]);
+
   const handleSendSpecialMessage = async () => {
     if (!specialMessage.trim() || !currentUser) return;
     

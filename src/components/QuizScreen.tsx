@@ -69,6 +69,22 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
       });
     }
   }, [currentUser?.id]);
+
+  // Track last played time when player quits the quiz screen to go back to main screen
+  useEffect(() => {
+    return () => {
+      if (currentUser?.id) {
+        const nowTimeStr = new Date().toLocaleString('en-US', {
+          dateStyle: 'medium',
+          timeStyle: 'medium'
+        });
+        update(ref(db, `users/${currentUser.id}`), {
+          lastPlayedTime: nowTimeStr,
+          lastPlayedDate: new Date().toISOString().split('T')[0]
+        }).catch((e) => console.error("Failed to update lastPlayedTime on quiz exit:", e));
+      }
+    };
+  }, [currentUser?.id]);
   
   const targetTopicIdsRaw = eventId ? (propTopicIds || []) : (propTopicIds || (currentUser?.selectedTopicIds || (currentUser?.selectedNicheId ? [currentUser.selectedNicheId] : (currentUser?.selectedTopicId ? [currentUser.selectedTopicId] : []))));
   const targetTopicIdsStr = JSON.stringify(targetTopicIdsRaw);
@@ -355,6 +371,10 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
       rank: newRank,
       streak: newStreak,
       lastPlayedDate: today,
+      lastPlayedTime: new Date().toLocaleString('en-US', {
+        dateStyle: 'medium',
+        timeStyle: 'medium'
+      }),
       playedDates: Array.from(new Set([...(currentUser.playedDates || []), today])),
       lives: newLives,
       currentQuizIndex: newIndex,

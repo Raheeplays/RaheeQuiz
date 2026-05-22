@@ -21,7 +21,9 @@ export interface User {
   pendingAvatarUrl?: string | null;
   lastPlayed?: number;
   lastLoginDate?: string; // YYYY-MM-DD
+  lastLoginTime?: string; // e.g. "May 22, 2026, 11:20 AM"
   lastPlayedDate?: string; // YYYY-MM-DD
+  lastPlayedTime?: string; // e.g. "May 22, 2026, 11:25 AM"
   streak?: number;
   lives?: {
     count: number;
