@@ -12,16 +12,28 @@ interface ThemeContextType {
   setVibrationEnabled: (val: boolean) => void;
   activeSkin: keyof typeof SKINS;
   customization: Settings['customization'] | undefined;
+  lastThemeChangedAt: number | null;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [customization, setCustomization] = useState<Settings['customization']>();
-  const [isDark, setIsDark] = useState(() => {
+  const [isDark, setIsDarkState] = useState(() => {
     const saved = localStorage.getItem('theme_dark');
     return saved ? JSON.parse(saved) : false; // Default light now as requested but can toggle
   });
+  const [lastThemeChangedAt, setLastThemeChangedAt] = useState<number | null>(() => {
+    const saved = localStorage.getItem('last_theme_changed_time');
+    return saved ? Number(saved) : null;
+  });
+
+  const setIsDark = (val: boolean) => {
+    setIsDarkState(val);
+    const now = Date.now();
+    setLastThemeChangedAt(now);
+    localStorage.setItem('last_theme_changed_time', String(now));
+  };
 
   const [soundEnabled, setSoundEnabled] = useState(() => {
     const saved = localStorage.getItem('sound_enabled');
@@ -93,7 +105,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       vibrationEnabled, 
       setVibrationEnabled, 
       activeSkin,
-      customization
+      customization,
+      lastThemeChangedAt
     }}>
       <div className={activeSkin}>
         {children}

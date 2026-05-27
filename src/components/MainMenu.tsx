@@ -30,6 +30,7 @@ import { User, Topic } from '../types';
 import { CLASSES, SUBJECTS, CURRENT_VERSION_CODE } from '../constants';
 import { translations } from '../translations';
 import { cn } from '../lib/utils';
+import { logActivity } from '../services/activityService';
 
 const DEFAULT_AVATARS = [
   'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix',
@@ -145,9 +146,15 @@ export default function MainMenu() {
     if (!currentUser) return;
     const today = new Date().toISOString().split('T')[0];
     const lastClaimDate = currentUser.dailyRewards?.lastClaimDate || '';
-    if (lastClaimDate !== today) {
+    
+    // Track daily reward auto-show occurrence in local storage per unique user and day
+    const storageKey = `daily_reward_shown_${currentUser.id}_${today}`;
+    const alreadyShownToday = localStorage.getItem(storageKey) === 'true';
+
+    if (lastClaimDate !== today && !alreadyShownToday) {
       const timer = setTimeout(() => {
         setShowDailyRewards(true);
+        localStorage.setItem(storageKey, 'true');
       }, 1500);
       return () => clearTimeout(timer);
     }
@@ -306,6 +313,32 @@ export default function MainMenu() {
     }
   }, [isImpersonating]);
 
+  // Automatically redirect to active match if one exists in status 'accepted' or 'playing'
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    const matchesRef = ref(db, 'matches');
+    const unsubscribe = onValue(matchesRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const matches = snapshot.val();
+        const activeMatch = Object.values(matches).find((m: any) => 
+          (m.status === 'accepted' || m.status === 'playing') && 
+          m.participants?.[currentUser.id]
+        ) as any;
+
+        if (activeMatch && activeMatch.id !== multiRoomId) {
+          // Verify it is not finished
+          if (activeMatch.status !== 'finished') {
+            setMultiRoomId(activeMatch.id);
+            setIsBotMatch(false);
+          }
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, [currentUser?.id, multiRoomId]);
+
   const checkGameStart = (onSuccess: () => void) => {
     onSuccess();
   };
@@ -377,6 +410,21 @@ export default function MainMenu() {
 
   const toggleTopicSelection = (topicId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    
+    // Find matching topic in hierarchical trees to assess disableMultiSelect flag
+    const findInTopics = (list: Topic[]): Topic | undefined => {
+      for (const t of list) {
+        if (t.id === topicId) return t;
+        if (t.children) {
+          const found = findInTopics(Object.values(t.children));
+          if (found) return found;
+        }
+      }
+      return undefined;
+    };
+    const topic = findInTopics(topics);
+    if (topic?.disableMultiSelect) return;
+
     setSelectedTopicIds(prev => 
       prev.includes(topicId) 
         ? prev.filter(id => id !== topicId) 
@@ -486,6 +534,14 @@ export default function MainMenu() {
       if (plusFifty > 0) rewardDesc += `🎭 50:50 Lifeline `;
       if (plusChange > 0) rewardDesc += `🔄 Change Quiz Lifeline `;
       if (plusHint > 0) rewardDesc += `💡 Hint Lifeline `;
+
+      // Log the activity
+      await logActivity(
+        currentUser.id,
+        currentUser.name || currentUser.username || 'Guest',
+        'claim_daily_rewards',
+        `Claimed Day ${currentDay} Calendar Reward: ${rewardDesc.trim()}`
+      );
 
       setIsClaimingReward(false);
       await alert({
@@ -647,6 +703,15 @@ export default function MainMenu() {
       updates['freeRewards/lastClaimTier1'] = today;
       try {
         await update(ref(db, `users/${currentUser.id}`), updates);
+        
+        // Log the activity
+        await logActivity(
+          currentUser.id,
+          currentUser.name || currentUser.username || 'Guest',
+          'claim_free_reward',
+          "Claimed Free Calendar Tier 1 Boost: 100 Coins (no ads)"
+        );
+
         setIsClaimingReward(false);
         await alert({
           title: "Claimed 100 Coins! 🎉",
@@ -726,6 +791,14 @@ export default function MainMenu() {
     try {
       await update(ref(db, `users/${currentUser.id}`), updates);
       
+      // Log the activity
+      await logActivity(
+        currentUser.id,
+        currentUser.name || currentUser.username || 'Guest',
+        'watch_ad_reward',
+        `Watched Promo Ad & Claimed Tier ${adRewardType} Reward: ${rewardMsg}`
+      );
+
       // Save log entry for ad impression viewing
       try {
         const adLogRef = push(ref(db, 'adLogs'));
@@ -1622,12 +1695,12 @@ export default function MainMenu() {
                     <div className="space-y-2">
                        <p className="text-[10px] font-black uppercase tracking-widest text-black/30 dark:text-white/30 ml-1">Topic Performance</p>
                        <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
-                          {[...topics].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(topic => {
+                          {[...topics].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map((topic, tIdx) => {
                              const stat = currentUser?.scores?.[topic.id];
                              const percentage = stat ? Math.round((stat.correct / stat.total) * 100) : 0;
                              if (!stat) return null;
                              return (
-                                <div key={topic.id} className="bg-black/5 dark:bg-white/5 p-3 rounded-xl flex items-center justify-between border border-black/5 dark:border-white/5">
+                                <div key={`main-topic-stat-${topic.id || tIdx}-${tIdx}`} className="bg-black/5 dark:bg-white/5 p-3 rounded-xl flex items-center justify-between border border-black/5 dark:border-white/5">
                                    <div className="flex items-center gap-3">
                                       <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center text-primary">
                                          <HelpCircle size={14} />
@@ -1850,11 +1923,11 @@ export default function MainMenu() {
                   <div className="space-y-4 mb-8">
                     <h3 className="font-black text-[10px] uppercase tracking-widest text-black/20 dark:text-white/20 ml-2">Topic Knowledge</h3>
                     <div className="space-y-3 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
-                       {[...topics].filter(t => currentUser?.scores?.[t.id]).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(topic => {
+                       {[...topics].filter(t => currentUser?.scores?.[t.id]).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map((topic, tIdx) => {
                           const score = currentUser?.scores?.[topic.id];
                           const percent = Math.round((score?.correct || 0) / (score?.total || 1) * 100);
                           return (
-                             <div key={topic.id} className="space-y-2">
+                             <div key={`topic-knowledge-${topic.id || tIdx}-${tIdx}`} className="space-y-2">
                                 <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-tight">
                                    <span className="text-black dark:text-white">{topic.name}</span>
                                    <span className="text-primary">{percent}%</span>
@@ -1946,7 +2019,7 @@ export default function MainMenu() {
 
                              return sortedOptions.map((topic, tIdx) => (
                                 <motion.div 
-                                   key={`${topic.id}-${tIdx}`}
+                                   key={`sorted-topic-${topic.id || tIdx}-${tIdx}`}
                                    className="flex gap-2"
                                 >
                                    <motion.button 
@@ -1954,7 +2027,7 @@ export default function MainMenu() {
                                       whileTap={{ scale: 0.98 }}
                                       onClick={() => toggleTopicSelection(topic.id)}
                                       className={cn(
-                                         "w-14 h-auto rounded-3xl flex items-center justify-center transition-all border shrink-0",
+                                         topic.disableMultiSelect ? "hidden pointer-events-none" : "w-14 h-auto rounded-3xl flex items-center justify-center transition-all border shrink-0",
                                          selectedTopicIds.includes(topic.id)
                                             ? "bg-primary text-black border-primary"
                                             : "bg-black/5 dark:bg-white/5 text-black/20 dark:text-white/20 border-black/5 dark:border-white/5"

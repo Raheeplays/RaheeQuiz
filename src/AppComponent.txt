@@ -1,0 +1,36 @@
+=== SKETCHWARE / ANDROID SDK ANDROIDMANIFEST.XML HELPER ===
+
+Add these nested nodes under your <application> parent tag in your Manifest Manager / App Component settings in Sketchware:
+
+```xml
+<!-- FCM messaging daemon service definition -->
+<service
+    android:name="RaheeQuiz.in.MyFirebaseMessagingService"
+    android:exported="false">
+    <intent-filter>
+        <action android:name="com.google.firebase.MESSAGING_EVENT" />
+    </intent-filter>
+</service>
+
+<!-- Background Action Broadcast Receiver for ACCEPT/REJECT and friend requests -->
+<receiver 
+    android:name="RaheeQuiz.in.ChallengeActionReceiver"
+    android:exported="false">
+    <intent-filter>
+        <action android:name="RaheeQuiz.in.ACTION_ACCEPT" />
+        <action android:name="RaheeQuiz.in.ACTION_REJECT" />
+        <action android:name="RaheeQuiz.in.ACTION_ACCEPT_FRIEND" />
+        <action android:name="RaheeQuiz.in.ACTION_REJECT_FRIEND" />
+        <action android:name="RaheeQuiz.in.ACTION_SEND_REPLY" />
+    </intent-filter>
+</receiver>
+```
+
+Also, make sure the following top-level permission tags are declared at the very top of your Manifest (above the <application> block):
+
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.VIBRATE" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+```
+=== END OF COMPONENT EXPORT ===

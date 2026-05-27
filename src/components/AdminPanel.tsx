@@ -16,6 +16,7 @@ import Papa from 'papaparse';
 import { motion, AnimatePresence } from 'motion/react';
 import { SKINS, Event } from '../types';
 import { CLASSES, SUBJECTS } from '../constants';
+import { logActivity } from '../services/activityService';
 
 import { generateCertificate } from '../utils/certificate';
 import CertificatePreview from './CertificatePreview';
@@ -41,16 +42,32 @@ export default function AdminPanel() {
   const { isDark, setIsDark } = useTheme();
   const { currentUser: adminUser, settings, impersonateBot, isImpersonating, logout } = useUser();
   const { alert, confirm } = useDialog();
-  const [activeSubTab, setActiveSubTab] = useState('users');
+  const [activeSubTab, setActiveSubTab] = useState('dashboard');
   const [users, setUsers] = useState<User[]>([]);
   const [ads, setAds] = useState<Ad[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [feedback, setFeedback] = useState<Feedback[]>([]);
+  const [reports, setReports] = useState<any[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [specialMessages, setSpecialMessages] = useState<SpecialMessage[]>([]);
   const [currentSkin, setCurrentSkin] = useState('rahee');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [deviceUidInput, setDeviceUidInput] = useState('');
+  const [userLuxThresholdInput, setUserLuxThresholdInput] = useState('');
+  const [editingReportId, setEditingReportId] = useState<string | null>(null);
+  const [reportFilter, setReportFilter] = useState<'all' | 'pending' | 'resolved' | 'dismissed'>('pending');
+  const [editReportForm, setEditReportForm] = useState<any>(null);
+
+  useEffect(() => {
+    if (selectedUser) {
+      setDeviceUidInput(selectedUser.deviceUid || '');
+      setUserLuxThresholdInput(selectedUser.ambientThreshold !== undefined ? String(selectedUser.ambientThreshold) : '');
+    } else {
+      setDeviceUidInput('');
+      setUserLuxThresholdInput('');
+    }
+  }, [selectedUser?.id]);
   const [userHistory, setUserHistory] = useState<QuizHistory[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [historyFilter, setHistoryFilter] = useState('all');
@@ -64,7 +81,7 @@ export default function AdminPanel() {
   const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
   const [topicPath, setTopicPath] = useState<string[]>([]); // Array of IDs representing the path
   const [quizTopicPath, setQuizTopicPath] = useState<Topic[]>([]); 
-  const [newNode, setNewNode] = useState<{ id: string; name: string; description: string; order?: number }>({ id: '', name: '', description: '', order: 0 });
+  const [newNode, setNewNode] = useState<{ id: string; name: string; description: string; order?: number; disableMultiSelect?: boolean }>({ id: '', name: '', description: '', order: 0, disableMultiSelect: false });
   const [nodeEditMode, setNodeEditMode] = useState<string | null>(null);
   const [notifForm, setNotifForm] = useState({
     title: '',
@@ -77,7 +94,12 @@ export default function AdminPanel() {
   });
   const [dbExplorerPath, setDbExplorerPath] = useState<string[]>([]);
   const [dbExplorerData, setDbExplorerData] = useState<any>(null);
+  const [jsonImporterText, setJsonImporterText] = useState('');
+  const [jsonImporterPath, setJsonImporterPath] = useState('');
+  const [jsonImporterMode, setJsonImporterMode] = useState<'update' | 'set'>('update');
+  const [isImportingJson, setIsImportingJson] = useState(false);
   const [tokenLinkInput, setTokenLinkInput] = useState('');
+  const [adminPlayerUsernameInput, setAdminPlayerUsernameInput] = useState('');
   const [localUpdateCode, setLocalUpdateCode] = useState('');
   const [localUpdateUrl, setLocalUpdateUrl] = useState('');
   const [localUpdateMessage, setLocalUpdateMessage] = useState('');
@@ -121,10 +143,15 @@ export default function AdminPanel() {
   }, [selectedUser?.id]);
   const { serviceAccount, setServiceAccount } = useNotifications();
   const [notifSchedules, setNotifSchedules] = useState<any[]>([]);
+  const [notificationReplies, setNotificationReplies] = useState<any[]>([]);
+  const [countdownDuration, setCountdownDuration] = useState<number>(30);
   const [coupons, setCoupons] = useState<any[]>([]);
   const [couponLogs, setCouponLogs] = useState<any[]>([]);
   const [referralLogs, setReferralLogs] = useState<any[]>([]);
   const [adLogs, setAdLogs] = useState<any[]>([]);
+  const [activityLogs, setActivityLogs] = useState<any[]>([]);
+  const [logsSearchFilter, setLogsSearchFilter] = useState('');
+  const [logsTypeFilter, setLogsTypeFilter] = useState('all');
   const [newCouponForm, setNewCouponForm] = useState({ code: '', value: 100, count: 1 });
   const [customTemplates, setCustomTemplates] = useState({
     challenge: { title: 'New Challenge!', body: '{player} has challenged you to a match!' },
@@ -133,8 +160,10 @@ export default function AdminPanel() {
     weeklyReset: { title: 'Weekly Arena Reset!', body: 'A new week begins! Your final rank was #{rank}. Can you top the charts this week?' },
     friendRequest: { title: 'New Friend Request', body: '{player} wants to be your friend!' },
     friendAccept: { title: 'Friend Request Accepted', body: '{player} accepted your friend request!' },
+    approval: { title: 'Account Approved!', body: 'Your account has been approved by the admin. Welcome to Rahee Quiz!', enabled: true, includeName: true },
     questionOrder: 'random' // 'random' or 'sequential'
   });
+  const [pendingTokens, setPendingTokens] = useState<Record<string, string>>({});
   const [isSendingNotif, setIsSendingNotif] = useState(false);
   const [scheduleTime, setScheduleTime] = useState('');
   const [searchTokenUser, setSearchTokenUser] = useState('');
@@ -245,6 +274,62 @@ export default function AdminPanel() {
   }, []);
 
   useEffect(() => {
+    return onValue(ref(db, 'notificationReplies'), (snapshot) => {
+      if (snapshot.exists()) {
+        const val = snapshot.val();
+        const arr = Object.keys(val).map(key => ({
+          id: key,
+          ...val[key]
+        }));
+        setNotificationReplies(arr.sort((a, b) => b.timestamp - a.timestamp));
+      } else {
+        setNotificationReplies([]);
+      }
+    });
+  }, []);
+
+  // Auto-synchronize live notification replies from Android into Activity logs for tracking
+  useEffect(() => {
+    if (notificationReplies.length === 0 || activityLogs.length === 0) return;
+    
+    const syncReplies = async () => {
+      for (const reply of notificationReplies) {
+        const uniqueDetailsId = `[Notification Reply ID: ${reply.id}]`;
+        // Check if we've already logged this reply
+        const alreadyLogged = activityLogs.some(log => log.details && log.details.includes(uniqueDetailsId));
+        if (!alreadyLogged) {
+          const uId = reply.userId || 'android_client';
+          const uName = reply.userName || reply.username || 'Android User';
+          // Call logActivity!
+          await logActivity(
+            uId,
+            uName,
+            'textbox_reply',
+            `Entered Textbox Reply: "${reply.message}" ${uniqueDetailsId}`
+          );
+        }
+      }
+    };
+    
+    syncReplies();
+  }, [notificationReplies, activityLogs]);
+
+  useEffect(() => {
+    return onValue(ref(db, 'adminConfig/activityLogs'), (snapshot) => {
+      if (snapshot.exists()) {
+        const val = snapshot.val();
+        const arr = Object.keys(val).map(key => ({
+          id: key,
+          ...val[key]
+        }));
+        setActivityLogs(arr.sort((a, b) => b.timestamp - a.timestamp));
+      } else {
+        setActivityLogs([]);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
     const dbRef = ref(db, dbExplorerPath.join('/') || '/');
     return onValue(dbRef, (snapshot) => {
       setDbExplorerData(snapshot.exists() ? snapshot.val() : null);
@@ -295,12 +380,52 @@ export default function AdminPanel() {
           if (!tokensSnap.exists()) {
             throw new Error('No FCM tokens found for this player.');
           }
-          const tokens = Object.values(tokensSnap.val()) as string[];
+          const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
           for (const token of tokens) {
             await NotificationService.sendToToken(serviceAccount, token, notifForm.title, notifForm.body, notifForm.imageUrl);
           }
         } else if (notifForm.targetType === 'all') {
-          await NotificationService.sendToAll(serviceAccount, notifForm.title, notifForm.body, notifForm.imageUrl);
+          // 1. Send via FCM Topic Broadcast (topic: 'all_users') - extremely fast and scalable!
+          let topicSent = false;
+          let topicError = null;
+          try {
+            await NotificationService.sendToAll(serviceAccount, notifForm.title, notifForm.body, notifForm.imageUrl);
+            topicSent = true;
+          } catch (e: any) {
+            console.error("FCM Topic Broadcast failed:", e);
+            topicError = e.message;
+          }
+
+          // 2. Fallback / supplementary measure: Send individually to all registered DB tokens
+          const tokensSnap = await get(ref(db, 'fcmTokens'));
+          let successCount = 0;
+          let failCount = 0;
+          
+          if (tokensSnap.exists()) {
+            const allTokensVal = tokensSnap.val();
+            const uniqueTokens = new Set<string>();
+            Object.values(allTokensVal).forEach((userMap: any) => {
+              const tokens = NotificationService.getTokensFromValue(userMap);
+              tokens.forEach(t => uniqueTokens.add(t));
+            });
+            
+            for (const token of uniqueTokens) {
+              try {
+                await NotificationService.sendToToken(serviceAccount, token, notifForm.title, notifForm.body, notifForm.imageUrl);
+                successCount++;
+              } catch (e: any) {
+                console.error(`FCM individual broadcast failure for token ${token}:`, e);
+                failCount++;
+              }
+            }
+          }
+          
+          await alert({ 
+            title: 'Broadcast Complete', 
+            description: `Topic Broadcast: ${topicSent ? 'SUCCESS (Sent to topic: all_users)' : 'FAILED (' + topicError + ')'}. Individual Devices: ${successCount} successfully sent, ${failCount} failed.`, 
+            type: topicSent ? 'success' : 'warning' 
+          });
+          return;
         } else if (notifForm.targetType === 'topic') {
           await NotificationService.sendToTopic(serviceAccount, notifForm.topic, notifForm.title, notifForm.body, notifForm.imageUrl);
         } else {
@@ -324,6 +449,192 @@ export default function AdminPanel() {
     }
   };
 
+  const sendTestNotificationType = async (type: 'challenge' | 'reply_accepted' | 'reply_rejected' | 'countdown' | 'textbox_reply' | 'raw' | 'friend_request' | 'friend_accept' | 'friend_reject') => {
+    if (!serviceAccount) {
+      await alert({ title: 'Error', description: 'Please upload Admin SDK JSON first.', type: 'error' });
+      return;
+    }
+
+    let targetTokens: string[] = [];
+    let userId = "";
+
+    if (notifForm.targetType === 'player') {
+      if (!notifForm.targetUserId) {
+        await alert({ title: 'Error', description: 'Please select a Target Player first.', type: 'error' });
+        return;
+      }
+      userId = notifForm.targetUserId;
+      const tokensSnap = await get(ref(db, `fcmTokens/${userId}`));
+      if (tokensSnap.exists()) {
+        targetTokens = NotificationService.getTokensFromValue(tokensSnap.val());
+      }
+    } else if (notifForm.targetType === 'all') {
+      const tokensSnap = await get(ref(db, 'fcmTokens'));
+      if (tokensSnap.exists()) {
+        const allTokensVal = tokensSnap.val();
+        const uniqueTokens = new Set<string>();
+        Object.values(allTokensVal).forEach((userMap: any) => {
+          const tokens = NotificationService.getTokensFromValue(userMap);
+          tokens.forEach(t => uniqueTokens.add(t));
+        });
+        targetTokens = Array.from(uniqueTokens);
+      }
+    } else if (notifForm.targetType === 'token') {
+      if (!notifForm.token) {
+        await alert({ title: 'Error', description: 'Please enter an FCM Token first.', type: 'error' });
+        return;
+      }
+      targetTokens = [notifForm.token];
+    } else {
+      await alert({ title: 'Error', description: 'Testing is supported for "All Users", "Single Player", or "Specific Token" target types.', type: 'error' });
+      return;
+    }
+
+    if (targetTokens.length === 0 && notifForm.targetType !== 'all') {
+      await alert({ title: 'Error', description: 'No active FCM tokens found for the target.', type: 'error' });
+      return;
+    }
+
+    setIsSendingNotif(true);
+    try {
+      let title = "";
+      let body = "";
+      let pushData: { [key: string]: string } = {};
+
+      if (type === 'challenge') {
+        title = "RaheeQuiz Match Challenge!";
+        body = "Admin has challenged you to an active match. Accept now!";
+        pushData = {
+          action_type: 'challenge',
+          roomId: 'test_room_' + Math.floor(Math.random() * 900000),
+          hostId: adminUser?.id || 'admin_test_host',
+          hostName: adminUser?.name || 'Admin Tester',
+          targetUserId: userId || 'test_target'
+        };
+      } else if (type === 'reply_accepted') {
+        title = "Challenge Accepted! (Test)";
+        body = "Admin has accepted your match challenge. Open to play!";
+        pushData = {
+          action_type: 'reply_accepted',
+          roomId: 'test_room_' + Math.floor(Math.random() * 900000),
+          opponentId: adminUser?.id || 'admin_test_host',
+          opponentName: adminUser?.name || 'Admin Tester'
+        };
+      } else if (type === 'reply_rejected') {
+        title = "Challenge Rejected (Test)";
+        body = "Admin has declined your match challenge.";
+        pushData = {
+          action_type: 'reply_rejected',
+          roomId: 'test_room_' + Math.floor(Math.random() * 900000),
+          opponentId: adminUser?.id || 'admin_test_host',
+          opponentName: adminUser?.name || 'Admin Tester'
+        };
+      } else if (type === 'countdown') {
+        title = "Exam Schedule Starting (Test)";
+        body = "The custom physical geology exam is starting. Hurry!";
+        pushData = {
+          action_type: 'countdown',
+          durationSeconds: countdownDuration.toString(),
+          title: "Exam Starting Now",
+          body: "Answer questions quickly before time expires!"
+        };
+      } else if (type === 'textbox_reply') {
+        title = "Feedback Input Request (Test)";
+        body = "We want your feedback. Respond directly in this notification!";
+        pushData = {
+          action_type: 'textbox_reply',
+          title: "Feedback Questionnaire",
+          body: "Are you enjoying the app? Please type below and press send:"
+        };
+      } else if (type === 'friend_request') {
+        title = "New Friend Request";
+        body = `${adminUser?.name || 'Admin'} wants to be your friend!`;
+        pushData = {
+          action_type: 'friend_request',
+          senderId: adminUser?.id || 'admin_test_host',
+          senderName: adminUser?.name || 'Admin Tester',
+          targetUserId: userId || 'test_target',
+          targetUserName: 'Opponent'
+        };
+      } else if (type === 'friend_accept') {
+        title = "Friend Request Accepted";
+        body = `${adminUser?.name || 'Admin'} accepted your friend request!`;
+        pushData = {
+          action_type: 'friend_accept_test'
+        };
+      } else if (type === 'friend_reject') {
+        title = "Friend Request Declined";
+        body = `${adminUser?.name || 'Admin'} rejected your friend request`;
+        pushData = {
+          action_type: 'friend_reject_test'
+        };
+      } else {
+        // Raw notification - reads directly from Admin Notification Panel Title & Body forms!
+        title = notifForm.title || "Admin Update Notification";
+        body = notifForm.body || "This is a raw notification with no buttons.";
+      }
+
+      let topicSent = false;
+      let topicError = null;
+
+      // 1. If Target Type is "All Users", trigger real FCM Topic Broadcast via the auto-subscribed 'all_users' topic!
+      if (notifForm.targetType === 'all') {
+        try {
+          const imgUrl = notifForm.imageUrl || undefined;
+          await NotificationService.sendToAll(serviceAccount, title, body, imgUrl, type === 'raw' ? undefined : pushData);
+          topicSent = true;
+        } catch (topicErr: any) {
+          console.error("FCM test topic broadcast failed:", topicErr);
+          topicError = topicErr.message;
+        }
+      }
+
+      let successCount = 0;
+      let failCount = 0;
+      let lastErrorMessage = "";
+
+      // 2. Fallback: deliver individually to active tokens
+      for (const token of targetTokens) {
+        try {
+          if (type === 'raw') {
+            const imgUrl = notifForm.imageUrl || undefined;
+            await NotificationService.sendToToken(serviceAccount, token, title, body, imgUrl, undefined);
+          } else {
+            await NotificationService.sendToToken(serviceAccount, token, title, body, undefined, pushData);
+          }
+          successCount++;
+        } catch (tokErr: any) {
+          console.error(`FCM test send failed for token ${token}:`, tokErr);
+          failCount++;
+          lastErrorMessage = tokErr.message || "Unknown error";
+        }
+      }
+
+      if (successCount === 0 && failCount > 0 && !topicSent) {
+        let errMsg = lastErrorMessage;
+        if (errMsg.includes('Requested entity was not found')) {
+          errMsg = "Requested entity was not found. This standard FCM error means that the target device's FCM token is invalid or expired for this service account's project. Please re-run the Android app, check your linked FCM tokens, or upload an Admin SDK JSON matching the project!";
+        }
+        throw new Error(`Failed to deliver notifications to any device: ${errMsg}`);
+      }
+
+      await alert({ 
+        title: 'Test Broadcast Completed', 
+        description: `Successfully sent test "${type}" notification! ${notifForm.targetType === 'all' ? `Topic Broadcast: ${topicSent ? 'SUCCESS' : 'FAILED (' + topicError + ')'}. ` : ''}Reached: ${successCount} devices (${failCount} expired devices skipped).`, 
+        type: 'success' 
+      });
+    } catch (err: any) {
+      console.error("Test send error:", err);
+      let errMsg = err.message || 'Unknown notification error occurred.';
+      if (errMsg.includes('Requested entity was not found')) {
+        errMsg = "Requested entity was not found. This standard FCM error means that the target device's FCM token is invalid or expired for this service account's project. Please re-run the Android app, check your linked FCM tokens, or upload an Admin SDK JSON matching the project!";
+      }
+      await alert({ title: 'Error Sending Push', description: errMsg, type: 'error' });
+    } finally {
+      setIsSendingNotif(false);
+    }
+  };
+
   const updateTemplates = async () => {
     await set(ref(db, 'customNotifications'), customTemplates);
     await alert({ title: 'Success', description: 'Templates updated!', type: 'success' });
@@ -335,7 +646,7 @@ export default function AdminPanel() {
       const tokensRef = ref(db, `fcmTokens/${userId}`);
       const snapshot = await get(tokensRef);
       if (snapshot.exists()) {
-        const existingTokens = Object.values(snapshot.val());
+        const existingTokens = NotificationService.getTokensFromValue(snapshot.val());
         if (existingTokens.includes(token)) {
           await alert({ title: 'Info', description: 'This token is already linked.', type: 'info' });
           return;
@@ -374,7 +685,7 @@ export default function AdminPanel() {
           if (schedule.targetType === 'player') {
             const tokensSnap = await get(ref(db, `fcmTokens/${schedule.targetUserId}`));
             if (tokensSnap.exists()) {
-              const tokens = Object.values(tokensSnap.val()) as string[];
+              const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
               for (const token of tokens) {
                 await NotificationService.sendToToken(authObj, token, payload);
               }
@@ -613,6 +924,14 @@ export default function AdminPanel() {
         setFeedback(Object.entries(data).filter(([_, val]) => val !== null).map(([key, val]: [string, any]) => ({ ...val, id: key })));
       }
     });
+    onValue(ref(db, 'reports'), s => {
+      if (s.exists()) {
+        const data = s.val();
+        setReports(Object.entries(data).filter(([_, val]) => val !== null).map(([key, val]: [string, any]) => ({ ...val, id: key })));
+      } else {
+        setReports([]);
+      }
+    });
     onValue(ref(db, 'ads'), s => {
       if (s.exists()) {
         const data = s.val();
@@ -640,6 +959,7 @@ export default function AdminPanel() {
   
   useEffect(() => {
     if (selectedUser) {
+      setAdminPlayerUsernameInput(selectedUser.username || '');
       const historyRef = ref(db, 'history');
       const unsubscribe = onValue(historyRef, (snapshot) => {
         const data = snapshot.val();
@@ -724,7 +1044,89 @@ export default function AdminPanel() {
     }
   };
 
+  const updateCustomTemplatesDirectly = async (updated: typeof customTemplates) => {
+    setCustomTemplates(updated);
+    await set(ref(db, 'customNotifications'), updated);
+  };
+
+  const linkTokenToUserSilent = async (userId: string, token: string) => {
+    if (!token) return;
+    try {
+      const tokensRef = ref(db, `fcmTokens/${userId}`);
+      const snapshot = await get(tokensRef);
+      if (snapshot.exists()) {
+        const existingTokens = NotificationService.getTokensFromValue(snapshot.val());
+        if (existingTokens.includes(token)) {
+          return;
+        }
+      }
+      await push(ref(db, `fcmTokens/${userId}`), token);
+    } catch (err) {
+      console.error("Token link silent failed:", err);
+    }
+  };
+
+  const sendApprovalNotification = async (userId: string, userName: string) => {
+    const config = customTemplates.approval || { title: 'Account Approved!', body: 'Your account has been approved by the admin. Welcome to Rahee Quiz!', enabled: true, includeName: true };
+    if (!config.enabled) {
+      console.log("Approval notification is disabled globally.");
+      return;
+    }
+
+    if (!serviceAccount) {
+      console.warn("Service account not loaded. Cannot send approval notification.");
+      return;
+    }
+
+    try {
+      const tokensSnap = await get(ref(db, `fcmTokens/${userId}`));
+      if (!tokensSnap.exists()) {
+        console.warn(`No FCM tokens found for player ${userId}`);
+        return;
+      }
+      const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
+      if (tokens.length === 0) return;
+
+      let bodyText = config.body;
+      if (config.includeName) {
+        bodyText = bodyText.replace(/{player}/g, userName);
+      } else {
+        bodyText = bodyText.replace(/{player}/g, "").replace(/\s\s+/g, ' ').trim();
+      }
+
+      for (const token of tokens) {
+        await NotificationService.sendToToken(serviceAccount, token, config.title, bodyText);
+      }
+      console.log(`Sent approval notification to ${tokens.length} tokens of player ${userName}`);
+    } catch (err) {
+      console.error("Failed to send approval notification:", err);
+    }
+  };
+
+  const approveUserAndNotify = async (user: User, tokenInput?: string) => {
+    try {
+      if (tokenInput && tokenInput.trim()) {
+        await linkTokenToUserSilent(user.id, tokenInput.trim());
+      }
+      await set(ref(db, `users/${user.id}/status`), 'approved');
+      
+      const config = customTemplates.approval || { title: 'Account Approved!', body: 'Your account has been approved by the admin. Welcome to Rahee Quiz!', enabled: true, includeName: true };
+      if (config.enabled) {
+        await sendApprovalNotification(user.id, user.name || '');
+      }
+    } catch (e: any) {
+      console.error("Failed to approve user:", e);
+    }
+  };
+
   const changeUserStatus = async (userId: string, status: any) => {
+    if (status === 'approved') {
+      const user = users.find(u => u.id === userId);
+      if (user) {
+        await approveUserAndNotify(user);
+        return;
+      }
+    }
     await set(ref(db, `users/${userId}/status`), status);
   };
 
@@ -804,15 +1206,10 @@ export default function AdminPanel() {
         return;
       }
 
-      // 2. Create secondary auth instance to avoid signing out the admin
-      const secondaryApp = initializeApp(firebaseConfig, `SecondaryApp_${Date.now()}`);
-      const secondaryAuth = getAuth(secondaryApp);
-      
-      // 3. Create Auth User
-      const authResult = await createUserWithEmailAndPassword(secondaryAuth, finalEmail, newPlayerPassword);
-      const uid = authResult.user.uid;
+      // 2. Generate custom UID
+      const uid = `user_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
-      // 4. Create DB User profile
+      // 3. Create DB User profile
       const userRef = ref(db, `users/${uid}`);
       const newUser: User = {
         id: uid,
@@ -835,10 +1232,6 @@ export default function AdminPanel() {
 
       await set(userRef, newUser);
       
-      // 5. Cleanup secondary app
-      await signOut(secondaryAuth);
-      await deleteApp(secondaryApp);
-
       await alert({ title: 'Success', description: 'Player account created successfully!', type: 'success' });
       setIsAddingUser(false);
       setNewPlayerName('');
@@ -847,13 +1240,9 @@ export default function AdminPanel() {
 
     } catch (err: any) {
       console.error("Failed to create user:", err);
-      let msg = err.message;
-      if (err.code === 'auth/email-already-in-use' || (msg && msg.includes('auth/email-already-in-use'))) {
-        msg = "Username already taken";
-      }
-      await alert({ title: 'Error', description: msg, type: 'error' });
+      await alert({ title: 'Error', description: err.message, type: 'error' });
     } finally {
-      setIsCreatingBot(false);
+      setIsCreatingUser(false);
     }
   };
 
@@ -963,7 +1352,8 @@ export default function AdminPanel() {
     const topicData: any = {
       id: topicId,
       name: newTopic.name,
-      order: newTopic.order || topics.length
+      order: newTopic.order || topics.length,
+      disableMultiSelect: newTopic.disableMultiSelect || false
     };
     
     // Preserve existing children if editing
@@ -975,7 +1365,7 @@ export default function AdminPanel() {
     }
     
     await set(ref(db, `topics/${topicId}`), topicData);
-    setNewTopic({ name: '', order: 0 });
+    setNewTopic({ name: '', order: 0, disableMultiSelect: false });
     setEditingTopicId(null);
     setTopicPath([]);
     if (editingTopicId) {
@@ -1015,7 +1405,8 @@ export default function AdminPanel() {
       id: nodeId,
       name: newNode.name,
       description: newNode.description,
-      order: newNode.order || 0
+      order: newNode.order || 0,
+      disableMultiSelect: newNode.disableMultiSelect || false
     };
     
     if (nodeEditMode) {
@@ -1027,7 +1418,7 @@ export default function AdminPanel() {
     }
 
     await set(ref(db, dbPath), nodeData);
-    setNewNode({ id: '', name: '', description: '', order: 0 });
+    setNewNode({ id: '', name: '', description: '', order: 0, disableMultiSelect: false });
     setNodeEditMode(null);
   };
 
@@ -1774,9 +2165,9 @@ export default function AdminPanel() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {ads.map((ad) => (
+              {ads.map((ad, adIdx) => (
                 <div
-                  key={ad.id}
+                  key={`ad-card-${ad.id || adIdx}-${adIdx}`}
                   className="p-5 bg-white dark:bg-[#111] rounded-[2.5rem] border border-black/5 dark:border-white/5 flex flex-col justify-between"
                 >
                   <div className="space-y-3">
@@ -2190,7 +2581,7 @@ export default function AdminPanel() {
                      onClick={() => {
                        setIsEditingUser(true);
                        setEditName(u.name || '');
-                       setEditId(u.id || '');
+                       setEditId(u.username || '');
                      }}
                      className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-white/60 font-black uppercase tracking-widest text-[8px] hover:bg-white/10 transition-all"
                    >
@@ -2222,11 +2613,7 @@ export default function AdminPanel() {
                          <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Full Name</label>
                          <input 
                            value={editName}
-                           onChange={(e) => {
-                             setEditName(e.target.value);
-                             // Auto-sync ID if it hasn't been manually diverged much
-                             setEditId(e.target.value.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, ''));
-                           }}
+                           onChange={(e) => setEditName(e.target.value)}
                            className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary transition-all"
                            placeholder="Full Name"
                          />
@@ -2262,10 +2649,35 @@ export default function AdminPanel() {
                    <>
                       <h3 className="text-3xl font-black mb-1 uppercase tracking-tighter text-black dark:text-white">{u.name}</h3>
                       <div className="flex flex-col gap-4 mb-6">
-                         <div className="flex items-center justify-center md:justify-start gap-2">
-                            <p className="text-black/40 dark:text-white/40 font-bold uppercase tracking-widest text-xs">Player ID: @{u.id}</p>
-                         </div>
-                         
+                         <div className="flex flex-col items-center md:items-start justify-center md:justify-start gap-1">
+                            <p className="text-primary font-bold uppercase tracking-widest text-[11px]">Username: @{u.username || 'none'}</p>
+                            <p className="text-black/40 dark:text-white/40 font-bold uppercase tracking-widest text-[9px]">UID (Player ID): {u.id}</p>
+                          </div>
+
+                          <div className="bg-black/5 dark:bg-white/5 p-4 rounded-2xl space-y-3">
+                             <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Edit Username</label>
+                             <div className="flex gap-2">
+                                <div className="relative flex-1">
+                                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-primary font-black text-xs">@</span>
+                                   <input 
+                                     value={adminPlayerUsernameInput}
+                                     onChange={(e) => setAdminPlayerUsernameInput(e.target.value)}
+                                     placeholder="Enter new username..."
+                                     className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-xl pl-7 pr-4 py-3 text-xs font-bold text-black dark:text-white outline-none focus:border-primary"
+                                   />
+                                </div>
+                                <button 
+                                  onClick={async () => {
+                                    if (!adminPlayerUsernameInput) return;
+                                    await renameUser(u, u.name || '', adminPlayerUsernameInput);
+                                  }}
+                                  className="bg-primary text-black px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:scale-105 active:scale-95 transition-all"
+                                >
+                                   Save
+                                </button>
+                             </div>
+                          </div>
+
                          <div className="bg-black/5 dark:bg-white/5 p-4 rounded-2xl space-y-3">
                             <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Link FCM Token</label>
                             <div className="flex gap-2">
@@ -2305,6 +2717,63 @@ export default function AdminPanel() {
                                </button>
                             </div>
                          </div>
+
+                         {/* OneLink Device Linkage */}
+                         <div className="bg-black/5 dark:bg-white/5 p-4 rounded-2xl border border-black/10 dark:border-white/5 space-y-3">
+                            <div className="flex items-center justify-between">
+                               <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">OneLink Device Linkage</label>
+                               <span className="text-[8px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold uppercase tracking-widest text-center">Active</span>
+                            </div>
+                            <p className="text-[9px] text-black/40 dark:text-white/40 leading-relaxed px-2">
+                               Link player's device with 15-character UID (supports letters, symbols, and numbers). The game can auto-access 
+                               <span className="font-mono bg-white/10 px-1 py-0.5 rounded text-primary ml-1">UserDevices/{deviceUidInput || "15-char-uid"}</span>
+                            </p>
+                            <div className="flex gap-2">
+                               <input 
+                                 value={deviceUidInput}
+                                 onChange={e => setDeviceUidInput(e.target.value.slice(0, 15))}
+                                 placeholder="e.g. Alphanumeric/Symbol UID"
+                                 className="flex-1 bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 text-xs font-mono font-bold text-black dark:text-white outline-none focus:border-primary"
+                               />
+                               <button 
+                                 onClick={async () => {
+                                   if (deviceUidInput && deviceUidInput.length !== 15) {
+                                     await alert({ title: 'Invalid Link', description: 'Device UID must be exactly 15 characters long (letters, symbols, or numbers allowed).', type: 'error' });
+                                     return;
+                                   }
+                                   await update(ref(db, `users/${u.id}`), { deviceUid: deviceUidInput || null });
+                                   await alert({ title: 'Linked', description: 'Device UID updated successfully.', type: 'success' });
+                                 }}
+                                 className="bg-primary text-black px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:scale-105 active:scale-95 transition-all"
+                               >
+                                  Save
+                               </button>
+                            </div>
+
+                            <div className="pt-2 border-t border-black/5 dark:border-white/5 space-y-2">
+                               <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-1 block">Ambient Mode Override (lx)</label>
+                               <div className="flex gap-2">
+                                  <input 
+                                    type="number"
+                                    value={userLuxThresholdInput}
+                                    onChange={e => setUserLuxThresholdInput(e.target.value)}
+                                    placeholder="e.g. 75 (Using global if empty)"
+                                    className="flex-1 bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 text-xs font-bold text-black dark:text-white outline-none focus:border-primary"
+                                  />
+                                  <button 
+                                    onClick={async () => {
+                                      const parsed = parseInt(userLuxThresholdInput);
+                                      const val = isNaN(parsed) ? null : parsed;
+                                      await update(ref(db, `users/${u.id}`), { ambientThreshold: val });
+                                      await alert({ title: 'Saved', description: 'Player specific threshold override saved.', type: 'success' });
+                                    }}
+                                    className="bg-primary text-black px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:scale-105 active:scale-95 transition-all"
+                                  >
+                                     Save
+                                  </button>
+                                </div>
+                             </div>
+                          </div>
                       </div>
                       <div className="flex flex-wrap justify-center md:justify-start gap-3">
                          <div className="px-4 py-2 bg-black/5 dark:bg-white/5 rounded-xl border border-black/5 dark:border-white/5">
@@ -2349,7 +2818,7 @@ export default function AdminPanel() {
                     className="bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-lg px-3 py-1 text-[10px] font-bold uppercase tracking-widest outline-none text-black/60 dark:text-white/60"
                   >
                     <option value="all">All Topics</option>
-                    {topics.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    {topics.map((t, tIdx) => <option key={`topic-opt1-${t.id || tIdx}-${tIdx}`} value={t.id}>{t.name}</option>)}
                   </select>
                 </div>
                 
@@ -2372,32 +2841,107 @@ export default function AdminPanel() {
                                   <span className="text-[10px] font-black text-white/20 uppercase tracking-[0.2em]">Round {round}</span>
                                   <div className="h-[1px] flex-1 bg-white/5" />
                                </div>
-                               {rounds[Number(round)].map((h, historyIndex) => {
+                                                              {rounds[Number(round)].map((h, historyIndex) => {
                                   const quiz = quizzes.find(q => q.id === h.quizId);
                                   const historyKey = h.id || `hist-${h.timestamp}-${h.quizId}-${historyIndex}`;
+                                  const quizLang = h.language || 'en';
+                                  const questionText = quizLang === 'hi' ? (quiz?.question?.hi || quiz?.question?.en || 'Deleted Quiz') : (quiz?.question?.en || quiz?.question?.hi || 'Deleted Quiz');
+                                  const englishQuestionText = quiz?.question?.en;
+                                  const hindiQuestionText = quiz?.question?.hi;
+
+                                  const selectedOptionText = h.userAnswerIndex !== -1 && quiz?.options?.[quizLang]
+                                    ? quiz.options[quizLang][h.userAnswerIndex] || 'Unknown Option'
+                                    : 'Skipped';
+
+                                  const correctOptionText = quiz?.correctAnswerIndex !== undefined && quiz?.options?.[quizLang]
+                                    ? quiz.options[quizLang][quiz.correctAnswerIndex] || 'Unknown Option'
+                                    : 'Unknown Option';
+
                                   return (
-                                     <div key={historyKey} className="bg-black/5 dark:bg-black/40 p-4 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between hover:bg-black/10 dark:hover:bg-white/5 transition-all group">
-                                        <div>
-                                           <div className="flex items-center gap-2 mb-1">
-                                             <p className="text-[8px] font-black text-primary uppercase px-1.5 py-0.5 bg-primary/10 rounded">{quiz?.topicId || 'Unknown'}</p>
-                                             <p className="text-[8px] font-bold text-white/20 uppercase tracking-widest">{new Date(h.timestamp).toLocaleString()}</p>
+                                     <div key={`${historyKey}-${historyIndex}`} className="bg-white/5 dark:bg-black/30 p-5 rounded-[1.5rem] border border-black/5 dark:border-white/5 flex flex-col gap-3 hover:bg-black/10 dark:hover:bg-white/5 transition-all group">
+                                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 border-b border-black/5 dark:border-white/5 pb-3">
+                                           <div className="space-y-1.5 flex-1 min-w-0">
+                                             <div className="flex flex-wrap items-center gap-2">
+                                               <span className="text-[8px] font-black text-primary uppercase px-1.5 py-0.5 bg-primary/10 rounded">{quiz?.topicId || 'Unknown'}</span>
+                                               
+                                               <span className={cn(
+                                                 "text-[8px] font-black uppercase px-2 py-0.5 rounded-full border",
+                                                 quizLang === 'hi' 
+                                                   ? "bg-amber-500/10 text-amber-500 border-amber-500/20" 
+                                                   : "bg-cyan-500/10 text-cyan-500 border-cyan-500/20"
+                                               )}>
+                                                 {quizLang === 'hi' ? 'Hindi (हिंदी)' : 'English (EN)'}
+                                               </span>
+
+                                               <span className={cn(
+                                                 "text-[8px] font-black uppercase px-2 py-0.5 rounded-full border flex items-center gap-1",
+                                                 h.theme === 'light'
+                                                   ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20"
+                                                   : "bg-slate-700/30 text-slate-400 border-slate-700/30"
+                                               )}>
+                                                 {h.theme === 'light' ? '☀ Light Theme' : '🌙 Dark Theme'}
+                                               </span>
+
+                                               <span className="text-[8px] font-bold text-black/30 dark:text-white/20 uppercase tracking-widest">{new Date(h.timestamp).toLocaleString()}</span>
+                                             </div>
+                                             
+                                             <p className="font-bold text-sm text-black/95 dark:text-white leading-relaxed break-words">
+                                               {questionText}
+                                             </p>
+                                             
+                                             {quizLang === 'hi' && englishQuestionText && (
+                                               <p className="text-[10px] italic text-black/40 dark:text-white/40 leading-relaxed">
+                                                 English: {englishQuestionText}
+                                               </p>
+                                             )}
+                                             
+                                             {quizLang === 'en' && hindiQuestionText && (
+                                               <p className="text-[10px] italic text-black/40 dark:text-white/40 leading-relaxed">
+                                                 हिंदी: {hindiQuestionText}
+                                               </p>
+                                             )}
                                            </div>
-                                           <p className="font-bold text-xs truncate max-w-[200px] sm:max-w-[400px]">{quiz?.question?.en || 'Deleted Quiz'}</p>
-                                        </div>
-                                        <div className="flex items-center gap-2 shrink-0 ml-4">
-                                            <button 
-                                              onClick={() => deleteHistoryItem(h.id)}
-                                              className="p-2 text-white/10 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                                            >
-                                              <Trash2 size={16} />
-                                            </button>
-                                            <div className={cn(
-                                              "w-10 h-10 rounded-2xl flex items-center justify-center",
-                                              h.isCorrect ? "bg-green-500/10 text-green-500 border border-green-500/20" : "bg-red-500/10 text-red-500 border border-red-500/20"
-                                            )}>
-                                               {h.isCorrect ? <CheckCircle size={18} /> : <XCircle size={18} />}
+                                           
+                                           <div className="flex items-center gap-2 shrink-0 self-end sm:self-start">
+                                               <button 
+                                                 onClick={() => deleteHistoryItem(h.id)}
+                                                 className="p-1.5 rounded-lg text-black/30 dark:text-white/10 hover:text-red-500 dark:hover:text-red-500 hover:bg-red-500/10 transition-colors opacity-0 group-hover:opacity-100"
+                                                 title="Delete Entry"
+                                               >
+                                                 <Trash2 size={14} />
+                                               </button>
+                                               <div className={cn(
+                                                 "w-8 h-8 rounded-xl flex items-center justify-center border",
+                                                 h.userAnswerIndex === -1 ? "bg-zinc-500/10 text-zinc-400 border-zinc-500/20" :
+                                                 h.isCorrect ? "bg-green-500/10 text-green-500 border-green-500/20" : "bg-red-500/10 text-red-500 border-red-500/20"
+                                               )}>
+                                                  {h.userAnswerIndex === -1 ? <span className="text-[8px] font-black">SKIP</span> :
+                                                   h.isCorrect ? <CheckCircle size={14} /> : <XCircle size={14} />}
+                                               </div>
                                             </div>
-                                         </div>
+                                        </div>
+                                        
+                                        <div className="p-3 bg-black/5 dark:bg-black/45 rounded-xl border border-black/5 dark:border-white/5 space-y-1 text-[10px]">
+                                           <div className="flex items-start gap-1">
+                                              <span className="font-black text-black/40 dark:text-white/30 uppercase w-20 shrink-0">Chose:</span>
+                                              <span className={cn(
+                                                "font-bold",
+                                                h.userAnswerIndex === -1 ? "text-zinc-400 italic font-medium" :
+                                                h.isCorrect ? "text-green-600 dark:text-green-400" : "text-red-550 dark:text-red-400"
+                                              )}>
+                                                 {selectedOptionText}
+                                              </span>
+                                           </div>
+                                           
+                                           {!h.isCorrect && h.userAnswerIndex !== -1 && (
+                                              <div className="flex items-start gap-1 pt-1 border-t border-black/5 dark:border-white/5 mt-1">
+                                                 <span className="font-black text-black/40 dark:text-white/30 uppercase w-20 shrink-0">Correct Answer:</span>
+                                                 <span className="font-bold text-green-600 dark:text-green-400">
+                                                    {correctOptionText}
+                                                 </span>
+                                              </div>
+                                           )}
+                                        </div>
                                      </div>
                                   );
                                })}
@@ -2454,7 +2998,49 @@ export default function AdminPanel() {
                              <option value="rejected">Reject</option>
                            </select>
                         </div>
-                      </div>
+                     </div>
+
+                     <div className="p-4 bg-white/5 dark:bg-black/20 rounded-2xl border border-black/10 dark:border-white/5 space-y-3">
+                        <p className="text-[10px] font-black uppercase text-primary tracking-widest pl-1">Approval Notification Options</p>
+                        <div className="flex flex-col gap-2">
+                           <label className="flex items-center gap-2 text-xs font-bold text-black/70 dark:text-white/70 cursor-pointer">
+                              <input 
+                                type="checkbox"
+                                checked={customTemplates.approval?.enabled !== false}
+                                onChange={async e => {
+                                  const updated = {
+                                    ...customTemplates,
+                                    approval: {
+                                      ...(customTemplates.approval || { title: 'Account Approved!', body: 'Your account has been approved by the admin. Welcome to Rahee Quiz!', enabled: true, includeName: true }),
+                                      enabled: e.target.checked
+                                    }
+                                  };
+                                  await updateCustomTemplatesDirectly(updated);
+                                }}
+                                className="rounded border-black/10 dark:border-white/10 text-primary focus:ring-primary"
+                              />
+                              Enable Approval Notification
+                           </label>
+                           <label className="flex items-center gap-2 text-xs font-bold text-black/70 dark:text-white/70 cursor-pointer">
+                              <input 
+                                type="checkbox"
+                                checked={customTemplates.approval?.includeName !== false}
+                                onChange={async e => {
+                                  const updated = {
+                                    ...customTemplates,
+                                    approval: {
+                                      ...(customTemplates.approval || { title: 'Account Approved!', body: 'Your account has been approved by the admin. Welcome to Rahee Quiz!', enabled: true, includeName: true }),
+                                      includeName: e.target.checked
+                                    }
+                                  };
+                                  await updateCustomTemplatesDirectly(updated);
+                                }}
+                                className="rounded border-black/10 dark:border-white/10 text-primary focus:ring-primary"
+                              />
+                              Include Player Name ({u.name})
+                           </label>
+                        </div>
+                     </div>
 
                       {u.extraTriesRequested && (
                          <div className="p-4 bg-primary/10 border border-primary/20 rounded-2xl">
@@ -2492,7 +3078,7 @@ export default function AdminPanel() {
                                 className="w-full bg-black/5 dark:bg-white/5 border-none rounded-lg p-2 text-[10px] font-bold uppercase tracking-widest outline-none text-black dark:text-white"
                              >
                                 <option value="">NO FIXED TOPIC</option>
-                                {topics.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                {topics.map((t, tIdx) => <option key={`topic-opt2-${t.id || tIdx}-${tIdx}`} value={t.id}>{t.name}</option>)}
                              </select>
                           </div>
                           <div className="flex flex-col gap-1.5 p-4 bg-white dark:bg-black rounded-2xl border border-black/5 dark:border-white/5">
@@ -2947,7 +3533,7 @@ export default function AdminPanel() {
                         className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary"
                       >
                         <option value="">Choose a player...</option>
-                        {users.filter(u => !u.isBot).map(u => <option key={u.id} value={u.id}>{u.name} (@{u.username})</option>)}
+                        {users.filter(u => !u.isBot).map((u, uIdx) => <option key={`user-opt-${u.id || uIdx}-${uIdx}`} value={u.id}>{u.name} (@{u.username})</option>)}
                       </select>
                     </div>
                   )}
@@ -2960,7 +3546,7 @@ export default function AdminPanel() {
                         className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary"
                       >
                         <option value="all_users">All Users Topic</option>
-                        {topics.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                        {topics.map((t, tIdx) => <option key={`topic-opt3-${t.id || tIdx}-${tIdx}`} value={t.id}>{t.name}</option>)}
                       </select>
                     </div>
                   )}
@@ -2986,6 +3572,158 @@ export default function AdminPanel() {
                     <Send size={18} />
                     Send Now
                   </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Android Challenge Actions Tester */}
+            <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5">
+              <h3 className="text-lg font-black mb-1 flex items-center gap-2 uppercase tracking-tighter">
+                <Bell size={20} className="text-primary" />
+                Android Action Buttons Test
+              </h3>
+              <p className="text-[10px] uppercase font-black text-black/40 dark:text-white/40 tracking-widest mb-6">
+                Test Accept/Reject buttons for package <strong>RaheeQuiz.in</strong>
+              </p>
+              
+              <div className="bg-black/20 p-4 rounded-2xl border border-black/10 dark:border-white/5 space-y-3 mb-6">
+                <p className="text-xs font-bold text-black/60 dark:text-white/60">
+                  How to test:
+                </p>
+                <ol className="list-decimal list-inside text-[11px] text-black/50 dark:text-white/40 space-y-1">
+                  <li>Set Target Type above to <strong className="text-primary">Single Player</strong> or <strong className="text-primary">Specific Token</strong>.</li>
+                  <li>Choose the player you are logged into on the Android app.</li>
+                  <li>Click one of the test actions below to send a push directly and trigger action buttons on your device notification bar!</li>
+                </ol>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                <button 
+                  disabled={isSendingNotif}
+                  onClick={() => sendTestNotificationType('challenge')}
+                  className="w-full bg-primary/20 hover:bg-primary/30 border border-primary/20 text-primary font-black uppercase tracking-widest py-3.5 rounded-2xl transition-all flex items-center justify-center gap-2 text-xs"
+                >
+                  <Send size={14} />
+                  1. Send Challenge Notification (Try Accept / Reject)
+                </button>
+                
+                <button 
+                  disabled={isSendingNotif}
+                  onClick={() => sendTestNotificationType('reply_accepted')}
+                  className="w-full bg-green-500/10 hover:bg-green-500/20 border border-green-500/15 text-green-400 font-black uppercase tracking-widest py-3.5 rounded-2xl transition-all flex items-center justify-center gap-2 text-xs"
+                >
+                  <CheckCircle size={14} />
+                  2. Send "Accept" Reply Notification
+                </button>
+
+                <button 
+                  disabled={isSendingNotif}
+                  onClick={() => sendTestNotificationType('reply_rejected')}
+                  className="w-full bg-red-500/10 hover:bg-red-500/20 border border-red-500/15 text-red-400 font-black uppercase tracking-widest py-3.5 rounded-2xl transition-all flex items-center justify-center gap-2 text-xs"
+                >
+                  <XCircle size={14} />
+                  3. Send "Reject" Reply Notification
+                </button>
+
+                <div className="border-t border-black/10 dark:border-white/10 my-4 pt-4">
+                  <h4 className="text-xs font-black uppercase tracking-wider mb-2 text-primary flex items-center gap-2">
+                    <Clock size={12} />
+                    Exam / Event Countdown Config
+                  </h4>
+                  <div className="flex items-center gap-3">
+                    <input 
+                      type="number"
+                      value={countdownDuration}
+                      min="5"
+                      onChange={e => setCountdownDuration(Math.max(5, parseInt(e.target.value) || 30))}
+                      className="w-24 bg-white/5 dark:bg-black border border-black/15 dark:border-white/10 p-3 rounded-xl text-center font-bold text-xs outline-none focus:border-primary"
+                    />
+                    <span className="text-[10px] text-black/40 dark:text-white/40 font-bold uppercase tracking-wider">
+                      Timer Countdown (seconds)
+                    </span>
+                  </div>
+                </div>
+
+                <button 
+                  disabled={isSendingNotif}
+                  onClick={() => sendTestNotificationType('countdown')}
+                  className="w-full bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/15 text-amber-400 font-black uppercase tracking-widest py-3.5 rounded-2xl transition-all flex items-center justify-center gap-2 text-xs"
+                >
+                  <Clock size={14} />
+                  4. Send Countdown Timer Notification ({countdownDuration}s)
+                </button>
+
+                <button 
+                  disabled={isSendingNotif}
+                  onClick={() => sendTestNotificationType('textbox_reply')}
+                  className="w-full bg-teal-500/10 hover:bg-teal-500/20 border border-teal-500/15 text-teal-400 font-black uppercase tracking-widest py-3.5 rounded-2xl transition-all flex items-center justify-center gap-2 text-xs"
+                >
+                  <MessageSquare size={14} />
+                  5. Send Interactive Textbox Input Notification
+                </button>
+
+                 <button 
+                  disabled={isSendingNotif}
+                  onClick={() => sendTestNotificationType('raw')}
+                  className="w-full bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/15 text-blue-400 font-black uppercase tracking-widest py-3.5 rounded-2xl transition-all flex items-center justify-center gap-2 text-xs"
+                >
+                  <Send size={14} />
+                  6. Send Raw Notification (No buttons - reads panel Title & Body above)
+                </button>
+
+                <button 
+                  disabled={isSendingNotif}
+                  onClick={() => sendTestNotificationType('friend_request')}
+                  className="w-full bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/15 text-indigo-400 font-black uppercase tracking-widest py-3.5 rounded-2xl transition-all flex items-center justify-center gap-2 text-xs"
+                >
+                  <Users size={14} />
+                  7. Send Friend Request (Try Accept/Reject Buttons)
+                </button>
+
+                <button 
+                  disabled={isSendingNotif}
+                  onClick={() => sendTestNotificationType('friend_accept')}
+                  className="w-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/15 text-emerald-400 font-black uppercase tracking-widest py-3.5 rounded-2xl transition-all flex items-center justify-center gap-2 text-xs"
+                >
+                  <CheckCircle size={14} />
+                  8. Send "Accepted Friend" Notification
+                </button>
+
+                <button 
+                  disabled={isSendingNotif}
+                  onClick={() => sendTestNotificationType('friend_reject')}
+                  className="w-full bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/15 text-rose-400 font-black uppercase tracking-widest py-3.5 rounded-2xl transition-all flex items-center justify-center gap-2 text-xs"
+                >
+                  <XCircle size={14} />
+                  9. Send "Declined Friend" Notification
+                </button>
+
+                {/* Real-time Notification Replies Monitor */}
+                <div className="mt-6 border-t border-black/10 dark:border-white/10 pt-4 space-y-3">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-primary flex items-center gap-2">
+                    <MessageSquare size={14} />
+                    Live Notification Replies Monitor
+                  </h4>
+                  <p className="text-[10px] text-black/40 dark:text-white/30 uppercase font-black tracking-wider leading-relaxed">
+                    Replies typed inside the notification textbox from Android devices are received here in real-time.
+                  </p>
+                  <div className="space-y-2 max-h-[180px] overflow-y-auto pr-2 scrollbar-none">
+                    {notificationReplies.length === 0 ? (
+                      <div className="text-center py-5 bg-black/10 dark:bg-black/40 rounded-xl border border-black/5 dark:border-white/5">
+                        <p className="text-[9px] text-black/30 dark:text-white/20 italic font-black uppercase tracking-widest">No replies received yet</p>
+                      </div>
+                    ) : (
+                      notificationReplies.map((rep, repIdx) => (
+                        <div key={`reply-${rep.id || repIdx}`} className="bg-white/5 dark:bg-black/30 p-3.5 rounded-2xl border border-black/5 dark:border-white/5 flex flex-col gap-1.5 shadow-sm">
+                          <div className="flex justify-between items-center text-[8px] font-mono text-black/40 dark:text-white/40 uppercase">
+                            <span className="text-primary font-bold">Reply ID: {rep.id.slice(-6)}</span>
+                            <span>{new Date(rep.timestamp).toLocaleTimeString()}</span>
+                          </div>
+                          <p className="text-xs font-bold text-black dark:text-white leading-relaxed">{rep.message}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -3035,9 +3773,12 @@ export default function AdminPanel() {
               </div>
               <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 scrollbar-hide">
                 {users
-                  .filter(u => !u.isBot && (u.name.toLowerCase().includes(searchTokenUser.toLowerCase()) || u.id.toLowerCase().includes(searchTokenUser.toLowerCase())))
-                  .map(u => (
-                  <div key={u.id} className="bg-black/20 p-4 rounded-xl border border-white/5 flex items-center justify-between group">
+                  .filter(u => !u.isBot && (
+                    ((u.name || '').toLowerCase().includes((searchTokenUser || '').toLowerCase())) || 
+                    ((u.id || '').toLowerCase().includes((searchTokenUser || '').toLowerCase()))
+                  ))
+                  .map((u, uIdx) => (
+                  <div key={`fcm-link-${u.id || uIdx}-${uIdx}`} className="bg-black/20 p-4 rounded-xl border border-white/5 flex items-center justify-between group">
                     <div>
                       <p className="text-sm font-bold">{u.name}</p>
                       <p className="text-[8px] font-mono text-white/20 uppercase">@{u.id}</p>
@@ -3065,8 +3806,8 @@ export default function AdminPanel() {
                 {notifSchedules.length === 0 ? (
                   <p className="text-center text-white/10 italic text-xs">No pending schedules</p>
                 ) : (
-                  notifSchedules.map(s => (
-                    <div key={s.id} className="bg-black/40 p-4 rounded-xl border border-white/5 space-y-2 relative group">
+                  notifSchedules.map((s, sIdx) => (
+                    <div key={`notif-sched-${s.id || sIdx}-${sIdx}`} className="bg-black/40 p-4 rounded-xl border border-white/5 space-y-2 relative group">
                       <button 
                         onClick={() => remove(ref(db, `notificationSchedules/${s.id}`))}
                         className="absolute top-2 right-2 text-white/10 hover:text-red-500 transition-colors"
@@ -3190,6 +3931,52 @@ export default function AdminPanel() {
                   <textarea 
                     value={customTemplates.friendAccept.body}
                     onChange={e => setCustomTemplates({...customTemplates, friendAccept: {...customTemplates.friendAccept, body: e.target.value}})}
+                    onBlur={updateTemplates}
+                    className="w-full bg-black/40 border border-white/5 p-3 rounded-xl text-xs outline-none h-16 shadow-inner placeholder:opacity-20 font-bold"
+                    placeholder="Body (Use {player} for name)"
+                  />
+                </div>
+
+                <div className="bg-white/5 border border-white/5 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between col-span-2">
+                     <p className="text-[10px] font-black uppercase text-primary tracking-widest px-1">Account Approval Notification</p>
+                     <div className="flex gap-4">
+                        <label className="flex items-center gap-1.5 text-[10px] font-bold text-white/40 cursor-pointer">
+                           <input 
+                             type="checkbox"
+                             checked={customTemplates.approval?.enabled !== false}
+                             onChange={e => {
+                               const updated = {...customTemplates, approval: { ...(customTemplates.approval || { title: 'Account Approved!', body: 'Your account has been approved by the admin. Welcome to Rahee Quiz!', enabled: true, includeName: true }), enabled: e.target.checked }};
+                               updateCustomTemplatesDirectly(updated);
+                             }}
+                             className="rounded border-white/10 text-primary"
+                           />
+                           Enabled
+                        </label>
+                        <label className="flex items-center gap-1.5 text-[10px] font-bold text-white/40 cursor-pointer">
+                           <input 
+                             type="checkbox"
+                             checked={customTemplates.approval?.includeName !== false}
+                             onChange={e => {
+                               const updated = {...customTemplates, approval: { ...(customTemplates.approval || { title: 'Account Approved!', body: 'Your account has been approved by the admin. Welcome to Rahee Quiz!', enabled: true, includeName: true }), includeName: e.target.checked }};
+                               updateCustomTemplatesDirectly(updated);
+                             }}
+                             className="rounded border-white/10 text-primary"
+                           />
+                           Include Name
+                        </label>
+                     </div>
+                  </div>
+                  <input 
+                    value={customTemplates.approval?.title || 'Account Approved!'}
+                    onChange={e => setCustomTemplates({...customTemplates, approval: { ...(customTemplates.approval || { title: 'Account Approved!', body: 'Your account has been approved by the admin. Welcome to Rahee Quiz!', enabled: true, includeName: true }), title: e.target.value }})}
+                    onBlur={updateTemplates}
+                    className="w-full bg-black/40 border border-white/5 p-3 rounded-xl text-xs outline-none shadow-inner placeholder:opacity-20 font-bold"
+                    placeholder="Title"
+                  />
+                  <textarea 
+                    value={customTemplates.approval?.body || 'Your account has been approved by the admin. Welcome to Rahee Quiz!'}
+                    onChange={e => setCustomTemplates({...customTemplates, approval: { ...(customTemplates.approval || { title: 'Account Approved!', body: 'Your account has been approved by the admin. Welcome to Rahee Quiz!', enabled: true, includeName: true }), body: e.target.value }})}
                     onBlur={updateTemplates}
                     className="w-full bg-black/40 border border-white/5 p-3 rounded-xl text-xs outline-none h-16 shadow-inner placeholder:opacity-20 font-bold"
                     placeholder="Body (Use {player} for name)"
@@ -3524,8 +4311,8 @@ export default function AdminPanel() {
 
               {/* Message History */}
               <div className="flex-1 overflow-y-auto p-8 space-y-6 scrollbar-hide flex flex-col-reverse">
-                {[...activeChat.messages].map((msg) => (
-                  <div key={msg.id} className="space-y-4">
+                {[...activeChat.messages].map((msg, idx) => (
+                  <div key={`chat-msg-${msg.id || idx}-${idx}`} className="space-y-4">
                     {/* Player Message */}
                     <div className="flex items-start gap-3">
                        <div className="bg-white/80 dark:bg-white/5 border border-black/5 dark:border-white/5 p-4 rounded-[2rem] rounded-tl-none max-w-[80%] relative group shadow-sm transition-all hover:bg-white dark:hover:bg-white/10">
@@ -3601,9 +4388,358 @@ export default function AdminPanel() {
   };
 
 
+  const renderDashboard = () => {
+    // KPI Math
+    const totalLogs = activityLogs.length;
+    const sentChallenges = activityLogs.filter(l => l.action === 'send_challenge').length;
+    const acceptedChallenges = activityLogs.filter(l => l.action === 'accept_challenge').length;
+    const rejectedChallenges = activityLogs.filter(l => l.action === 'reject_challenge').length;
+    const cancelledChallenges = activityLogs.filter(l => l.action === 'cancel_challenge' || l.action === 'cancel_match').length;
+    const textboxReplies = activityLogs.filter(l => l.action === 'textbox_reply').length;
+    
+    const acceptanceRate = sentChallenges > 0 
+      ? Math.round((acceptedChallenges / sentChallenges) * 100) 
+      : 0;
+
+    // Filter Logs
+    const filteredLogs = activityLogs.filter(log => {
+      const matchSearch = (log.userName || '').toLowerCase().includes(logsSearchFilter.toLowerCase()) || 
+                          (log.userId || '').toLowerCase().includes(logsSearchFilter.toLowerCase()) ||
+                          (log.details || '').toLowerCase().includes(logsSearchFilter.toLowerCase());
+      
+      const matchType = logsTypeFilter === 'all' || log.action === logsTypeFilter;
+      return matchSearch && matchType;
+    });
+
+    const getActionBadgeClass = (action: string) => {
+      switch (action) {
+        case 'send_challenge':
+          return 'bg-blue-500/10 text-blue-500 border border-blue-500/20';
+        case 'accept_challenge':
+          return 'bg-green-500/10 text-green-500 border border-green-500/20';
+        case 'reject_challenge':
+          return 'bg-red-500/10 text-red-500 border border-red-500/20';
+        case 'cancel_challenge':
+        case 'cancel_match':
+          return 'bg-amber-500/10 text-amber-500 border border-amber-500/20';
+        case 'textbox_reply':
+          return 'bg-indigo-500/10 text-indigo-500 border border-indigo-500/20';
+        case 'play_now':
+          return 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20';
+        case 'claim_daily_rewards':
+          return 'bg-purple-500/10 text-purple-500 border border-purple-500/20';
+        case 'watch_ad_reward':
+          return 'bg-orange-500/10 text-orange-500 border border-orange-500/20';
+        default:
+          return 'bg-gray-500/10 text-gray-500 border border-gray-500/20';
+      }
+    };
+
+    const getActionLabel = (action: string) => {
+      switch (action) {
+        case 'send_challenge': return 'Challenge Sent';
+        case 'accept_challenge': return 'Challenge Accepted';
+        case 'reject_challenge': return 'Challenge Rejected';
+        case 'cancel_challenge': return 'Challenge Cancelled';
+        case 'cancel_match': return 'Match Cancelled';
+        case 'textbox_reply': return 'Text Input Reply';
+        case 'play_now': return 'Play Now Click';
+        case 'claim_daily_rewards': return 'Daily Calendar Reward';
+        case 'watch_ad_reward': return 'Ad Reward Claimed';
+        default: return action;
+      }
+    };
+
+    return (
+      <div className="space-y-8 pb-32">
+        {/* Header */}
+        <div>
+          <h2 className="text-3xl font-black uppercase tracking-tighter text-black dark:text-white">Activity Dashboard</h2>
+          <p className="text-[10px] font-bold text-black/30 dark:text-white/30 uppercase tracking-[0.2em]">Real-time Tracking of Player Engagements & Interactions</p>
+        </div>
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="bg-white dark:bg-[#0c0c0c] border border-black/5 dark:border-white/5 p-6 rounded-[2rem] shadow-sm flex flex-col justify-between">
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-widest text-[#a855f7]">Interactions</p>
+              <h3 className="text-3xl font-black tracking-tight mt-1 text-black dark:text-white">{totalLogs}</h3>
+            </div>
+            <p className="text-[9px] text-black/40 dark:text-white/40 mt-4 font-bold uppercase tracking-wider">Total activities logged in real-time</p>
+          </div>
+
+          <div className="bg-white dark:bg-[#0c0c0c] border border-black/5 dark:border-white/5 p-6 rounded-[2rem] shadow-sm flex flex-col justify-between">
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-widest text-[#3b82f6]">Challenges</p>
+              <h3 className="text-3xl font-black tracking-tight mt-1 text-black dark:text-white">{sentChallenges}</h3>
+            </div>
+            <p className="text-[9px] text-black/40 dark:text-white/40 mt-4 font-bold uppercase tracking-wider">Dual player invitations triggered</p>
+          </div>
+
+          <div className="bg-white dark:bg-[#0c0c0c] border border-black/5 dark:border-white/5 p-6 rounded-[2rem] shadow-sm flex flex-col justify-between">
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-widest text-[#22c55e]">Acceptance Rate</p>
+              <h3 className="text-3xl font-black tracking-tight mt-1 text-black dark:text-white">{acceptanceRate}%</h3>
+            </div>
+            <p className="text-[9px] text-black/40 dark:text-white/40 mt-4 font-bold uppercase tracking-wider">{acceptedChallenges} accepted, {rejectedChallenges} rejected</p>
+          </div>
+
+          <div className="bg-white dark:bg-[#0c0c0c] border border-black/5 dark:border-white/5 p-6 rounded-[2rem] shadow-sm flex flex-col justify-between">
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-widest text-[#f59e0b]">Input Responses</p>
+              <h3 className="text-3xl font-black tracking-tight mt-1 text-black dark:text-white">{textboxReplies}</h3>
+            </div>
+            <p className="text-[9px] text-black/40 dark:text-white/40 mt-4 font-bold uppercase tracking-wider">Interactive notification textbox replies</p>
+          </div>
+        </div>
+
+        {/* Filter and Control Bar */}
+        <div className="bg-white dark:bg-[#0c0c0c] border border-black/5 dark:border-white/5 p-6 rounded-[2.5rem] flex flex-col sm:flex-row gap-4 items-center justify-between">
+          <div className="relative w-full sm:w-80">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/30" size={14} />
+            <input 
+              type="text"
+              placeholder="Search user, ID or details..."
+              value={logsSearchFilter}
+              onChange={(e) => setLogsSearchFilter(e.target.value)}
+              className="w-full pl-10 pr-4 py-3 bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 rounded-2xl text-xs font-bold text-black dark:text-white placeholder-black/30 dark:placeholder-white/30 outline-none focus:border-purple-500/50 transition-all font-bold"
+            />
+          </div>
+
+          <div className="flex gap-3 w-full sm:w-auto">
+            <select
+              value={logsTypeFilter}
+              onChange={(e) => setLogsTypeFilter(e.target.value)}
+              className="w-full sm:w-48 px-4 py-3 bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 rounded-2xl text-xs font-black uppercase tracking-widest text-black/60 dark:text-white/60 outline-none focus:border-purple-500/50 transition-all cursor-pointer font-bold"
+            >
+              <option value="all">📊 All Activities</option>
+              <option value="send_challenge">🔵 Challenges Sent</option>
+              <option value="accept_challenge">🟢 Challenges Accepted</option>
+              <option value="reject_challenge">🔴 Challenges Rejected</option>
+              <option value="cancel_challenge">🟡 Challenges Cancelled</option>
+              <option value="cancel_match">🟠 Matches Cancelled</option>
+              <option value="textbox_reply">🟣 Text Replies</option>
+              <option value="play_now">🟢 Play Now clicks</option>
+              <option value="claim_daily_rewards">🌸 Daily Rewards</option>
+              <option value="watch_ad_reward">📺 Promo Rewards</option>
+            </select>
+
+            {totalLogs > 0 && (
+              <button
+                onClick={async () => {
+                  const verified = await confirm({
+                    title: "Clear Activity Logs",
+                    description: "Are you sure you want to permanently clear all real-time logged student/player interactions from the database? This cannot be undone.",
+                    type: "confirm"
+                  });
+                  if (verified) {
+                    await remove(ref(db, 'adminConfig/activityLogs'));
+                    await alert({ title: "Cleared!", description: "All database activity interaction logs deleted successfully.", type: "success" });
+                  }
+                }}
+                className="px-5 py-3 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/10 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all font-bold"
+              >
+                Clear logs
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Activity Stream Feed */}
+        <div className="bg-white dark:bg-[#0c0c0c] border border-black/5 dark:border-white/5 rounded-[2.5rem] overflow-hidden">
+          <div className="p-6 border-b border-black/5 dark:border-white/5 flex items-center justify-between">
+            <h4 className="font-black uppercase tracking-wider text-xs text-black dark:text-white flex items-center gap-2">
+              <Clock size={16} className="text-primary animate-pulse" />
+              Live activity feed ({filteredLogs.length} items)
+            </h4>
+            <span className="text-[9px] font-black bg-[#a855f7]/10 text-[#a855f7] border border-[#a855f7]/20 px-3 py-1 rounded-full uppercase tracking-wider font-bold">
+              Real-time synchronization
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-black/5 dark:border-white/5 bg-black/[0.01] dark:bg-white/[0.01]">
+                  <th className="p-5 text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">Timestamp</th>
+                  <th className="p-5 text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">Player Name</th>
+                  <th className="p-5 text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">Action</th>
+                  <th className="p-5 text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">Message Details</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-black/5 dark:divide-white/5">
+                {filteredLogs.map((log) => (
+                  <tr key={log.id} className="hover:bg-black/[0.01] dark:hover:bg-white/[0.01] transition-colors">
+                    {/* Timestamp */}
+                    <td className="p-5 align-middle">
+                      <div className="font-mono text-[10px] font-bold text-black/50 dark:text-white/50">
+                        {new Date(log.timestamp).toLocaleDateString()}
+                      </div>
+                      <div className="font-mono text-[9px] font-bold text-black/30 dark:text-white/30">
+                        {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </div>
+                    </td>
+
+                    {/* Username */}
+                    <td className="p-5 align-middle">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-purple-500/10 text-purple-500 flex items-center justify-center font-black uppercase text-[10px] border border-purple-500/5">
+                          {(log.userName || 'P')[0]}
+                        </div>
+                        <div>
+                          <div className="font-black text-xs text-black dark:text-white uppercase tracking-tight">
+                            {log.userName || 'Anonymous Player'}
+                          </div>
+                          <div className="font-mono text-[8px] font-bold text-black/20 dark:text-white/20 uppercase">
+                            ID: {log.userId}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* Action pill */}
+                    <td className="p-5 align-middle">
+                      <span className={cn("px-3 py-1.5 rounded-full text-[8.5px] font-black uppercase tracking-wider", getActionBadgeClass(log.action))}>
+                        {getActionLabel(log.action)}
+                      </span>
+                    </td>
+
+                    {/* Detailed interactions details */}
+                    <td className="p-5 align-middle text-xs font-bold text-black/80 dark:text-white/80 leading-relaxed max-w-sm">
+                      {log.details || 'No extended status description provided.'}
+                    </td>
+                  </tr>
+                ))}
+
+                {filteredLogs.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="py-20 text-center text-black/30 dark:text-white/30 bg-black/[0.01] dark:bg-white/[0.01]">
+                      <MessageSquare size={48} className="mx-auto mb-4 opacity-30" />
+                      <p className="font-black uppercase tracking-widest">No activities matching your query</p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+
   const renderDatabaseExplorer = () => {
     const isObject = (val: any) => typeof val === 'object' && val !== null && !Array.isArray(val);
     const isArray = (val: any) => Array.isArray(val);
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const content = event.target?.result as string;
+          JSON.parse(content); // validation test
+          setJsonImporterText(content);
+        } catch (err) {
+          alert({ title: 'Error Reading File', description: 'Selected file does not contain valid JSON content.', type: 'error' });
+        }
+      };
+      reader.readAsText(file);
+    };
+
+    const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const file = e.dataTransfer.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const content = event.target?.result as string;
+          JSON.parse(content); // validation test
+          setJsonImporterText(content);
+        } catch (err) {
+          alert({ title: 'Error Reading File', description: 'Dropped file does not contain valid JSON content.', type: 'error' });
+        }
+      };
+      reader.readAsText(file);
+    };
+
+    const handleJsonImport = async () => {
+      if (!jsonImporterText.trim()) {
+        await alert({ title: 'Validation Failed', description: 'Please paste JSON code or upload a JSON file first.', type: 'error' });
+        return;
+      }
+
+      let parsedData: any;
+      try {
+        parsedData = JSON.parse(jsonImporterText);
+      } catch (err: any) {
+        await alert({ title: 'Invalid JSON Syntax', description: err.message || 'The provided text is not valid JSON.', type: 'error' });
+        return;
+      }
+
+      // Check target path for invalid character patterns in RTDB
+      const normalizedPath = jsonImporterPath.trim().replace(/^\/|\/$/g, '');
+      const containsInvalidChars = /[\.\$\#\[\]]/.test(normalizedPath);
+      if (containsInvalidChars) {
+        await alert({ title: 'Invalid Path Name', description: 'Database paths cannot contain "." "$" "#" "[" or "]" characters.', type: 'error' });
+        return;
+      }
+
+      const confirmed = await confirm({
+        title: jsonImporterMode === 'set' ? '🚨 Overwrite Node?' : 'Confirm Import?',
+        description: `Are you sure you want to ${
+          jsonImporterMode === 'set' 
+            ? 'OVERWRITE and REPLACE ALL contents' 
+            : 'MERGE and update properties'
+        } at node path "/${normalizedPath || 'ROOT'}"?`,
+        type: jsonImporterMode === 'set' ? 'error' : 'confirm'
+      });
+
+      if (!confirmed) return;
+
+      setIsImportingJson(true);
+      try {
+        const dbRef = ref(db, normalizedPath || '/');
+        if (jsonImporterMode === 'set') {
+          await set(dbRef, parsedData);
+        } else {
+          if (typeof parsedData !== 'object' || parsedData === null) {
+            throw new Error('To use Merge (Update) mode, the root of your JSON must be a valid JSON object/dictionary (e.g. { ... }).');
+          }
+          await update(dbRef, parsedData);
+        }
+        await alert({
+          title: 'Import Successful',
+          description: `Successfully loaded and applied JSON data to "/${normalizedPath || 'ROOT'}" node in RTDB!`,
+          type: 'success'
+        });
+        setJsonImporterText('');
+      } catch (err: any) {
+        console.error("JSON Import failed:", err);
+        await alert({
+          title: 'Database Write Error',
+          description: err.message || 'Firebase RTDB rejected the write operation.',
+          type: 'error'
+        });
+      } finally {
+        setIsImportingJson(false);
+      }
+    };
+
+    let isJsonValid = false;
+    let jsonEvalError = '';
+    if (jsonImporterText.trim()) {
+      try {
+        JSON.parse(jsonImporterText);
+        isJsonValid = true;
+      } catch (e: any) {
+        jsonEvalError = e.message;
+      }
+    }
     
     return (
       <div className="space-y-6 pb-32">
@@ -3622,163 +4758,679 @@ export default function AdminPanel() {
            </div>
         </div>
 
-        {/* Path Breadcrumbs */}
-        <div className="flex items-center gap-2 px-4 py-3 bg-black/5 dark:bg-white/5 rounded-2xl border border-black/5 dark:border-white/5 overflow-x-auto scrollbar-hide">
-           <button 
-             onClick={() => setDbExplorerPath([])}
-             className="text-[10px] font-black uppercase tracking-widest text-primary hover:underline whitespace-nowrap"
-           >
-             ROOT
-           </button>
-           {dbExplorerPath.map((p, i) => (
-             <React.Fragment key={i}>
-                <ChevronRight size={12} className="text-black/20 dark:text-white/20 shrink-0" />
-                <button 
-                  onClick={() => setDbExplorerPath(dbExplorerPath.slice(0, i + 1))}
-                  className="text-[10px] font-black uppercase tracking-widest text-primary hover:underline whitespace-nowrap"
-                >
-                  {p}
-                </button>
-             </React.Fragment>
-           ))}
-        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+          {/* Left Columns: Database tree explorer */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* Path Breadcrumbs */}
+            <div className="flex items-center gap-2 px-4 py-3 bg-black/5 dark:bg-white/5 rounded-2xl border border-black/5 dark:border-white/5 overflow-x-auto scrollbar-hide">
+               <button 
+                 onClick={() => setDbExplorerPath([])}
+                 className="text-[10px] font-black uppercase tracking-widest text-primary hover:underline whitespace-nowrap"
+               >
+                 ROOT
+               </button>
+               {dbExplorerPath.map((p, i) => (
+                 <React.Fragment key={i}>
+                    <ChevronRight size={12} className="text-black/20 dark:text-white/20 shrink-0" />
+                    <button 
+                      onClick={() => setDbExplorerPath(dbExplorerPath.slice(0, i + 1))}
+                      className="text-[10px] font-black uppercase tracking-widest text-primary hover:underline whitespace-nowrap"
+                    >
+                      {p}
+                    </button>
+                 </React.Fragment>
+               ))}
+            </div>
 
-        {/* Data View */}
-        <div className="bg-white dark:bg-[#0a0a0a] border border-black/5 dark:border-white/5 rounded-[2.5rem] overflow-hidden shadow-2xl">
-           <div className="p-6 border-b border-black/5 dark:border-white/5 bg-black/[0.02] dark:bg-white/[0.02] flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                 <div className="w-10 h-10 bg-primary/20 rounded-xl flex items-center justify-center text-primary">
-                    {dbExplorerPath.length === 0 ? <Database size={20} /> : <Folder size={20} />}
-                 </div>
-                 <div>
-                    <h3 className="font-black text-sm uppercase tracking-tight text-black dark:text-white">
-                       {dbExplorerPath.length === 0 ? 'Home' : dbExplorerPath[dbExplorerPath.length - 1]}
-                    </h3>
-                    <p className="text-[8px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">
-                       {dbExplorerPath.length === 0 ? 'Global Tree' : `Path: /${dbExplorerPath.join('/')}`}
+            {/* Data View */}
+            <div className="bg-white dark:bg-[#0a0a0a] border border-black/5 dark:border-white/5 rounded-[2.5rem] overflow-hidden shadow-2xl">
+               <div className="p-6 border-b border-black/5 dark:border-white/5 bg-black/[0.02] dark:bg-white/[0.02] flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                     <div className="w-10 h-10 bg-primary/20 rounded-xl flex items-center justify-center text-primary">
+                        {dbExplorerPath.length === 0 ? <Database size={20} /> : <Folder size={20} />}
+                     </div>
+                     <div>
+                        <h3 className="font-black text-sm uppercase tracking-tight text-black dark:text-white">
+                           {dbExplorerPath.length === 0 ? 'Home' : dbExplorerPath[dbExplorerPath.length - 1]}
+                        </h3>
+                        <p className="text-[8px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">
+                           {dbExplorerPath.length === 0 ? 'Global Tree' : `Path: /${dbExplorerPath.join('/')}`}
+                        </p>
+                     </div>
+                  </div>
+                  <button 
+                    onClick={async () => {
+                      const key = prompt("Enter Key Name:");
+                      if (!key) return;
+                      const value = prompt("Enter Value (JSON supported):");
+                      if (value === null) return;
+                      let parsedValue: any = value;
+                      try {
+                        parsedValue = JSON.parse(value);
+                      } catch (e) {}
+                      
+                      await set(ref(db, `${dbExplorerPath.join('/')}/${key}`), parsedValue);
+                    }}
+                    className="bg-primary text-black px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all"
+                  >
+                    <Plus size={14} /> Add Property
+                  </button>
+               </div>
+
+               <div className="divide-y divide-black/5 dark:divide-white/5">
+                  {dbExplorerData === null || dbExplorerData === undefined ? (
+                     <div className="p-20 text-center opacity-10">
+                        <Database size={64} className="mx-auto mb-4" />
+                        <p className="font-black uppercase tracking-widest text-black dark:text-white">No data found at this path</p>
+                     </div>
+                  ) : typeof dbExplorerData !== 'object' ? (
+                     <div className="p-10 text-center">
+                        <div className="bg-primary/5 p-6 rounded-3xl border border-primary/20 inline-block">
+                           <p className="text-2xl font-black text-primary font-mono">{JSON.stringify(dbExplorerData)}</p>
+                           <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mt-2">
+                              Type: {typeof dbExplorerData}
+                           </p>
+                           <div className="flex gap-2 mt-6">
+                              <button 
+                                 onClick={async () => {
+                                   const newValue = prompt("Edit Value:", JSON.stringify(dbExplorerData));
+                                   if (newValue === null) return;
+                                   let parsed: any = newValue;
+                                   try { parsed = JSON.parse(newValue); } catch (e) {}
+                                   await set(ref(db, dbExplorerPath.join('/')), parsed);
+                                 }}
+                                 className="flex-1 bg-primary text-black py-3 rounded-xl font-black text-[10px] uppercase tracking-widest"
+                              >
+                                 Update
+                              </button>
+                              <button 
+                                 onClick={async () => {
+                                   if (await confirm({ title: "Delete Node?", description: "This will remove the current value.", type: 'error' })) {
+                                      await remove(ref(db, dbExplorerPath.join('/')));
+                                      setDbExplorerPath(prev => prev.slice(0, -1));
+                                   }
+                                 }}
+                                 className="px-6 bg-red-500/10 text-red-500 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest"
+                              >
+                                 <Trash2 size={14} />
+                              </button>
+                           </div>
+                        </div>
+                     </div>
+                  ) : (
+                     Object.entries(dbExplorerData).map(([key, value]: [string, any]) => (
+                        <div key={key} className="group p-4 flex items-center hover:bg-primary/[0.02] transition-colors gap-4">
+                           <div className="w-8 h-8 rounded-lg bg-black/5 dark:bg-white/5 flex items-center justify-center text-black/30 dark:text-white/30 group-hover:bg-primary/20 group-hover:text-primary transition-all">
+                              {isObject(value) || isArray(value) ? <Folder size={14} /> : <FileText size={14} />}
+                           </div>
+                           
+                           <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                 <span className="font-black text-xs text-black dark:text-white uppercase tracking-tight truncate">{key}</span>
+                                 <span className="text-[8px] font-bold text-black/20 dark:text-white/20 uppercase tracking-[0.2em] font-mono shrink-0">
+                                    {typeof value} {isArray(value) ? '[]' : ''}
+                                 </span>
+                              </div>
+                              {!isObject(value) && !isArray(value) && (
+                                 <p className="text-[10px] font-bold text-black/50 dark:text-white/50 truncate font-mono">
+                                    {JSON.stringify(value)}
+                                 </p>
+                              )}
+                           </div>
+
+                           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                              <button 
+                                 onClick={async () => {
+                                   const newValue = prompt(`Update value for "${key}":`, JSON.stringify(value));
+                                   if (newValue === null) return;
+                                   let parsed: any = newValue;
+                                   try { parsed = JSON.parse(newValue); } catch (e) {}
+                                   await set(ref(db, `${dbExplorerPath.join('/')}/${key}`), parsed);
+                                 }}
+                                 className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                                 title="Edit Value"
+                              >
+                                 <Edit2 size={14} />
+                              </button>
+                              <button 
+                                 onClick={async () => {
+                                   if (await confirm({ title: `Delete "${key}"?`, description: "This cannot be undone.", type: 'error' })) {
+                                      await remove(ref(db, `${dbExplorerPath.join('/')}/${key}`));
+                                   }
+                                 }}
+                                 className="p-2 text-red-500/40 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
+                                 title="Delete"
+                              >
+                                 <Trash2 size={14} />
+                              </button>
+                              {(isObject(value) || isArray(value)) && (
+                                 <button 
+                                   onClick={() => setDbExplorerPath([...dbExplorerPath, key])}
+                                   className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors ml-2"
+                                   title="Open Folder"
+                                 >
+                                    <ChevronRight size={14} />
+                                 </button>
+                              )}
+                           </div>
+                        </div>
+                     ))
+                  )}
+               </div>
+            </div>
+          </div>
+
+          {/* Right Column: JSON Importer dashboard */}
+          <div className="space-y-6">
+            <div className="bg-white dark:bg-[#0a0a0a] border border-black/5 dark:border-white/5 rounded-[2.5rem] p-6 shadow-2xl space-y-6">
+               <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-primary/20 rounded-xl flex items-center justify-center text-primary">
+                     <Upload size={20} />
+                  </div>
+                  <div>
+                     <h3 className="font-black text-sm uppercase tracking-tight text-black dark:text-white">JSON to RTDB Importer</h3>
+                     <p className="text-[8px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest font-mono">Write structure to database</p>
+                  </div>
+               </div>
+
+               {/* Target Path Configuration */}
+               <div className="space-y-2">
+                  <div className="flex items-center justify-between px-1">
+                     <label className="text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 block">Target Node Path</label>
+                     <button 
+                       type="button"
+                       onClick={() => setJsonImporterPath(dbExplorerPath.join('/'))}
+                       className="text-[9px] font-black text-primary hover:underline uppercase tracking-wide font-mono"
+                     >
+                       Use Active Path
+                     </button>
+                  </div>
+                  <div className="relative">
+                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-black/40 dark:text-white/40 font-mono text-xs">/</span>
+                     <input 
+                       type="text"
+                       value={jsonImporterPath}
+                       onChange={e => setJsonImporterPath(e.target.value)}
+                       placeholder="e.g. events, quizzes, or empty for ROOT"
+                       className="w-full bg-black/5 dark:bg-black border border-black/10 dark:border-white/10 p-3.5 pl-7 rounded-2xl font-bold font-mono outline-none focus:border-primary text-xs text-black dark:text-white transition-all"
+                     />
+                  </div>
+               </div>
+
+               {/* Drag and Drop Upload */}
+               <div 
+                 onDragOver={(e) => e.preventDefault()}
+                 onDrop={handleFileDrop}
+                 className="group relative border border-dashed border-black/20 dark:border-white/20 hover:border-primary/50 rounded-2xl p-6 transition-all text-center cursor-pointer bg-black/5 dark:bg-white/5"
+               >
+                 <input 
+                   type="file" 
+                   accept=".json"
+                   onChange={handleFileChange}
+                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                 />
+                 <Upload className="mx-auto text-black/30 dark:text-white/30 group-hover:text-primary transition-colors mb-2" size={24} />
+                 <p className="text-[10px] font-black uppercase tracking-widest text-[#32befa]">Upload .json File</p>
+                 <p className="text-[8px] font-bold text-black/40 dark:text-white/40 mt-1">Drag file here or click to browse</p>
+               </div>
+
+               {/* Paste Raw JSON Code */}
+               <div className="space-y-2">
+                  <div className="flex items-center justify-between px-1">
+                     <label className="text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 block">Raw JSON Code</label>
+                     {jsonImporterText.trim() && (
+                       <span className={cn(
+                         "text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded flex items-center gap-1",
+                         isJsonValid ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
+                       )}>
+                         {isJsonValid ? <CheckCircle size={8} /> : <XCircle size={8} />}
+                         {isJsonValid ? 'Valid Syntax' : 'Invalid Syntax'}
+                       </span>
+                     )}
+                  </div>
+                  <textarea 
+                    value={jsonImporterText}
+                    onChange={e => setJsonImporterText(e.target.value)}
+                    placeholder={`{\n  "custom_node": {\n    "tag": "Rahee Quiz",\n    "active": true\n  }\n}`}
+                    className="w-full h-44 bg-black/5 dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-mono text-[11px] text-slate-800 dark:text-slate-200 outline-none focus:border-primary transition-all resize-none"
+                  />
+                  {!isJsonValid && jsonEvalError && (
+                    <p className="text-[9px] font-bold text-red-500 mt-1 pl-1 line-clamp-2">
+                      Error: {jsonEvalError}
                     </p>
-                 </div>
-              </div>
-              <button 
-                onClick={async () => {
-                  const key = prompt("Enter Key Name:");
-                  if (!key) return;
-                  const value = prompt("Enter Value (JSON supported):");
-                  if (value === null) return;
-                  let parsedValue: any = value;
-                  try {
-                    parsedValue = JSON.parse(value);
-                  } catch (e) {}
-                  
-                  await set(ref(db, `${dbExplorerPath.join('/')}/${key}`), parsedValue);
-                }}
-                className="bg-primary text-black px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all"
-              >
-                <Plus size={14} /> Add Property
-              </button>
-           </div>
+                  )}
+               </div>
 
-           <div className="divide-y divide-black/5 dark:divide-white/5">
-              {dbExplorerData === null || dbExplorerData === undefined ? (
-                 <div className="p-20 text-center opacity-10">
-                    <Database size={64} className="mx-auto mb-4" />
-                    <p className="font-black uppercase tracking-widest text-black dark:text-white">No data found at this path</p>
-                 </div>
-              ) : typeof dbExplorerData !== 'object' ? (
-                 <div className="p-10 text-center">
-                    <div className="bg-primary/5 p-6 rounded-3xl border border-primary/20 inline-block">
-                       <p className="text-2xl font-black text-primary font-mono">{JSON.stringify(dbExplorerData)}</p>
-                       <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mt-2">
-                          Type: {typeof dbExplorerData}
-                       </p>
-                       <div className="flex gap-2 mt-6">
-                          <button 
-                             onClick={async () => {
-                               const newValue = prompt("Edit Value:", JSON.stringify(dbExplorerData));
-                               if (newValue === null) return;
-                               let parsed: any = newValue;
-                               try { parsed = JSON.parse(newValue); } catch (e) {}
-                               await set(ref(db, dbExplorerPath.join('/')), parsed);
-                             }}
-                             className="flex-1 bg-primary text-black py-3 rounded-xl font-black text-[10px] uppercase tracking-widest"
-                          >
-                             Update
-                          </button>
-                          <button 
-                             onClick={async () => {
-                               if (await confirm({ title: "Delete Node?", description: "This will remove the current value.", type: 'error' })) {
-                                  await remove(ref(db, dbExplorerPath.join('/')));
-                                  setDbExplorerPath(prev => prev.slice(0, -1));
-                               }
-                             }}
-                             className="px-6 bg-red-500/10 text-red-500 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest"
-                          >
-                             <Trash2 size={14} />
-                          </button>
-                       </div>
-                    </div>
-                 </div>
-              ) : (
-                 Object.entries(dbExplorerData).map(([key, value]: [string, any]) => (
-                    <div key={key} className="group p-4 flex items-center hover:bg-primary/[0.02] transition-colors gap-4">
-                       <div className="w-8 h-8 rounded-lg bg-black/5 dark:bg-white/5 flex items-center justify-center text-black/30 dark:text-white/30 group-hover:bg-primary/20 group-hover:text-primary transition-all">
-                          {isObject(value) || isArray(value) ? <Folder size={14} /> : <FileText size={14} />}
-                       </div>
-                       
-                       <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                             <span className="font-black text-xs text-black dark:text-white uppercase tracking-tight truncate">{key}</span>
-                             <span className="text-[8px] font-bold text-black/20 dark:text-white/20 uppercase tracking-[0.2em] font-mono shrink-0">
-                                {typeof value} {isArray(value) ? '[]' : ''}
-                             </span>
-                          </div>
-                          {!isObject(value) && !isArray(value) && (
-                             <p className="text-[10px] font-bold text-black/50 dark:text-white/50 truncate font-mono">
-                                {JSON.stringify(value)}
-                             </p>
-                          )}
-                       </div>
+               {/* Mode selection tabs */}
+               <div className="space-y-2">
+                  <label className="text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 block px-1">Import Method</label>
+                  <div className="grid grid-cols-2 gap-2 bg-black/5 dark:bg-white/5 p-1 rounded-xl">
+                     <button
+                       type="button"
+                       onClick={() => setJsonImporterMode('update')}
+                       className={cn(
+                         "py-2 px-3 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all",
+                         jsonImporterMode === 'update'
+                           ? "bg-primary text-black shadow-md shadow-primary/10"
+                           : "text-black/40 dark:text-white/40 hover:text-black dark:hover:text-white"
+                       )}
+                     >
+                       Merge (Update)
+                     </button>
+                     <button
+                       type="button"
+                       onClick={() => setJsonImporterMode('set')}
+                       className={cn(
+                         "py-2 px-3 rounded-lg font-black text-[9px] uppercase tracking-widest transition-all",
+                         jsonImporterMode === 'set'
+                           ? "bg-red-500 text-white shadow-md shadow-red-500/10"
+                           : "text-black/40 dark:text-white/40 hover:text-black dark:hover:text-white"
+                       )}
+                     >
+                       Overwrite (Set)
+                     </button>
+                  </div>
+               </div>
 
-                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                          <button 
-                             onClick={async () => {
-                               const newValue = prompt(`Update value for "${key}":`, JSON.stringify(value));
-                               if (newValue === null) return;
-                               let parsed: any = newValue;
-                               try { parsed = JSON.parse(newValue); } catch (e) {}
-                               await set(ref(db, `${dbExplorerPath.join('/')}/${key}`), parsed);
-                             }}
-                             className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors"
-                             title="Edit Value"
-                          >
-                             <Edit2 size={14} />
-                          </button>
-                          <button 
-                             onClick={async () => {
-                               if (await confirm({ title: `Delete "${key}"?`, description: "This cannot be undone.", type: 'error' })) {
-                                  await remove(ref(db, `${dbExplorerPath.join('/')}/${key}`));
-                               }
-                             }}
-                             className="p-2 text-red-500/40 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
-                             title="Delete"
-                          >
-                             <Trash2 size={14} />
-                          </button>
-                          {(isObject(value) || isArray(value)) && (
-                             <button 
-                               onClick={() => setDbExplorerPath([...dbExplorerPath, key])}
-                               className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors ml-2"
-                               title="Open Folder"
-                             >
-                                <ChevronRight size={14} />
-                             </button>
-                          )}
-                       </div>
-                    </div>
-                 ))
-              )}
-           </div>
+               {/* Action trigger button */}
+               <button
+                 type="button"
+                 disabled={isImportingJson}
+                 onClick={handleJsonImport}
+                 className={cn(
+                   "w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-lg",
+                   jsonImporterMode === 'set' 
+                     ? "bg-red-500 hover:bg-red-600 text-white shadow-red-500/10 hover:shadow-red-500/20" 
+                     : "bg-primary hover:bg-opacity-90 text-black shadow-primary/10 hover:shadow-primary/20",
+                   "disabled:opacity-50 disabled:pointer-events-none"
+                 )}
+               >
+                 <Database size={12} />
+                 {isImportingJson ? 'Writing to database...' : 'Execute Import'}
+               </button>
+            </div>
+          </div>
         </div>
+      </div>
+    );
+  };
+
+  const renderReportsSection = () => {
+    const filteredReports = reports.filter(r => {
+      if (reportFilter === 'all') return true;
+      if (reportFilter === 'pending') return r.status === 'pending' || !r.status;
+      return r.status === reportFilter;
+    });
+
+    const handleDismissReport = async (report: any) => {
+      const verified = await confirm({
+        title: "Dismiss Report",
+        description: `Mark this report from ${report.userName} as dismissed (mistake)? No coins will be awarded.`,
+        type: 'confirm'
+      });
+      if (verified) {
+        await update(ref(db, `reports/${report.id}`), { status: 'dismissed' });
+        await alert({
+          title: "Dismissed",
+          description: "Report flagged as dismissed/mistake.",
+          type: "success"
+        });
+      }
+    };
+
+    const handleRemoveQuizAndApprove = async (report: any) => {
+      const verified = await confirm({
+        title: "Remove Quiz & Reward Player",
+        description: `This will DELETE this quiz from the game and award 500 Rahee Coins to ${report.userName}. Continue?`,
+        type: 'confirm'
+      });
+      if (!verified) return;
+
+      try {
+        // 1. Delete quiz
+        await remove(ref(db, `quizzes/${report.quizId}`));
+        
+        // 2. Award 500 coins to reporter
+        const userRef = ref(db, `users/${report.userId}`);
+        const userSnap = await get(userRef);
+        if (userSnap.exists()) {
+          const uData = userSnap.val();
+          const currentCoins = uData.raheeCoins || 0;
+          await update(userRef, { raheeCoins: currentCoins + 500 });
+        }
+
+        // 3. Update report status
+        await update(ref(db, `reports/${report.id}`), { status: 'resolved' });
+
+        await alert({
+          title: "Approved!",
+          description: "Quiz removed successfully, and 500 Rahee Coins awarded to the reporter!",
+          type: 'success'
+        });
+      } catch (err: any) {
+        await alert({
+          title: "Error",
+          description: err.message || "Failed to remove and reward player.",
+          type: 'error'
+        });
+      }
+    };
+
+    const handleSaveFixAndApprove = async (report: any) => {
+      if (!editReportForm) return;
+      const verified = await confirm({
+        title: "Save Fix & Reward Player",
+        description: `This will update the quiz text/options and award 500 Rahee Coins to ${report.userName}. Continue?`,
+        type: 'confirm'
+      });
+      if (!verified) return;
+
+      try {
+        const liveQuiz = quizzes.find(q => q.id === report.quizId);
+        if (!liveQuiz) {
+          throw new Error("Quiz not found in live data; cannot edit.");
+        }
+
+        const updatedQuiz = {
+          ...liveQuiz,
+          question: {
+            en: editReportForm.questionEn,
+            hi: editReportForm.questionHi || editReportForm.questionEn
+          },
+          options: {
+            en: [editReportForm.opt1En, editReportForm.opt2En, editReportForm.opt3En, editReportForm.opt4En].filter(Boolean),
+            hi: [editReportForm.opt1Hi || editReportForm.opt1En, editReportForm.opt2Hi || editReportForm.opt2En, editReportForm.opt3Hi || editReportForm.opt3En, editReportForm.opt4Hi || editReportForm.opt4En].filter(Boolean)
+          }
+        };
+
+        // 1. Update quiz in database
+        await set(ref(db, `quizzes/${report.quizId}`), updatedQuiz);
+
+        // 2. Award 500 coins to reporter
+        const userRef = ref(db, `users/${report.userId}`);
+        const userSnap = await get(userRef);
+        if (userSnap.exists()) {
+          const uData = userSnap.val();
+          const currentCoins = uData.raheeCoins || 0;
+          await update(userRef, { raheeCoins: currentCoins + 500 });
+        }
+
+        // 3. Mark report as resolved
+        await update(ref(db, `reports/${report.id}`), { status: 'resolved' });
+
+        setEditingReportId(null);
+        setEditReportForm(null);
+
+        await alert({
+          title: "Approved & Saved!",
+          description: "Quiz fixed successfully, and 500 Rahee Coins awarded to the reporter!",
+          type: 'success'
+        });
+      } catch (err: any) {
+        await alert({
+          title: "Error",
+          description: err.message || "Failed to update quiz and reward player.",
+          type: 'error'
+        });
+      }
+    };
+
+    return (
+      <div className="space-y-6 pb-32">
+         <div className="flex items-center justify-between px-2">
+            <div>
+               <h2 className="text-2xl font-black uppercase tracking-tighter text-black dark:text-white">Inappropriate Quiz Reports</h2>
+               <p className="text-[10px] font-bold text-black/30 dark:text-white/30 uppercase tracking-[0.2em]">Settle quiz reports and reward players</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {['pending', 'resolved', 'dismissed', 'all'].map(t => (
+                <button
+                  key={t}
+                  onClick={() => setReportFilter(t as any)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg font-black text-[9px] uppercase tracking-wider border transition-all cursor-pointer",
+                    reportFilter === t
+                      ? "bg-primary text-black border-primary shadow-sm"
+                      : "bg-black/5 dark:bg-white/5 border-transparent text-black/40 dark:text-white/40"
+                  )}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+         </div>
+
+         <div className="grid grid-cols-1 gap-6">
+            {filteredReports.map((r, rIdx) => {
+              const liveQuiz = quizzes.find(q => q.id === r.quizId);
+              const isEditing = editingReportId === r.id;
+
+              return (
+                <div key={`report-${r.id || rIdx}`} className="bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/5 p-6 rounded-[2rem] gap-4 transition-all">
+                  <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                     <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-red-500/10 text-red-500 rounded-xl flex items-center justify-center font-black uppercase border border-red-500/15">
+                           <AlertTriangle size={18} />
+                        </div>
+                        <div>
+                           <h4 className="font-bold text-sm text-black dark:text-white">Reported by {r.userName || 'Anonymous'}</h4>
+                           <p className="text-[8px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest font-mono">
+                             User ID: {r.userId} • Reported: {new Date(r.timestamp).toLocaleDateString()} {new Date(r.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                           </p>
+                        </div>
+                     </div>
+
+                     <div className="flex items-center gap-2">
+                        {(!r.status || r.status === 'pending') && (
+                          <span className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
+                            Pending
+                          </span>
+                        )}
+                        {r.status === 'resolved' && (
+                          <span className="bg-green-500/10 border border-green-500/20 text-green-500 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
+                            Approved & Resolved
+                          </span>
+                        )}
+                        {r.status === 'dismissed' && (
+                          <span className="bg-gray-500/10 border border-gray-500/20 text-gray-500 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
+                            Dismissed (Mistake)
+                          </span>
+                        )}
+                     </div>
+                  </div>
+
+                  <div className="mt-4 bg-white/5 dark:bg-black/20 p-4 rounded-2xl border border-black/10 dark:border-white/5 space-y-2">
+                     <p className="text-[9px] font-black text-primary uppercase tracking-widest">Reported Question Details</p>
+                     <p className="text-xs text-black dark:text-white leading-relaxed font-bold">
+                       {r.quizText ? (typeof r.quizText === 'object' ? ((r.quizText as any).en || (r.quizText as any).hi || '') : r.quizText) : 'No text supplied'}
+                     </p>
+                     <p className="text-[8px] font-bold text-black/30 dark:text-white/30 uppercase tracking-widest font-mono">
+                       Global Quiz ID Reference: {r.quizId}
+                     </p>
+                     {!liveQuiz && (
+                       <p className="text-[9px] font-bold text-red-500 uppercase tracking-wider">
+                         * NOTE: This quiz is no longer present in the game records (already deleted or recompiled).
+                       </p>
+                     )}
+                  </div>
+
+                  {liveQuiz && (!r.status || r.status === 'pending') && (
+                     <div className="mt-6 space-y-4">
+                        {!isEditing ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                             <button
+                               onClick={() => {
+                                 setEditingReportId(r.id);
+                                 setEditReportForm({
+                                   questionEn: liveQuiz.question?.en || '',
+                                   questionHi: liveQuiz.question?.hi || '',
+                                   opt1En: liveQuiz.options?.en?.[0] || '',
+                                   opt1Hi: liveQuiz.options?.hi?.[0] || '',
+                                   opt2En: liveQuiz.options?.en?.[1] || '',
+                                   opt2Hi: liveQuiz.options?.hi?.[1] || '',
+                                   opt3En: liveQuiz.options?.en?.[2] || '',
+                                   opt3Hi: liveQuiz.options?.hi?.[2] || '',
+                                   opt4En: liveQuiz.options?.en?.[3] || '',
+                                   opt4Hi: liveQuiz.options?.hi?.[3] || '',
+                                 });
+                               }}
+                               className="px-4 py-2 bg-primary/20 hover:bg-primary border border-primary/20 text-primary hover:text-black font-black text-[10px] uppercase tracking-widest rounded-xl transition-all cursor-pointer"
+                             >
+                               Fix & Approve (+500 Coins)
+                             </button>
+                             <button
+                               onClick={() => handleRemoveQuizAndApprove(r)}
+                               className="px-4 py-2 bg-red-500/20 hover:bg-red-500 border border-red-500/20 hover:border-red-500 text-red-500 hover:text-white font-black text-[10px] uppercase tracking-widest rounded-xl transition-all cursor-pointer"
+                             >
+                               Remove Quiz (+500 Coins)
+                             </button>
+                             <button
+                               onClick={() => handleDismissReport(r)}
+                               className="px-4 py-2 bg-black/20 dark:bg-white/5 hover:bg-black/40 hover:dark:bg-white/10 text-black/50 dark:text-white/50 font-black text-[10px] uppercase tracking-widest rounded-xl transition-all cursor-pointer"
+                             >
+                               Dismiss (Mistake)
+                             </button>
+                          </div>
+                        ) : (
+                          <div className="bg-black/10 dark:bg-black/30 p-6 rounded-2xl border border-black/10 dark:border-white/5 space-y-4">
+                             <div className="flex items-center justify-between">
+                                <h5 className="text-xs font-black uppercase text-primary tracking-wider">Fix Quiz Editor</h5>
+                                <button 
+                                  onClick={() => { setEditingReportId(null); setEditReportForm(null); }}
+                                  className="text-[10px] font-bold text-black/40 dark:text-white/40 hover:text-black dark:hover:text-white uppercase tracking-wider"
+                                >
+                                  Cancel
+                                </button>
+                             </div>
+
+                             <div className="space-y-4">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                   <div className="space-y-1">
+                                      <label className="text-[8px] font-black uppercase opacity-40">Question (English)</label>
+                                      <textarea 
+                                        value={editReportForm.questionEn}
+                                        onChange={e => setEditReportForm({ ...editReportForm, questionEn: e.target.value })}
+                                        className="w-full bg-white dark:bg-black p-3 border border-black/10 dark:border-white/10 rounded-xl text-xs font-bold font-sans outline-none focus:border-primary text-black dark:text-white"
+                                        rows={2}
+                                      />
+                                   </div>
+                                   <div className="space-y-1">
+                                      <label className="text-[8px] font-black uppercase opacity-40">Question (Hindi)</label>
+                                      <textarea 
+                                        value={editReportForm.questionHi}
+                                        onChange={e => setEditReportForm({ ...editReportForm, questionHi: e.target.value })}
+                                        className="w-full bg-white dark:bg-black p-3 border border-black/10 dark:border-white/10 rounded-xl text-xs font-bold font-sans outline-none focus:border-primary text-black dark:text-white"
+                                        rows={2}
+                                      />
+                                   </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                   <div className="space-y-1">
+                                      <label className="text-[8px] font-black uppercase opacity-40">Option A (English)</label>
+                                      <input 
+                                        type="text"
+                                        value={editReportForm.opt1En}
+                                        onChange={e => setEditReportForm({ ...editReportForm, opt1En: e.target.value })}
+                                        className="w-full bg-white dark:bg-black px-3 py-2 border border-black/10 dark:border-white/10 rounded-xl text-xs font-bold outline-none focus:border-primary text-black dark:text-white"
+                                      />
+                                   </div>
+                                   <div className="space-y-1">
+                                      <label className="text-[8px] font-black uppercase opacity-40">Option A (Hindi)</label>
+                                      <input 
+                                        type="text"
+                                        value={editReportForm.opt1Hi}
+                                        onChange={e => setEditReportForm({ ...editReportForm, opt1Hi: e.target.value })}
+                                        className="w-full bg-white dark:bg-black px-3 py-2 border border-black/10 dark:border-white/10 rounded-xl text-xs font-bold outline-none focus:border-primary text-black dark:text-white"
+                                      />
+                                   </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                   <div className="space-y-1">
+                                      <label className="text-[8px] font-black uppercase opacity-40">Option B (English)</label>
+                                      <input 
+                                        type="text"
+                                        value={editReportForm.opt2En}
+                                        onChange={e => setEditReportForm({ ...editReportForm, opt2En: e.target.value })}
+                                        className="w-full bg-white dark:bg-black px-3 py-2 border border-black/10 dark:border-white/10 rounded-xl text-xs font-bold outline-none focus:border-primary text-black dark:text-white"
+                                      />
+                                   </div>
+                                   <div className="space-y-1">
+                                      <label className="text-[8px] font-black uppercase opacity-40">Option B (Hindi)</label>
+                                      <input 
+                                        type="text"
+                                        value={editReportForm.opt2Hi}
+                                        onChange={e => setEditReportForm({ ...editReportForm, opt2Hi: e.target.value })}
+                                        className="w-full bg-white dark:bg-black px-3 py-2 border border-black/10 dark:border-white/10 rounded-xl text-xs font-bold outline-none focus:border-primary text-black dark:text-white"
+                                      />
+                                   </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                   <div className="space-y-1">
+                                      <label className="text-[8px] font-black uppercase opacity-40">Option C (English)</label>
+                                      <input 
+                                        type="text"
+                                        value={editReportForm.opt3En}
+                                        onChange={e => setEditReportForm({ ...editReportForm, opt3En: e.target.value })}
+                                        className="w-full bg-white dark:bg-black px-3 py-2 border border-black/10 dark:border-white/10 rounded-xl text-xs font-bold outline-none focus:border-primary text-black dark:text-white"
+                                      />
+                                   </div>
+                                   <div className="space-y-1">
+                                      <label className="text-[8px] font-black uppercase opacity-40">Option C (Hindi)</label>
+                                      <input 
+                                        type="text"
+                                        value={editReportForm.opt3Hi}
+                                        onChange={e => setEditReportForm({ ...editReportForm, opt3Hi: e.target.value })}
+                                        className="w-full bg-white dark:bg-black px-3 py-2 border border-black/10 dark:border-white/10 rounded-xl text-xs font-bold outline-none focus:border-primary text-black dark:text-white"
+                                      />
+                                   </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                   <div className="space-y-1">
+                                      <label className="text-[8px] font-black uppercase opacity-40">Option D (English)</label>
+                                      <input 
+                                        type="text"
+                                        value={editReportForm.opt4En}
+                                        onChange={e => setEditReportForm({ ...editReportForm, opt4En: e.target.value })}
+                                        className="w-full bg-white dark:bg-black px-3 py-2 border border-black/10 dark:border-white/10 rounded-xl text-xs font-bold outline-none focus:border-primary text-black dark:text-white"
+                                      />
+                                   </div>
+                                   <div className="space-y-1">
+                                      <label className="text-[8px] font-black uppercase opacity-40">Option D (Hindi)</label>
+                                      <input 
+                                        type="text"
+                                        value={editReportForm.opt4Hi}
+                                        onChange={e => setEditReportForm({ ...editReportForm, opt4Hi: e.target.value })}
+                                        className="w-full bg-white dark:bg-black px-3 py-2 border border-black/10 dark:border-white/10 rounded-xl text-xs font-bold outline-none focus:border-primary text-black dark:text-white"
+                                      />
+                                   </div>
+                                </div>
+
+                                <button
+                                  onClick={() => handleSaveFixAndApprove(r)}
+                                  className="w-full py-3 bg-green-500 hover:bg-green-600 text-white font-black text-[10px] uppercase tracking-widest rounded-xl transition-all shadow-md shadow-green-500/10 cursor-pointer"
+                                >
+                                  Save & Approve (+ 500 Coins & Flag Fixed)
+                                </button>
+                             </div>
+                          </div>
+                        )}
+                     </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {filteredReports.length === 0 && (
+               <div className="col-span-full py-20 text-center opacity-15">
+                  <AlertTriangle size={64} className="mx-auto mb-4" />
+                  <p className="font-black uppercase tracking-widest text-xs">No reports found under filtered state</p>
+               </div>
+            )}
+         </div>
       </div>
     );
   };
@@ -3853,9 +5505,9 @@ export default function AdminPanel() {
                     {realPlayers.length === 0 ? (
                       <p className="text-white/20 italic p-4 text-center">No real players found</p>
                     ) : (
-                      realPlayers.map(u => (
+                      realPlayers.map((u, uIdx) => (
                         <motion.div 
-                          key={u.id} 
+                          key={`real-player-${u.id || uIdx}-${uIdx}`} 
                           whileHover={{ scale: 1.01 }}
                           whileTap={{ scale: 0.99 }}
                           onClick={() => setSelectedUser(u)}
@@ -3917,9 +5569,9 @@ export default function AdminPanel() {
                     {botsList.length === 0 ? (
                        <p className="text-center p-8 text-white/10 italic">Zero bots active</p>
                     ) : (
-                       botsList.map(b => (
+                       botsList.map((b, bIdx) => (
                           <motion.div 
-                            key={b.id} 
+                            key={`bot-${b.id || bIdx}-${bIdx}`} 
                             whileHover={{ scale: 1.01 }}
                             whileTap={{ scale: 0.99 }}
                             className="bg-white/5 dark:bg-black/40 p-4 rounded-2xl border border-white/5 flex items-center justify-between group shadow-xl"
@@ -4051,12 +5703,70 @@ export default function AdminPanel() {
                         placeholder="0"
                       />
                     </div>
+                    <div className="space-y-1 col-span-2">
+                      <label className="flex items-center gap-2 text-xs font-bold text-black/70 dark:text-white/70 cursor-pointer ml-1 select-none">
+                        <input 
+                          type="checkbox"
+                          checked={newTopic.disableMultiSelect || false}
+                          onChange={e => setNewTopic({...newTopic, disableMultiSelect: e.target.checked})}
+                          className="rounded border-black/10 dark:border-white/10 text-primary focus:ring-primary"
+                        />
+                        Disable Multi-Select (Players cannot select this topic in multi-selection mode)
+                      </label>
+                    </div>
                     <button onClick={addTopic} className="bg-primary text-black font-black uppercase tracking-widest py-4 rounded-2xl shadow-lg shadow-primary/20 active:scale-95 transition-all md:col-span-2">
                       CREATE TOPIC
                     </button>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white/5 p-6 rounded-3xl border border-black/10 dark:border-white/10">
+                     {topicPath.length === 0 && (
+                        <div className="col-span-full bg-primary/5 p-4 rounded-2xl border border-primary/20 mb-2 space-y-4">
+                           <p className="text-xs font-black text-primary uppercase tracking-wider">Edit Root Topic Settings</p>
+                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <div className="space-y-1">
+                                 <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40 ml-1">Topic Name</label>
+                                 <input 
+                                   value={currentTopic?.name || ''}
+                                   onChange={async e => {
+                                      if (currentTopic) {
+                                         await update(ref(db, `topics/${currentTopic.id}`), { name: e.target.value });
+                                      }
+                                   }}
+                                   className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 px-3 py-2 rounded-xl text-xs font-bold text-black dark:text-white"
+                                 />
+                              </div>
+                              <div className="space-y-1">
+                                 <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40 ml-1">Sequence Order</label>
+                                 <input 
+                                   type="number"
+                                   value={currentTopic?.order ?? 0}
+                                   onChange={async e => {
+                                      if (currentTopic) {
+                                         await update(ref(db, `topics/${currentTopic.id}`), { order: parseInt(e.target.value) || 0 });
+                                      }
+                                   }}
+                                   className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 px-3 py-2 rounded-xl text-xs font-bold text-black dark:text-white"
+                                 />
+                              </div>
+                              <div className="col-span-full">
+                                 <label className="flex items-center gap-2 text-xs font-bold text-black/70 dark:text-white/70 cursor-pointer ml-1 select-none">
+                                   <input 
+                                     type="checkbox"
+                                     checked={currentTopic?.disableMultiSelect || false}
+                                     onChange={async e => {
+                                        if (currentTopic) {
+                                           await update(ref(db, `topics/${currentTopic.id}`), { disableMultiSelect: e.target.checked });
+                                        }
+                                     }}
+                                     className="rounded border-black/10 dark:border-white/10 text-primary focus:ring-primary"
+                                   />
+                                   Disable Multi-Select for this root topic
+                                 </label>
+                              </div>
+                           </div>
+                        </div>
+                     )}
                      <div className="space-y-4">
                         <div className="space-y-1">
                            <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">ID (Slug)</label>
@@ -4095,6 +5805,17 @@ export default function AdminPanel() {
                              placeholder="0"
                            />
                         </div>
+                        <div className="space-y-1">
+                          <label className="flex items-center gap-2 text-xs font-bold text-black/70 dark:text-white/70 cursor-pointer ml-1 select-none py-1">
+                            <input 
+                              type="checkbox"
+                              checked={newNode.disableMultiSelect || false}
+                              onChange={e => setNewNode({...newNode, disableMultiSelect: e.target.checked})}
+                              className="rounded border-black/10 dark:border-white/10 text-primary focus:ring-primary"
+                            />
+                            Disable Multi-Select
+                          </label>
+                        </div>
                         <div className="flex gap-2">
                           <button onClick={addNode} className="flex-1 bg-white dark:bg-white text-black font-black uppercase tracking-widest py-3 rounded-xl text-[10px]">
                             {nodeEditMode ? 'Update' : 'Add'} Node
@@ -4121,7 +5842,7 @@ export default function AdminPanel() {
                                     <button onClick={() => moveNode(child.id, 'up')} className="text-black/40 dark:text-white/40 hover:text-primary p-1 bg-black/5 dark:bg-white/5 rounded"><ChevronUp size={12} /></button>
                                     <button onClick={() => moveNode(child.id, 'down')} className="text-black/40 dark:text-white/40 hover:text-primary p-1 bg-black/5 dark:bg-white/5 rounded"><ChevronDown size={12} /></button>
                                     <button onClick={() => {
-                                      setNewNode({ id: child.id, name: child.name, description: child.description || '', order: child.order || 0 });
+                                      setNewNode({ id: child.id, name: child.name, description: child.description || '', order: child.order || 0, disableMultiSelect: child.disableMultiSelect || false });
                                       setNodeEditMode(child.id);
                                     }} className="text-primary p-2 ml-1"><Edit2 size={12} /></button>
                                     <button onClick={() => removeNode(child.id)} className="text-red-500 p-2"><Trash2 size={12} /></button>
@@ -4543,8 +6264,8 @@ export default function AdminPanel() {
              <div className="space-y-4">
                 <h3 className="text-xl font-black uppercase tracking-tighter px-2 text-black dark:text-white">Active & Scheduled Events ({events.length})</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                   {events.map(event => (
-                      <div key={event.id} className="bg-black/5 dark:bg-[#111] p-6 rounded-3xl border border-black/5 dark:border-white/5 flex flex-col justify-between">
+                   {events.map((event, eIdx) => (
+                      <div key={`event-card-${event.id || eIdx}-${eIdx}`} className="bg-black/5 dark:bg-[#111] p-6 rounded-3xl border border-black/5 dark:border-white/5 flex flex-col justify-between">
                          <div>
                             <div className="flex items-center justify-between mb-3">
                                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">{event.type}</span>
@@ -5086,8 +6807,8 @@ export default function AdminPanel() {
                       className="text-[8px] font-black bg-[#32befa]/10 hover:bg-[#32befa]/20 text-[#32befa] px-2 py-1.5 rounded-lg border border-[#32befa]/20 transition-all uppercase cursor-pointer outline-none max-w-[150px] truncate"
                     >
                       <option value="" className="text-black bg-white dark:bg-zinc-900 dark:text-zinc-300 font-bold">Select Entire Topic...</option>
-                      {allFlattenedTopics.map(t => (
-                        <option key={`sel-${t.id}`} value={t.id} className="text-black bg-white dark:bg-zinc-900 dark:text-zinc-300">
+                      {allFlattenedTopics.map((t, idx) => (
+                        <option key={`sel-${t.id || idx}-${idx}`} value={t.id} className="text-black bg-white dark:bg-zinc-900 dark:text-zinc-300">
                           {t.label}
                         </option>
                       ))}
@@ -5107,8 +6828,8 @@ export default function AdminPanel() {
                       className="text-[8px] font-black bg-red-500/10 hover:bg-red-550/20 text-red-500 px-2 py-1.5 rounded-lg border border-red-500/20 transition-all uppercase cursor-pointer outline-none max-w-[150px] truncate"
                     >
                       <option value="" className="text-black bg-white dark:bg-zinc-900 dark:text-zinc-300 font-bold">Deselect Entire Topic...</option>
-                      {allFlattenedTopics.map(t => (
-                        <option key={`desel-${t.id}`} value={t.id} className="text-black bg-white dark:bg-zinc-900 dark:text-zinc-300">
+                      {allFlattenedTopics.map((t, idx) => (
+                        <option key={`desel-${t.id || idx}-${idx}`} value={t.id} className="text-black bg-white dark:bg-zinc-900 dark:text-zinc-300">
                           {t.label}
                         </option>
                       ))}
@@ -5139,8 +6860,8 @@ export default function AdminPanel() {
                          className="bg-transparent text-white border-0 text-[10px] font-bold outline-none py-1.5 px-3 min-w-[140px] focus:ring-0 cursor-pointer"
                        >
                          <option value="" className="text-black bg-white">Move to Topic/Node...</option>
-                         {allFlattenedTopics.map(t => (
-                           <option key={t.id} value={t.id} className="text-black bg-white">
+                         {allFlattenedTopics.map((t, idx) => (
+                           <option key={`move-${t.id || idx}-${idx}`} value={t.id} className="text-black bg-white">
                              {t.label}
                            </option>
                          ))}
@@ -5243,11 +6964,11 @@ export default function AdminPanel() {
                )}
 
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 {quizzes.slice().reverse().map(q => {
+                 {quizzes.slice().reverse().map((q, qIdx) => {
                    const compoundKey = `${q.topicId}_${q.id}`;
                    const isChecked = selectedQuizKeys.includes(compoundKey);
                    return (
-                     <div key={compoundKey} className={cn(
+                     <div key={`quiz-card-${compoundKey}_${qIdx}`} className={cn(
                        "border p-5 rounded-[2rem] group relative overflow-hidden transition-all duration-200",
                        isChecked 
                          ? "bg-red-500/5 border-red-500/30" 
@@ -5416,8 +7137,8 @@ export default function AdminPanel() {
                   </div>
                ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {botPlayers.map(b => (
-                       <div key={b.id} className="bg-black/5 dark:bg-[#111] p-5 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between text-black dark:text-white hover:border-[#32befa]/30 transition-all group">
+                    {botPlayers.map((b, bIdx) => (
+                       <div key={`bot-player-${b.id || bIdx}-${bIdx}`} className="bg-black/5 dark:bg-[#111] p-5 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between text-black dark:text-white hover:border-[#32befa]/30 transition-all group">
                           <div className="flex items-center gap-3">
                              <div className="w-10 h-10 bg-[#32befa]/10 rounded-xl flex items-center justify-center text-[#32befa] group-hover:bg-[#32befa] group-hover:text-black transition-all">
                                 <Bot size={20} />
@@ -5621,6 +7342,425 @@ export default function AdminPanel() {
                    </button>
                 </div>
               </div>
+
+              {/* Background Music Global Switch */}
+              <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
+                 <div className="flex items-center gap-4 mb-2">
+                   <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                     <Volume2 size={24} />
+                   </div>
+                   <div>
+                     <h4 className="font-black uppercase tracking-tight">Background Music (BGM)</h4>
+                     <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Global Master Toggle</p>
+                   </div>
+                 </div>
+                 
+                 <div className="space-y-4">
+                    <p className="text-sm font-bold text-black/60 dark:text-white/60 leading-relaxed">
+                      Enable or disable soothing background game music globally for all users under development.
+                    </p>
+                    <button 
+                      onClick={async () => {
+                        const newState = !settings?.bgmEnabled;
+                        await update(ref(db, 'settings'), { bgmEnabled: newState });
+                      }}
+                      className={cn(
+                        "w-full py-6 rounded-3xl font-black uppercase tracking-widest text-xs transition-all border shadow-lg",
+                        settings?.bgmEnabled 
+                          ? "bg-green-500 text-white border-green-400 shadow-green-500/20" 
+                          : "bg-red-500 text-white border-red-400 shadow-red-500/20"
+                      )}
+                    >
+                      {settings?.bgmEnabled ? 'BGM IS ENABLED' : 'BGM IS DISABLED'}
+                    </button>
+
+                     <div className="space-y-2 pt-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-black/50 dark:text-white/50">Global Default BGM Acoustic Package / MIDI Mode</label>
+                        <select 
+                          value={settings?.bgmPreset || 'synth'}
+                          onChange={async (e) => {
+                            const val = e.target.value;
+                            await update(ref(db, 'settings'), { bgmPreset: val });
+                            await alert({
+                              title: 'Global Default BGM Updated',
+                              description: `Successfully configured global style package to "${val}".`,
+                              type: 'success'
+                            });
+                          }}
+                          className="w-full bg-white dark:bg-[#111] border border-black/10 dark:border-white/10 rounded-2xl px-4 py-3 text-xs font-bold text-black dark:text-white outline-none focus:border-primary cursor-pointer uppercase tracking-widest"
+                        >
+                          <option value="synth" className="bg-white dark:bg-black">✨ Soothing Synthesizer (Generative)</option>
+                          <option value="flute" className="bg-white dark:bg-black">🌾 Indian Flute (Generative)</option>
+                          <option value="piano" className="bg-white dark:bg-black">🎹 Peaceful Piano (Generative)</option>
+                          <option value="guitar" className="bg-white dark:bg-black">🎸 Classical Guitar (Generative)</option>
+                          <option value="ensemble" className="bg-white dark:bg-black">🎻 Ambient Acoustic Ensemble</option>
+                          <option value="violin" className="bg-white dark:bg-black">🎻 Sustained Bowed Strings</option>
+                          <option value="harp" className="bg-white dark:bg-black">👼 Ethereal Harp Solo</option>
+                          <option value="custom_midi" className="bg-white dark:bg-black">🎼 SYNCHRONIZED MULTI-MIDI PARSER BOARD</option>
+                        </select>
+                        <p className="text-[9px] font-medium text-black/40 dark:text-white/40 leading-relaxed">
+                          Set the preset sound used unless overridden. Use "Multi-MIDI Parser Board" to play parsed binary MIDI tracks.
+                        </p>
+                     </div>
+
+                     {/* MIDI Composition Selector for Custom MIDI Mode */}
+                     {(settings?.bgmPreset === 'custom_midi') && (
+                       <div className="space-y-2 pt-2 p-4 bg-primary/5 rounded-2xl border border-primary/20">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-primary flex items-center gap-1">
+                            <span>🎼 Master MIDI Preset Composition</span>
+                          </label>
+                          <select 
+                            value={settings?.midiPresetName || 'satie'}
+                            onChange={async (e) => {
+                              const val = e.target.value;
+                              await update(ref(db, 'settings'), { midiPresetName: val });
+                              await alert({
+                                title: 'Master MIDI Sequence Updated',
+                                description: `The active synchronized score is now set to classical preset "${val}".`,
+                                type: 'success'
+                              });
+                            }}
+                            className="w-full bg-white dark:bg-black border border-primary/20 rounded-xl px-4 py-2.5 text-xs font-bold text-black dark:text-white outline-none focus:border-primary cursor-pointer uppercase tracking-wide"
+                          >
+                            <option value="satie">🌸 Erik Satie - Gymnopédie No. 1</option>
+                            <option value="bach">🎹 J.S. Bach - Prelude in C Major</option>
+                            <option value="beethoven">🌙 L. Beethoven - Moonlight Sonata (Adagio)</option>
+                            <option value="raga">🌾 Meditative Morning Lotus Raga</option>
+                          </select>
+                          <p className="text-[9px] font-medium text-black/40 dark:text-white/40 leading-normal">
+                            Select a beautiful, mathematically-generated MIDI score that parses offline in the browser instantly.
+                          </p>
+                       </div>
+                     )}
+
+                     <div className="space-y-4 pt-4 border-t border-black/5 dark:border-white/5">
+                        <h5 className="text-[11px] font-black uppercase text-primary tracking-widest flex items-center gap-1.5">
+                          <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" />
+                          Studio Multi-Instrument Mix Board
+                        </h5>
+                        <p className="text-[10px] font-bold text-black/50 dark:text-white/50 uppercase leading-normal">
+                          Adjust the live acoustic mixing levels and tempo. All tracks play together simultaneously under full synchronization.
+                        </p>
+
+                        {/* Synthesizer Track */}
+                        <div className="space-y-1.5 p-3.5 bg-black/5 dark:bg-white/5 rounded-2xl">
+                           <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-wider">
+                             <span className="text-black/60 dark:text-white/70">✨ Ambient Pad Synth</span>
+                             <span className="text-primary font-mono">{Math.round((settings?.bgmVolumeSynth !== undefined ? settings.bgmVolumeSynth : 0.7) * 100)}%</span>
+                           </div>
+                           <input 
+                             type="range"
+                             min="0"
+                             max="1"
+                             step="0.05"
+                             value={settings?.bgmVolumeSynth !== undefined ? settings.bgmVolumeSynth : 0.7}
+                             onChange={async (e) => {
+                               const val = parseFloat(e.target.value);
+                               await update(ref(db, 'settings'), { bgmVolumeSynth: val });
+                             }}
+                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
+                           />
+                        </div>
+
+                        {/* Flute Track */}
+                        <div className="space-y-1.5 p-3.5 bg-black/5 dark:bg-white/5 rounded-2xl">
+                           <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-wider">
+                             <span className="text-black/60 dark:text-white/70">🌾 Sadhana Indian Flute</span>
+                             <span className="text-primary font-mono">{Math.round((settings?.bgmVolumeFlute !== undefined ? settings.bgmVolumeFlute : 0.4) * 100)}%</span>
+                           </div>
+                           <input 
+                             type="range"
+                             min="0"
+                             max="1"
+                             step="0.05"
+                             value={settings?.bgmVolumeFlute !== undefined ? settings.bgmVolumeFlute : 0.4}
+                             onChange={async (e) => {
+                               const val = parseFloat(e.target.value);
+                               await update(ref(db, 'settings'), { bgmVolumeFlute: val });
+                             }}
+                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
+                           />
+                        </div>
+
+                        {/* Grand Piano Track */}
+                        <div className="space-y-1.5 p-3.5 bg-black/5 dark:bg-white/5 rounded-2xl">
+                           <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-wider">
+                             <span className="text-black/60 dark:text-white/70">🎹 Peaceful Grand Piano</span>
+                             <span className="text-primary font-mono">{Math.round((settings?.bgmVolumePiano !== undefined ? settings.bgmVolumePiano : 0.5) * 100)}%</span>
+                           </div>
+                           <input 
+                             type="range"
+                             min="0"
+                             max="1"
+                             step="0.05"
+                             value={settings?.bgmVolumePiano !== undefined ? settings.bgmVolumePiano : 0.5}
+                             onChange={async (e) => {
+                               const val = parseFloat(e.target.value);
+                               await update(ref(db, 'settings'), { bgmVolumePiano: val });
+                             }}
+                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
+                           />
+                        </div>
+
+                        {/* Classical Guitar Track */}
+                        <div className="space-y-1.5 p-3.5 bg-black/5 dark:bg-white/5 rounded-2xl">
+                           <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-wider">
+                             <span className="text-black/60 dark:text-white/70">🎸 Classical Nylon Guitar</span>
+                             <span className="text-primary font-mono">{Math.round((settings?.bgmVolumeGuitar !== undefined ? settings.bgmVolumeGuitar : 0.5) * 100)}%</span>
+                           </div>
+                           <input 
+                             type="range"
+                             min="0"
+                             max="1"
+                             step="0.05"
+                             value={settings?.bgmVolumeGuitar !== undefined ? settings.bgmVolumeGuitar : 0.5}
+                             onChange={async (e) => {
+                               const val = parseFloat(e.target.value);
+                               await update(ref(db, 'settings'), { bgmVolumeGuitar: val });
+                             }}
+                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
+                           />
+                        </div>
+
+                        {/* Violin Strings Track */}
+                        <div className="space-y-1.5 p-3.5 bg-black/5 dark:bg-white/5 rounded-2xl">
+                           <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-wider">
+                             <span className="text-black/60 dark:text-white/70">🎻 Orchestral Bowed Strings</span>
+                             <span className="text-primary font-mono">{Math.round((settings?.bgmVolumeViolin !== undefined ? settings.bgmVolumeViolin : 0.4) * 100)}%</span>
+                           </div>
+                           <input 
+                             type="range"
+                             min="0"
+                             max="1"
+                             step="0.05"
+                             value={settings?.bgmVolumeViolin !== undefined ? settings.bgmVolumeViolin : 0.4}
+                             onChange={async (e) => {
+                               const val = parseFloat(e.target.value);
+                               await update(ref(db, 'settings'), { bgmVolumeViolin: val });
+                             }}
+                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
+                           />
+                        </div>
+
+                        {/* Harp Track */}
+                        <div className="space-y-1.5 p-3.5 bg-black/5 dark:bg-white/5 rounded-2xl">
+                           <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-wider">
+                             <span className="text-black/60 dark:text-white/70">👼 Ethereal Concert Harp</span>
+                             <span className="text-primary font-mono">{Math.round((settings?.bgmVolumeHarp !== undefined ? settings.bgmVolumeHarp : 0.4) * 100)}%</span>
+                           </div>
+                           <input 
+                             type="range"
+                             min="0"
+                             max="1"
+                             step="0.05"
+                             value={settings?.bgmVolumeHarp !== undefined ? settings.bgmVolumeHarp : 0.4}
+                             onChange={async (e) => {
+                               const val = parseFloat(e.target.value);
+                               await update(ref(db, 'settings'), { bgmVolumeHarp: val });
+                             }}
+                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
+                           />
+                        </div>
+
+                        {/* Lofi Beats Track */}
+                        <div className="space-y-1.5 p-3.5 bg-black/5 dark:bg-white/5 rounded-2xl">
+                           <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-wider">
+                             <span className="text-black/60 dark:text-white/70">🥁 Calm Lofi Beats (Kick & Shaker)</span>
+                             <span className="text-primary font-mono">{Math.round((settings?.bgmVolumeBeats !== undefined ? settings.bgmVolumeBeats : 0.25) * 100)}%</span>
+                           </div>
+                           <input 
+                             type="range"
+                             min="0"
+                             max="1"
+                             step="0.05"
+                             value={settings?.bgmVolumeBeats !== undefined ? settings.bgmVolumeBeats : 0.25}
+                             onChange={async (e) => {
+                               const val = parseFloat(e.target.value);
+                               await update(ref(db, 'settings'), { bgmVolumeBeats: val });
+                             }}
+                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
+                           />
+                        </div>
+
+                        {/* Tempo control */}
+                        <div className="space-y-1.5 p-3.5 bg-black/5 dark:bg-white/5 rounded-2xl">
+                           <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-wider">
+                             <span className="text-black/60 dark:text-white/70">⏱️ Music Tempo (BPM speed)</span>
+                             <span className="text-primary font-mono">{settings?.bgmBpm !== undefined ? settings.bgmBpm : 95} BPM</span>
+                           </div>
+                           <input 
+                             type="range"
+                             min="40"
+                             max="160"
+                             step="4"
+                             value={settings?.bgmBpm !== undefined ? settings.bgmBpm : 95}
+                             onChange={async (e) => {
+                               const val = parseInt(e.target.value, 10);
+                               await update(ref(db, 'settings'), { bgmBpm: val });
+                             }}
+                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
+                           />
+                        </div>
+                     </div>
+
+                     {/* Custom MIDI Track URLs - Play different midis simultaneously on different channels! */}
+                     {(settings?.bgmPreset === 'custom_midi') && (
+                       <div className="space-y-4 pt-4 border-t border-black/5 dark:border-white/5 bg-black/10 dark:bg-white/5 p-4 rounded-[1.5rem] text-left">
+                         <h6 className="text-[10px] font-black uppercase tracking-widest text-[#999] dark:text-[#888]">Track-Specific Binary MIDI URLs (.mid)</h6>
+                         <p className="text-[9px] font-medium leading-normal text-black/50 dark:text-white/40">
+                           Paste direct URLs to standard web access `.mid` files. Leave empty to auto-clone the master MIDI preset choice. Keep different tracks playing different files!
+                         </p>
+
+                         {/* Track 1: Synth */}
+                         <div className="space-y-1">
+                           <label className="text-[9px] font-bold uppercase tracking-wider text-black/40 dark:text-white/40">Ambient Pad Synth .mid URL</label>
+                           <input 
+                             type="text"
+                             key={`midi-synth-${settings?.midiUrlSynth || ''}`}
+                             defaultValue={settings?.midiUrlSynth || ''}
+                             placeholder="e.g. https://domain.com/synth.mid"
+                             onBlur={async (e) => {
+                               await update(ref(db, 'settings'), { midiUrlSynth: e.target.value.trim() });
+                             }}
+                             className="w-full bg-white dark:bg-black border border-black/15 dark:border-white/10 rounded-xl px-3.5 py-2 text-xs text-black dark:text-white focus:border-primary outline-none"
+                           />
+                         </div>
+
+                         {/* Track 2: Flute */}
+                         <div className="space-y-1">
+                           <label className="text-[9px] font-bold uppercase tracking-wider text-black/40 dark:text-white/40">Indian Woodwind Flute .mid URL</label>
+                           <input 
+                             type="text"
+                             key={`midi-flute-${settings?.midiUrlFlute || ''}`}
+                             defaultValue={settings?.midiUrlFlute || ''}
+                             placeholder="e.g. https://domain.com/flute.mid"
+                             onBlur={async (e) => {
+                               await update(ref(db, 'settings'), { midiUrlFlute: e.target.value.trim() });
+                             }}
+                             className="w-full bg-white dark:bg-black border border-black/15 dark:border-white/10 rounded-xl px-3.5 py-2 text-xs text-black dark:text-white focus:border-primary outline-none"
+                           />
+                         </div>
+
+                         {/* Track 3: Piano */}
+                         <div className="space-y-1">
+                           <label className="text-[9px] font-bold uppercase tracking-wider text-black/40 dark:text-white/40">Peaceful Grand Piano .mid URL</label>
+                           <input 
+                             type="text"
+                             key={`midi-piano-${settings?.midiUrlPiano || ''}`}
+                             defaultValue={settings?.midiUrlPiano || ''}
+                             placeholder="e.g. https://domain.com/piano.mid"
+                             onBlur={async (e) => {
+                               await update(ref(db, 'settings'), { midiUrlPiano: e.target.value.trim() });
+                             }}
+                             className="w-full bg-white dark:bg-black border border-black/15 dark:border-white/10 rounded-xl px-3.5 py-2 text-xs text-black dark:text-white focus:border-primary outline-none"
+                           />
+                         </div>
+
+                         {/* Track 4: Guitar */}
+                         <div className="space-y-1">
+                           <label className="text-[9px] font-bold uppercase tracking-wider text-black/40 dark:text-white/40">Nylon Classical Guitar .mid URL</label>
+                           <input 
+                             type="text"
+                             key={`midi-guitar-${settings?.midiUrlGuitar || ''}`}
+                             defaultValue={settings?.midiUrlGuitar || ''}
+                             placeholder="e.g. https://domain.com/guitar.mid"
+                             onBlur={async (e) => {
+                               await update(ref(db, 'settings'), { midiUrlGuitar: e.target.value.trim() });
+                             }}
+                             className="w-full bg-white dark:bg-black border border-black/15 dark:border-white/10 rounded-xl px-3.5 py-2 text-xs text-black dark:text-white focus:border-primary outline-none"
+                           />
+                         </div>
+
+                         {/* Track 5: Violin */}
+                         <div className="space-y-1">
+                           <label className="text-[9px] font-bold uppercase tracking-wider text-black/40 dark:text-white/40">Bowed Violin Strings .mid URL</label>
+                           <input 
+                             type="text"
+                             key={`midi-violin-${settings?.midiUrlViolin || ''}`}
+                             defaultValue={settings?.midiUrlViolin || ''}
+                             placeholder="e.g. https://domain.com/violin.mid"
+                             onBlur={async (e) => {
+                               await update(ref(db, 'settings'), { midiUrlViolin: e.target.value.trim() });
+                             }}
+                             className="w-full bg-white dark:bg-black border border-black/15 dark:border-white/10 rounded-xl px-3.5 py-2 text-xs text-black dark:text-white focus:border-primary outline-none"
+                           />
+                         </div>
+
+                         {/* Track 6: Harp */}
+                         <div className="space-y-1">
+                           <label className="text-[9px] font-bold uppercase tracking-wider text-black/40 dark:text-white/40">Concert Ethereal Harp .mid URL</label>
+                           <input 
+                             type="text"
+                             key={`midi-harp-${settings?.midiUrlHarp || ''}`}
+                             defaultValue={settings?.midiUrlHarp || ''}
+                             placeholder="e.g. https://domain.com/harp.mid"
+                             onBlur={async (e) => {
+                               await update(ref(db, 'settings'), { midiUrlHarp: e.target.value.trim() });
+                             }}
+                             className="w-full bg-white dark:bg-black border border-black/15 dark:border-white/10 rounded-xl px-3.5 py-2 text-xs text-black dark:text-white focus:border-primary outline-none"
+                           />
+                         </div>
+                       </div>
+                     )}
+
+                    <div className="space-y-2 pt-2 border-t border-black/5 dark:border-white/5">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-black/50 dark:text-white/50">Custom Audio BGM URL</label>
+                        <input 
+                          type="text"
+                          key={`bgm-url-${settings?.bgmUrl || ''}`}
+                          defaultValue={settings?.bgmUrl || ''}
+                          placeholder="e.g. https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+                          onBlur={async (e) => {
+                            const val = e.target.value.trim();
+                            await update(ref(db, 'settings'), { bgmUrl: val });
+                            await alert({ 
+                              title: 'BGM URL Updated', 
+                              description: val ? 'Custom background music URL updated successfully.' : 'Custom BGM URL cleared. Reverted to synthesizer.', 
+                              type: 'success' 
+                            });
+                          }}
+                          className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl px-4 py-3 text-xs font-bold text-black dark:text-white outline-none focus:border-primary"
+                        />
+                        <p className="text-[9px] font-medium text-black/40 dark:text-white/40 leading-relaxed">
+                          Provide a direct streamable MP3/audio link. Setting this replaces generative synthesis for all users.
+                        </p>
+                    </div>
+                 </div>
+              </div>
+
+              {/* Ambient Mode Global Settings */}
+              <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
+                 <div className="flex items-center gap-4 mb-2">
+                   <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                     <Sun size={24} />
+                   </div>
+                   <div>
+                     <h4 className="font-black uppercase tracking-tight">Ambient Mode Settings</h4>
+                     <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Global lx Threshold</p>
+                   </div>
+                 </div>
+                 
+                 <div className="space-y-4">
+                    <p className="text-sm font-bold text-black/60 dark:text-white/60 leading-relaxed">
+                      Configure the default light sensor lux value threshold. If live lux &lt; threshold, dark mode is applied. Current global threshold: <span className="font-black text-primary">{settings?.ambientThreshold !== undefined ? `${settings.ambientThreshold} lx` : "0 lx (Must be set by admin)"}</span>.
+                    </p>
+                    <div className="flex gap-2">
+                       <input 
+                         type="number"
+                         key={`ambient-threshold-${settings?.ambientThreshold}`}
+                         defaultValue={settings?.ambientThreshold !== undefined ? settings.ambientThreshold : 0}
+                         onBlur={async (e) => {
+                           const parsed = parseInt(e.target.value);
+                           const val = isNaN(parsed) ? 0 : parsed;
+                           await update(ref(db, 'settings'), { ambientThreshold: val });
+                           await alert({ title: 'Success', description: `Global threshold set to ${val} lx`, type: "success" });
+                         }}
+                         placeholder="e.g. 75"
+                         className="flex-1 bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl px-4 py-3 text-xs font-bold text-black dark:text-white outline-none focus:border-primary"
+                       />
+                    </div>
+                 </div>
+              </div>
             </div>
 
             {/* Game Update Code Settings */}
@@ -5715,6 +7855,7 @@ export default function AdminPanel() {
                     {[
                       { name: 'Users AppCode (Default)', val: 'users/{userId}/AppCode' },
                       { name: 'Devices Path', val: 'UserDevices/{userId}/appCode' },
+                      { name: 'Device-User UserCode', val: 'UserDevices/{deviceUid}/Users/UserCode' },
                       { name: 'Custom Node Check', val: 'appCodes/{userId}' },
                       { name: 'Direct Root Node', val: '{userId}/AppCode' }
                     ].map((ps) => (
@@ -5986,8 +8127,8 @@ export default function AdminPanel() {
              </div>
 
              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {[...feedback].reverse().map((f) => (
-                   <div key={f.id} className="bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/5 p-6 rounded-[2rem] space-y-4 hover:border-primary/20 transition-all flex flex-col group relative">
+                {[...feedback].reverse().map((f, fIdx) => (
+                   <div key={`feedback-card-${f.id || fIdx}-${fIdx}`} className="bg-black/5 dark:bg-[#111] border border-black/5 dark:border-white/5 p-6 rounded-[2rem] space-y-4 hover:border-primary/20 transition-all flex flex-col group relative">
                       <div className="flex items-start justify-between">
                          <div className="flex items-center gap-3">
                             <div className="w-10 h-10 bg-primary/20 rounded-xl flex items-center justify-center text-primary font-black uppercase border border-primary/10">
@@ -6045,6 +8186,8 @@ export default function AdminPanel() {
              </div>
           </div>
         );
+      case 'reports':
+         return renderReportsSection();
       case 'database':
          return renderDatabaseExplorer();
       case 'marketing':
@@ -6064,9 +8207,9 @@ export default function AdminPanel() {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {pendingUsers.map(u => (
+                {pendingUsers.map((u, uIdx) => (
                   <motion.div 
-                    key={u.id}
+                    key={`pending-pic-${u.id || uIdx}-${uIdx}`}
                     initial={{ opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}
                     className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5 space-y-6"
@@ -6161,9 +8304,9 @@ export default function AdminPanel() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {unapprovedUsers.map(u => (
+                  {unapprovedUsers.map((u, uIdx) => (
                     <motion.div 
-                      key={u.id}
+                      key={`unapproved-user-${u.id || uIdx}-${uIdx}`}
                       initial={{ opacity: 0, scale: 0.9 }}
                       animate={{ opacity: 1, scale: 1 }}
                       className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5 space-y-6 flex flex-col"
@@ -6178,9 +8321,19 @@ export default function AdminPanel() {
                         </div>
                       </div>
 
-                      <div className="bg-white/5 dark:bg-black/20 p-4 rounded-2xl border border-black/10 dark:border-white/5 flex-1">
+                      <div className="bg-white/5 dark:bg-black/20 p-4 rounded-2xl border border-black/10 dark:border-white/5">
                         <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mb-1">Email</p>
                         <p className="text-xs text-black/70 dark:text-white/70 truncate">{u.email}</p>
+                      </div>
+
+                      <div className="bg-white/5 dark:bg-black/20 p-4 rounded-2xl border border-black/10 dark:border-white/5 space-y-2">
+                        <label className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest block ml-1">FCM Token (Link to player)</label>
+                        <input 
+                          value={pendingTokens[u.id] || ''}
+                          onChange={e => setPendingTokens({...pendingTokens, [u.id]: e.target.value})}
+                          placeholder="Paste FCM Token to link..."
+                          className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-xl px-3 py-2 text-xs font-mono text-black dark:text-white outline-none focus:border-primary"
+                        />
                       </div>
 
                       <div className="flex gap-2">
@@ -6188,7 +8341,8 @@ export default function AdminPanel() {
                           onClick={async () => {
                             const v = await confirm({ title: 'Approve User?', description: `Allow ${u.name} to play Rahee Quiz?`, type: 'confirm' });
                             if (!v) return;
-                            await update(ref(db, `users/${u.id}`), { status: 'approved' });
+                            const tokenToLink = pendingTokens[u.id];
+                            await approveUserAndNotify(u, tokenToLink);
                             await alert({ title: 'User Approved', description: `${u.name} can now login.`, type: 'success' });
                           }}
                           className="flex-1 bg-green-500 text-white font-black uppercase tracking-widest text-[10px] py-4 rounded-2xl shadow-lg shadow-green-500/20 active:scale-95 transition-all flex items-center justify-center gap-2"
@@ -6233,9 +8387,9 @@ export default function AdminPanel() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {retryRequests.map(u => (
+                  {retryRequests.map((u, uIdx) => (
                     <motion.div 
-                      key={u.id}
+                      key={`retry-user-${u.id || uIdx}-${uIdx}`}
                       initial={{ opacity: 0, scale: 0.9 }}
                       animate={{ opacity: 1, scale: 1 }}
                       className="bg-black/5 dark:bg-[#111] p-6 rounded-[2.5rem] border border-black/5 dark:border-white/5 space-y-6 flex flex-col"
@@ -6283,6 +8437,8 @@ export default function AdminPanel() {
         );
       case 'customization':
         return renderCustomization();
+      case 'dashboard':
+        return renderDashboard();
       default: return null;
     }
   };
@@ -6336,6 +8492,7 @@ export default function AdminPanel() {
 
           <nav className="flex-1 space-y-2 pb-16">
              {[
+               { id: 'dashboard', label: 'Dashboard', icon: TrendingUp },
                { id: 'users', label: 'Players', icon: Users },
                { id: 'requests', label: 'Requests', icon: Clock },
                { id: 'events', label: 'Events', icon: Calendar },
@@ -6346,6 +8503,7 @@ export default function AdminPanel() {
                { id: 'notifications', label: 'Notifications', icon: Bell },
                { id: 'verification', label: 'Verifications', icon: ImageIcon },
                { id: 'feedback', label: 'Support', icon: MessageSquare },
+               { id: 'reports', label: 'Reports', icon: AlertTriangle },
                { id: 'database', label: 'Database', icon: Database },
                { id: 'marketing', label: 'Marketing', icon: Zap },
                { id: 'ads', label: 'Ad Manager', icon: Play },

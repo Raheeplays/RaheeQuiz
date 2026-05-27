@@ -122,12 +122,19 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
     }
   }, [eventId]);
 
-  const completeQuiz = async () => {
+  const completeQuiz = async (finalAnswers?: any[]) => {
     if (eventId && currentUser) {
+      const answersToSave = finalAnswers || history.map(h => ({
+        quizId: h.quizId,
+        userAnswerIndex: h.userAnswerIndex,
+        isCorrect: h.isCorrect
+      }));
+
       await update(ref(db, `events/${eventId}/results/${currentUser.id}`), {
         score: roundStats.correct,
         total: quizzes.length,
-        completedAt: Date.now()
+        completedAt: Date.now(),
+        answers: answersToSave
       });
     }
     setShowResult(true);
@@ -285,7 +292,9 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
       quizId: quizzes[absoluteIndex].id,
       userAnswerIndex: index,
       isCorrect,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      language: language,
+      theme: isDark ? 'dark' : 'light'
     };
     setHistory(prev => [...prev, historyEntry]);
 
@@ -316,6 +325,8 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
         score: roundStats.correct + (isCorrect ? 1 : 0),
         total: (newIndex >= (eventId ? quizzes.length : QUESTIONS_PER_ROUND)) ? newIndex : newIndex,
         timestamp: Date.now(),
+        language: language,
+        theme: isDark ? 'dark' : 'light',
         answers: [...history, historyEntry].map(h => ({
           quizId: h.quizId,
           userAnswerIndex: h.userAnswerIndex,
@@ -403,9 +414,15 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
       
       await saveSession();
       
+      const finalAnswers = [...history, historyEntry].map(h => ({
+        quizId: h.quizId,
+        userAnswerIndex: h.userAnswerIndex,
+        isCorrect: h.isCorrect
+      }));
+
       setTimeout(async () => {
         if (eventId) {
-          await completeQuiz();
+          await completeQuiz(finalAnswers);
         } else {
           setShowRoundComplete(true);
         }
@@ -531,7 +548,19 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
   }
 
   if (showResult) {
-    return <WinnerLoserScreen history={history} onClose={onClose} total={quizzes.length} />;
+    const currentTopicId = Array.isArray(targetTopicIds) 
+      ? targetTopicIds[targetTopicIds.length - 1] 
+      : (targetTopicIds || 'general');
+
+    return (
+      <WinnerLoserScreen 
+        history={history} 
+        onClose={onClose} 
+        total={quizzes.length} 
+        topicId={currentTopicId}
+        quizzes={quizzes}
+      />
+    );
   }
 
   if (!quizzes.length || absoluteIndex >= quizzes.length) {
@@ -938,6 +967,8 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
             onClose={() => setShowSettings(false)} 
             onShowFeedback={() => setShowFeedback(true)} 
             onShowHistory={() => setShowHistory(true)}
+            activeQuizId={quizzes[absoluteIndex]?.id}
+            activeQuizText={quizzes[absoluteIndex]?.question?.[language] || quizzes[absoluteIndex]?.question?.en}
           />
         )}
         {showFeedback && <Feedback onClose={() => setShowFeedback(false)} />}
@@ -1033,8 +1064,8 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
                   <p className="text-[10px] font-bold mt-2 text-black dark:text-white max-w-[200px]">Send a message to request secret access codes. Your message will be visible only to admins.</p>
                 </div>
               )}
-              {mySpecialMessages.map((msg) => (
-                <React.Fragment key={msg.id}>
+              {mySpecialMessages.map((msg, idx) => (
+                <React.Fragment key={`special-msg-${msg.id || idx}-${idx}`}>
                   {msg.adminReply && (msg.replyExpiresAt > Date.now()) && (
                     <div className="flex flex-col items-start translate-y-0 animate-in fade-in slide-in-from-left-4 duration-500">
                       <div className="bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 p-5 rounded-[1.5rem] rounded-tl-none max-w-[85%] relative overflow-hidden group shadow-xl">

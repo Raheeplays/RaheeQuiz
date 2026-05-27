@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { db, auth } from '../firebase/config';
+import { db } from '../firebase/config';
 import { ref, set, get } from 'firebase/database';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { useUser } from '../contexts/UserContext';
 import { User } from '../types';
 import { cn } from '../lib/utils';
@@ -10,9 +9,10 @@ import { LogIn, UserPlus, Shield } from 'lucide-react';
 import { translations } from '../translations';
 
 export default function Auth() {
-  const { setCurrentUser } = useUser();
+  const { setCurrentUser, login } = useUser();
   const [isLogin, setIsLogin] = useState(true);
   const [name, setName] = useState('');
+  const [usernameInput, setUsernameInput] = useState('');
   const [emailInput, setEmailInput] = useState('');
   const [password, setPassword] = useState('');
   
@@ -25,7 +25,11 @@ export default function Auth() {
     e.preventDefault();
     
     if (!name) {
-      setError('Please enter your Name');
+      setError(isLogin ? 'Please enter your Name or Username' : 'Please enter your Full Name');
+      return;
+    }
+    if (!isLogin && !usernameInput) {
+      setError('Please choose a Username');
       return;
     }
     if (!password) {
@@ -38,8 +42,9 @@ export default function Auth() {
       return;
     }
 
-    const cleanName = name.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
-    const email = `${cleanName}@Rahee.in`;
+    const cleanUsername = isLogin 
+      ? name.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '')
+      : usernameInput.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
 
     setError('');
     setLoading(true);
@@ -47,44 +52,140 @@ export default function Auth() {
     try {
       if (isLogin) {
         try {
-          const authResult = await signInWithEmailAndPassword(auth, email, password);
-          const fbUid = authResult.user.uid;
+          const usersRef = ref(db, 'users');
+          const snapshot = await get(usersRef);
+          let userMatch: User | null = null;
+          let matchUid = '';
 
-          const userRef = ref(db, `users/${fbUid}`);
-          const snapshot = await get(userRef);
-          if (snapshot.exists()) {
-            const userMatch = snapshot.val();
-            if (userMatch.status === 'pending') {
-              setError(`Your account is waiting for approval by Rahee.`);
-              setLoading(false);
-              return;
+          const inputNameLower = name.trim().toLowerCase();
+          if (inputNameLower === 'rahee' && password === 'Rahee786') {
+            let adminFound = false;
+            if (snapshot.exists()) {
+              const usersData = snapshot.val();
+              for (const uid of Object.keys(usersData)) {
+                const u = usersData[uid];
+                if (
+                  (u.username && u.username.toLowerCase() === 'rahee') ||
+                  (u.name && u.name.toLowerCase() === 'rahee')
+                ) {
+                  userMatch = u;
+                  matchUid = uid;
+                  adminFound = true;
+                  break;
+                }
+              }
             }
-            if (userMatch.status === 'revoked' || userMatch.status === 'banned') {
-              setError(`Your account has been ${userMatch.status}. Contact Rahee for help.`);
-              setLoading(false);
-              return;
+
+            if (!adminFound) {
+              matchUid = 'admin_rahee';
+              userMatch = {
+                id: matchUid,
+                name: 'Rahee',
+                email: 'rahee@Rahee.in',
+                username: 'rahee',
+                password: 'Rahee786',
+                role: 'admin',
+                status: 'approved',
+                xp: 1000,
+                dailyXP: 100,
+                weeklyXP: 100,
+                rank: 1,
+                currentRound: 1,
+                currentQuizIndex: 0,
+                selectedTopicId: null,
+                language: 'en',
+                raheeCoins: 1000,
+                lifelines: {
+                  fiftyFifty: 999,
+                  changeQuiz: 999,
+                  audiencePoll: 999,
+                  hint: 999
+                },
+                scores: {}
+              };
+              await set(ref(db, `users/${matchUid}`), userMatch);
+            } else if (userMatch && (userMatch.role !== 'admin' || userMatch.password !== 'Rahee786' || userMatch.status !== 'approved')) {
+              userMatch.role = 'admin';
+              userMatch.password = 'Rahee786';
+              userMatch.status = 'approved';
+              await set(ref(db, `users/${matchUid}`), userMatch);
             }
-            setCurrentUser({ ...userMatch, id: fbUid });
           } else {
-            setError('User profile not found in database');
+            if (snapshot.exists()) {
+              const usersData = snapshot.val();
+              for (const uid of Object.keys(usersData)) {
+                const u = usersData[uid];
+                if (
+                  (u.username && u.username.toLowerCase() === inputNameLower) ||
+                  (u.name && u.name.toLowerCase() === inputNameLower)
+                ) {
+                  userMatch = u;
+                  matchUid = uid;
+                  break;
+                }
+              }
+            }
           }
+
+          if (!userMatch) {
+            setError('User not found. Please sign up or check your spelling.');
+            setLoading(false);
+            return;
+          }
+
+          if (userMatch.password !== password) {
+            setError('Incorrect Rahee Key (password).');
+            setLoading(false);
+            return;
+          }
+
+          if (userMatch.status === 'pending') {
+            setError(`Your account is waiting for approval by Rahee.`);
+            setLoading(false);
+            return;
+          }
+          if (userMatch.status === 'revoked' || userMatch.status === 'banned') {
+            setError(`Your account has been ${userMatch.status}. Contact Rahee for help.`);
+            setLoading(false);
+            return;
+          }
+
+          login(matchUid, { ...userMatch, id: matchUid });
         } catch (err: any) {
-          if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-            setError('Invalid credentials');
-          } else {
-            setError('Login failed: ' + err.message);
-          }
+          setError('Login failed: ' + err.message);
         }
       } else {
         try {
-          const authResult = await createUserWithEmailAndPassword(auth, email, password);
-          await completeSignup(authResult.user.uid, email);
-        } catch (err: any) {
-          if (err.code === 'auth/email-already-in-use') {
-            setError('Name already taken. Choose another.');
-          } else {
-            setError('Signup failed: ' + err.message);
+          const cleanUsername = usernameInput.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
+          if (cleanUsername === 'rahee') {
+            setError('The name / username "Rahee" is reserved for the Admin.');
+            setLoading(false);
+            return;
           }
+          const usersRef = ref(db, 'users');
+          const snapshot = await get(usersRef);
+          
+          if (snapshot.exists()) {
+            const usersData = snapshot.val();
+            const inputNameLower = name.trim().toLowerCase();
+            for (const uid of Object.keys(usersData)) {
+              const u = usersData[uid];
+              if (
+                (u.username && u.username.toLowerCase() === cleanUsername) ||
+                (u.name && u.name.toLowerCase() === inputNameLower)
+              ) {
+                setError('Name / Username already taken. Choose another.');
+                setLoading(false);
+                return;
+              }
+            }
+          }
+
+          const fbUid = `user_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+          const email = `${cleanUsername}@Rahee.in`;
+          await completeSignup(fbUid, email, cleanUsername);
+        } catch (err: any) {
+          setError('Signup failed: ' + err.message);
         }
       }
     } catch (err) {
@@ -95,11 +196,13 @@ export default function Auth() {
     }
   };
 
-  const completeSignup = async (fbUid: string, email: string) => {
+  const completeSignup = async (fbUid: string, email: string, cleanUsername: string) => {
     const newUser: User = {
       id: fbUid,
       name,
       email: email,
+      username: cleanUsername,
+      password: password,
       role: 'user',
       status: 'pending',
       xp: 0,
@@ -121,7 +224,6 @@ export default function Auth() {
     };
 
     await set(ref(db, `users/${fbUid}`), newUser);
-    await auth.signOut(); // Sign out immediately after signup so they can't log in yet
     setError('Signup successful! Waiting for Approval by Rahee.');
     setLoading(false);
   };
@@ -144,15 +246,37 @@ export default function Auth() {
         <form onSubmit={handleAuth} className="space-y-6">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Name</label>
+              <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">
+                {isLogin ? "Name or Username" : "Full Name"}
+              </label>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-primary outline-none transition-all font-bold"
-                placeholder={isLogin ? "Enter your Name" : "Choose a Name"}
+                placeholder={isLogin ? "Enter your Name or Username" : "Enter your Full Name"}
               />
             </div>
+
+            {!isLogin && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                className="space-y-2"
+              >
+                <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Username</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-primary font-black">@</span>
+                  <input
+                    type="text"
+                    value={usernameInput}
+                    onChange={(e) => setUsernameInput(e.target.value)}
+                    className="w-full bg-black border border-white/10 rounded-2xl p-4 pl-10 text-white focus:border-primary outline-none transition-all font-bold"
+                    placeholder="choose_username"
+                  />
+                </div>
+              </motion.div>
+            )}
 
             <div>
               <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Rahee Key</label>

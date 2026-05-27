@@ -1,35 +1,62 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Trophy, Star, Clock, Home, RotateCcw, MessageCircle, AlertTriangle } from 'lucide-react';
+import { Trophy, Star, Clock, Home, RotateCcw, MessageCircle, AlertTriangle, Award, FileDown, Download } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
 import { useDialog } from '../contexts/DialogContext';
 import { db } from '../firebase/config';
-import { ref, set } from 'firebase/database';
-import { QuizHistory } from '../types';
+import { ref, set, onValue } from 'firebase/database';
+import { QuizHistory, Quiz } from '../types';
 import { cn } from '../lib/utils';
+import { generateCertificate } from '../utils/certificate';
+import { downloadAnswerSheetPDF } from '../utils/quizDownload';
 
 interface WinnerLoserScreenProps {
   history: QuizHistory[];
   onClose: () => void;
   total?: number;
+  topicId?: string;
+  quizzes?: Quiz[];
 }
 
-export default function WinnerLoserScreen({ history, onClose, total }: WinnerLoserScreenProps) {
+function getTopicName(topicId: string, topicsData: any): string {
+  if (!topicsData) return 'Unknown Topic';
+  if (topicsData[topicId]) return topicsData[topicId].name;
+  for (const key in topicsData) {
+    if (topicsData[key].children) {
+      const found = getTopicName(topicId, topicsData[key].children);
+      if (found !== 'Unknown Topic') return found;
+    }
+  }
+  return topicId === 'general' ? 'General Knowledge' : 'Unknown Topic';
+}
+
+export default function WinnerLoserScreen({ history, onClose, total, topicId, quizzes }: WinnerLoserScreenProps) {
   const { currentUser } = useUser();
   const { alert } = useDialog();
   const [seconds, setSeconds] = useState(86400); // 24 hours
+  const [topics, setTopics] = useState<any>(null);
   
   const correctCount = history.filter(h => h.isCorrect).length;
-  const totalCount = total || 160; 
+  const totalCount = total || quizzes?.length || 10; 
   const scorePercentage = (correctCount / totalCount) * 100;
   
   const stars = Math.max(1, Math.min(5, Math.ceil(scorePercentage / 20)));
 
   useEffect(() => {
+    const unsub = onValue(ref(db, 'topics'), (snapshot) => {
+      if (snapshot.exists()) {
+        setTopics(snapshot.val());
+      }
+    });
+
     const interval = setInterval(() => {
       setSeconds(prev => (prev > 0 ? prev - 1 : 0));
     }, 1000);
-    return () => clearInterval(interval);
+
+    return () => {
+      unsub();
+      clearInterval(interval);
+    };
   }, []);
 
   const formatTime = (totalSeconds: number) => {
@@ -46,6 +73,41 @@ export default function WinnerLoserScreen({ history, onClose, total }: WinnerLos
       title: "Request Sent",
       description: "Request sent to Rahee! Please wait for approval to get extra tries.",
       type: 'success'
+    });
+  };
+
+  const resolvedTopicName = topicId ? getTopicName(topicId, topics) : 'General Knowledge';
+
+  const handleDownloadCertificate = () => {
+    if (!currentUser) return;
+    generateCertificate({
+      userName: currentUser.name || 'Player',
+      score: correctCount,
+      total: totalCount,
+      date: new Date().toLocaleDateString(),
+      topicName: resolvedTopicName,
+      certificateColor: '#32befa'
+    });
+  };
+
+  const handleDownloadAnswerSheet = () => {
+    if (!currentUser || !quizzes) return;
+    const results = {
+      score: correctCount,
+      total: totalCount,
+      completedAt: Date.now(),
+      answers: history.map(h => ({
+        quizId: h.quizId,
+        userAnswerIndex: h.userAnswerIndex,
+        isCorrect: h.isCorrect
+      }))
+    };
+    downloadAnswerSheetPDF({
+      eventTitle: 'Rahee Quiz Battle',
+      topicName: resolvedTopicName,
+      quizzes,
+      candidateName: currentUser.name || 'Player',
+      results
     });
   };
 
@@ -99,6 +161,29 @@ export default function WinnerLoserScreen({ history, onClose, total }: WinnerLos
               <span className="text-white/40 font-bold uppercase tracking-widest text-xs">Next play in:</span>
               <span className="font-black text-white">{formatTime(seconds)}</span>
            </div>
+        </div>
+
+        {/* Document Downloads Section */}
+        <div className="bg-[#111] border border-[#32befa]/20 p-5 rounded-[2rem] mb-6 text-left space-y-3 shadow-[0_0_20px_rgba(50,190,250,0.05)]">
+          <p className="text-[#32befa] text-[10px] font-black uppercase tracking-[0.2em] px-1">
+            Score Verification Docs
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2.5">
+            <button
+              onClick={handleDownloadCertificate}
+              className="flex-1 bg-white/5 hover:bg-[#32befa]/20 hover:text-white border border-white/5 hover:border-[#32befa]/40 text-white text-[11px] font-black tracking-wider py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95"
+            >
+              <Award size={15} className="text-[#32befa]" />
+              GET CERTIFICATE
+            </button>
+            <button
+              onClick={handleDownloadAnswerSheet}
+              className="flex-1 bg-white/5 hover:bg-emerald-500/20 hover:text-white border border-white/5 hover:border-emerald-500/40 text-white text-[11px] font-black tracking-wider py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 animate-pulse"
+            >
+              <Download size={15} className="text-emerald-400" />
+              OMR SHEET
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4">

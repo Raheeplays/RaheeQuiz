@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, Settings } from '../types';
 import { db, auth } from '../firebase/config';
-import { ref, onValue, get, update, onDisconnect } from 'firebase/database';
+import { ref, onValue, get, update, push, onDisconnect } from 'firebase/database';
 import { onAuthStateChanged } from 'firebase/auth';
 
 interface UserContextType {
@@ -13,32 +13,46 @@ interface UserContextType {
   impersonateBot: (bot: User) => void;
   stopImpersonating: () => void;
   isImpersonating: boolean;
+  login: (userId: string, user: User) => void;
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
+  const [activeUserId, setActiveUserId] = useState<string | null>(() => {
+    return localStorage.getItem('rahee_user_id');
+  });
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [impersonatedUser, setImpersonatedUser] = useState<User | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const login = (userId: string, user: User) => {
+    localStorage.setItem('rahee_user_id', userId);
+    setActiveUserId(userId);
+    setCurrentUser(user);
+  };
+
   const logout = async () => {
-    const activeUserId = impersonatedUser?.id || currentUser?.id;
-    if (activeUserId) {
+    const activeId = impersonatedUser?.id || currentUser?.id;
+    if (activeId) {
       const nowTimeStr = new Date().toLocaleString('en-US', {
         dateStyle: 'medium',
         timeStyle: 'medium'
       });
       try {
-        await update(ref(db, `users/${activeUserId}`), { lastPlayedTime: nowTimeStr });
+        await update(ref(db, `users/${activeId}`), { lastPlayedTime: nowTimeStr });
       } catch (err) {
         console.error("Failed to update lastPlayedTime on logout:", err);
       }
     }
-    await auth.signOut();
+    localStorage.removeItem('rahee_user_id');
+    setActiveUserId(null);
     setImpersonatedUser(null);
     setCurrentUser(null);
+    try {
+      await auth.signOut();
+    } catch (e) {}
   };
 
   const impersonateBot = (bot: User) => {
@@ -85,156 +99,146 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let unsubscribeDb: (() => void) | null = null;
 
-    const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
-      // Clean up previous DB listener if it exists
-      if (unsubscribeDb) {
-        unsubscribeDb();
-        unsubscribeDb = null;
-      }
+    if (activeUserId) {
+      // User is signed in, fetch profile
+      const userRef = ref(db, `users/${activeUserId}`);
+      unsubscribeDb = onValue(userRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const userData = snapshot.val();
+          
+          // Ensure structure for existing users
+          let needsUpdate = false;
+          const updates: any = {};
 
-      if (firebaseUser) {
-        // User is signed in, fetch profile
-        const userRef = ref(db, `users/${firebaseUser.uid}`);
-        unsubscribeDb = onValue(userRef, (snapshot) => {
-          if (snapshot.exists()) {
-            const userData = snapshot.val();
-            
-            // Ensure structure for existing users
-            let needsUpdate = false;
-            const updates: any = {};
+          if (!userData.id) {
+            userData.id = activeUserId;
+            updates.id = activeUserId;
+            needsUpdate = true;
+          }
 
-            if (!userData.id) {
-              userData.id = firebaseUser.uid;
-              updates.id = firebaseUser.uid;
-              needsUpdate = true;
+          if (!userData.lifelines) {
+            userData.lifelines = { fiftyFifty: 1, changeQuiz: 1, audiencePoll: 1, hint: 1 };
+            updates.lifelines = userData.lifelines;
+            needsUpdate = true;
+          } else {
+            let nestedNeedsUpdate = false;
+            if (userData.lifelines.audiencePoll === undefined) {
+              userData.lifelines.audiencePoll = 1;
+              nestedNeedsUpdate = true;
             }
-
-            if (!userData.lifelines) {
-              userData.lifelines = { fiftyFifty: 1, changeQuiz: 1, audiencePoll: 1, hint: 1 };
+            if (userData.lifelines.hint === undefined) {
+              userData.lifelines.hint = 1;
+              nestedNeedsUpdate = true;
+            }
+            if (nestedNeedsUpdate) {
               updates.lifelines = userData.lifelines;
               needsUpdate = true;
-            } else {
-              let nestedNeedsUpdate = false;
-              if (userData.lifelines.audiencePoll === undefined) {
-                userData.lifelines.audiencePoll = 1;
-                nestedNeedsUpdate = true;
-              }
-              if (userData.lifelines.hint === undefined) {
-                userData.lifelines.hint = 1;
-                nestedNeedsUpdate = true;
-              }
-              if (nestedNeedsUpdate) {
-                updates.lifelines = userData.lifelines;
-                needsUpdate = true;
-              }
             }
-            if (userData.raheeCoins === undefined) {
-              userData.raheeCoins = 0;
-              updates.raheeCoins = 0;
-              needsUpdate = true;
-            }
-            if (!userData.language) {
-              userData.language = 'en';
-              updates.language = 'en';
-              needsUpdate = true;
-            }
-            if (!userData.referralCode) {
-              const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-              let code = '';
-              for (let i = 0; i < 10; i++) {
-                code += chars.charAt(Math.floor(Math.random() * chars.length));
-              }
-              userData.referralCode = code;
-              updates.referralCode = code;
-              needsUpdate = true;
-            }
-
-            // --- Daily Login & Streak Logic ---
-            const today = new Date().toISOString().split('T')[0];
-            const nowTimeStr = new Date().toLocaleString('en-US', {
-              dateStyle: 'medium',
-              timeStyle: 'medium'
-            });
-            
-            // Set current precise last login time and date
-            userData.lastLoginTime = nowTimeStr;
-            updates.lastLoginTime = nowTimeStr;
+          }
+          if (userData.raheeCoins === undefined) {
+            userData.raheeCoins = 0;
+            updates.raheeCoins = 0;
             needsUpdate = true;
-
-            if (userData.lastLoginDate !== today) {
-              userData.raheeCoins = (userData.raheeCoins || 0) + 100;
-              userData.lastLoginDate = today;
-              updates.raheeCoins = userData.raheeCoins;
-              updates.lastLoginDate = today;
+          }
+          if (!userData.language) {
+            userData.language = 'en';
+            updates.language = 'en';
+            needsUpdate = true;
+          }
+          if (!userData.referralCode) {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            let code = '';
+            for (let i = 0; i < 10; i++) {
+              code += chars.charAt(Math.floor(Math.random() * chars.length));
             }
+            userData.referralCode = code;
+            updates.referralCode = code;
+            needsUpdate = true;
+          }
 
-            // Streak check
-            if (userData.lastPlayedDate) {
-              const yesterday = new Date();
-              yesterday.setDate(yesterday.getDate() - 1);
-              const yesterdayStr = yesterday.toISOString().split('T')[0];
+          // --- Daily Login & Streak Logic ---
+          const today = new Date().toISOString().split('T')[0];
+          const nowTimeStr = new Date().toLocaleString('en-US', {
+            dateStyle: 'medium',
+            timeStyle: 'medium'
+          });
+          
+          userData.lastLoginTime = nowTimeStr;
+          updates.lastLoginTime = nowTimeStr;
+          needsUpdate = true;
 
-              if (userData.lastPlayedDate !== yesterdayStr && userData.lastPlayedDate !== today) {
-                userData.streak = 0;
-                updates.streak = 0;
-                needsUpdate = true;
-              }
-            } else {
+          if (userData.lastLoginDate !== today) {
+            userData.raheeCoins = (userData.raheeCoins || 0) + 100;
+            userData.lastLoginDate = today;
+            updates.raheeCoins = userData.raheeCoins;
+            updates.lastLoginDate = today;
+          }
+
+          // Streak check
+          if (userData.lastPlayedDate) {
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+            if (userData.lastPlayedDate !== yesterdayStr && userData.lastPlayedDate !== today) {
               userData.streak = 0;
               updates.streak = 0;
               needsUpdate = true;
             }
+          } else {
+            userData.streak = 0;
+            updates.streak = 0;
+            needsUpdate = true;
+          }
 
-            // --- Lives Logic ---
-            if (!userData.lives) {
-              userData.lives = {
-                count: 16,
-                lastRefill: Date.now(),
-                enabled: true
-              };
+          // --- Lives Logic ---
+          if (!userData.lives) {
+            userData.lives = {
+              count: 16,
+              lastRefill: Date.now(),
+              enabled: true
+            };
+            updates.lives = userData.lives;
+            needsUpdate = true;
+          } else {
+            const now = Date.now();
+            const diffMs = now - userData.lives.lastRefill;
+            const refillInterval = 16 * 60 * 1000;
+
+            if (diffMs >= refillInterval && userData.lives.count < 16) {
+              const livesToAdd = Math.floor(diffMs / refillInterval);
+              const newCount = Math.min(16, userData.lives.count + livesToAdd);
+              userData.lives.count = newCount;
+              userData.lives.lastRefill = userData.lives.lastRefill + (livesToAdd * refillInterval);
               updates.lives = userData.lives;
               needsUpdate = true;
-            } else {
-              const now = Date.now();
-              const diffMs = now - userData.lives.lastRefill;
-              const refillInterval = 16 * 60 * 1000;
-
-              if (diffMs >= refillInterval && userData.lives.count < 16) {
-                const livesToAdd = Math.floor(diffMs / refillInterval);
-                const newCount = Math.min(16, userData.lives.count + livesToAdd);
-                userData.lives.count = newCount;
-                userData.lives.lastRefill = userData.lives.lastRefill + (livesToAdd * refillInterval);
-                updates.lives = userData.lives;
-                needsUpdate = true;
-              }
             }
-
-            if (needsUpdate) {
-              update(userRef, updates).catch(err => console.error("Sync error:", err));
-            }
-
-            setCurrentUser({ ...userData, id: firebaseUser.uid });
-          } else {
-            console.warn("User profile missing for UID:", firebaseUser.uid);
-            setCurrentUser(null);
           }
-          setLoading(false);
-        }, (error) => {
-          console.error("Database read error for user profile:", error);
-          setLoading(false);
-        });
-      } else {
-        // User is signed out
-        setCurrentUser(null);
+
+          if (needsUpdate) {
+            update(userRef, updates).catch(err => console.error("Sync error:", err));
+          }
+
+          setCurrentUser({ ...userData, id: activeUserId });
+        } else {
+          console.warn("User profile missing for UID:", activeUserId);
+          setCurrentUser(null);
+        }
         setLoading(false);
-      }
-    });
+      }, (error) => {
+        console.error("Database read error for user profile:", error);
+        setLoading(false);
+      });
+    } else {
+      // User is signed out
+      setCurrentUser(null);
+      setLoading(false);
+    }
 
     return () => {
-      unsubscribeAuth();
       if (unsubscribeDb) unsubscribeDb();
     };
-  }, []);
+  }, [activeUserId]);
 
   // Synchronize dynamic exit lastPlayedTime
   useEffect(() => {
@@ -261,6 +265,53 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     };
   }, [currentUser?.id, impersonatedUser?.id]);
 
+  // Handle Automatic Android FCM Token Handshake & Topic Subscriptions interface
+  useEffect(() => {
+    const activeUserId = impersonatedUser?.id || currentUser?.id;
+    if (!activeUserId) return;
+
+    // Define the global handler that Android will call back with the retrieved token
+    (window as any).onFCMTokenReceived = async (token: string) => {
+      if (!token || typeof token !== 'string') return;
+      try {
+        console.log("FCM registration token fetched from native Android:", token);
+        const tokensRef = ref(db, `fcmTokens/${activeUserId}`);
+        const snapshot = await get(tokensRef);
+        let exists = false;
+        if (snapshot.exists()) {
+          const val = snapshot.val();
+          // Safely check if token already exists as a value in this node
+          if (typeof val === 'object') {
+            exists = Object.values(val).includes(token);
+          } else if (typeof val === 'string') {
+            exists = val === token;
+          }
+        }
+        if (!exists) {
+          await push(tokensRef, token);
+          console.log("FCM registration token auto-linked in RTDB for user:", activeUserId);
+        }
+      } catch (e) {
+        console.error("Auto-submitting registration token to RTDB failed:", e);
+      }
+    };
+
+    // Trigger Android-side FCM token fetch and topic subscription
+    if ((window as any).AndroidInterface && typeof (window as any).AndroidInterface.registerUserFCM === 'function') {
+      try {
+        const uName = (impersonatedUser || currentUser)?.name || (impersonatedUser || currentUser)?.username || "Player";
+        (window as any).AndroidInterface.registerUserFCM(activeUserId, uName);
+        console.log("FCM registration request sent to Android device for user:", activeUserId);
+      } catch (e) {
+        console.error("Error raising registerUserFCM on AndroidInterface:", e);
+      }
+    }
+
+    return () => {
+      delete (window as any).onFCMTokenReceived;
+    };
+  }, [currentUser?.id, impersonatedUser?.id]);
+
   return (
     <UserContext.Provider value={{ 
       currentUser: impersonatedUser || currentUser, 
@@ -270,7 +321,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       logout,
       impersonateBot,
       stopImpersonating,
-      isImpersonating: !!impersonatedUser
+      isImpersonating: !!impersonatedUser,
+      login
     }}>
       {children}
     </UserContext.Provider>

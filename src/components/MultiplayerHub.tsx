@@ -25,6 +25,9 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
   const [useTimer, setUseTimer] = useState(false);
   const [whoFirst, setWhoFirst] = useState(false);
   const [timeLimit, setTimeLimit] = useState(16);
+  const [isTeamMode, setIsTeamMode] = useState(false);
+  const [teamSize, setTeamSize] = useState<2 | 3 | 4>(2);
+  const [prefOpponent, setPrefOpponent] = useState<'any' | 'bot'>('any');
 
   useEffect(() => {
     if (lobbyRoom) {
@@ -36,7 +39,8 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
           
           // If host started the game, transition client
           if (data.status === 'playing') {
-            onStartMatch(data.id, false);
+            const hasBot = Object.values(data.participants || {}).some((p: any) => p.isBot || p.userId.startsWith('bot_'));
+            onStartMatch(data.id, hasBot);
           }
         } else {
           setLobbyRoom(null);
@@ -50,24 +54,74 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
     return Math.floor(100000 + Math.random() * 900000).toString();
   };
 
+  const fillWithBots = async (targetRoom: MatchRoom) => {
+    if (!targetRoom) return;
+    const maxPlayers = targetRoom.isTeamBattle ? (targetRoom.teamSize! * 2) : 2;
+    const currentParticipants = Object.values(targetRoom.participants) as any[];
+    const needed = maxPlayers - currentParticipants.length;
+    if (needed <= 0) return;
+
+    // Get bots from allUsers list
+    const botsList = allUsers.filter(u => u.isBot);
+    // Shuffle
+    const shuffledBots = [...botsList].sort(() => Math.random() - 0.5);
+
+    const updates: any = {};
+    for (let i = 0; i < needed; i++) {
+       const bot = shuffledBots[i] || { name: `Bot ${String.fromCharCode(65 + i)}` };
+       const botId = 'bot_' + Math.random().toString(36).substr(2, 5);
+       
+       let botTeam: 'blue' | 'red' | undefined = undefined;
+       if (targetRoom.isTeamBattle) {
+         const currentAssigned = [...currentParticipants, ...Object.values(updates) as any];
+         const blueCount = currentAssigned.filter((p: any) => p.team === 'blue').length;
+         const redCount = currentAssigned.filter((p: any) => p.team === 'red').length;
+         botTeam = blueCount <= redCount ? 'blue' : 'red';
+       }
+
+       updates[`participants/${botId}`] = {
+         userId: botId,
+         userName: bot.name,
+         score: 0,
+         currentIndex: 0,
+         finished: false,
+         accuracy: 0,
+         team: botTeam,
+         isBot: true
+       };
+    }
+
+    await update(ref(db, `matches/${targetRoom.id}`), updates);
+  };
+
   const createFriendRoom = async () => {
     if (!currentUser) return;
     const roomRef = push(ref(db, 'matches'));
     const roomId = roomRef.key!;
     const code = generateRoomCode();
 
-    const room: MatchRoom = {
+    const room: any = {
       id: roomId,
       topicId: currentUser.selectedTopicId || 'general',
       joinCode: code,
       hostId: currentUser.id,
       participants: {
-        [currentUser.id]: { userId: currentUser.id, userName: currentUser.name, score: 0, currentIndex: 0, finished: false, accuracy: 0 }
+        [currentUser.id]: { 
+          userId: currentUser.id, 
+          userName: currentUser.name, 
+          score: 0, 
+          currentIndex: 0, 
+          finished: false, 
+          accuracy: 0,
+          team: isTeamMode ? 'blue' : undefined
+        }
       },
       status: 'waiting',
       timerEnabled: useTimer,
       whoFirstMode: whoFirst,
       totalTime: timeLimit,
+      isTeamBattle: isTeamMode,
+      teamSize: isTeamMode ? teamSize : undefined,
       createdAt: Date.now()
     };
 
@@ -84,12 +138,21 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
     const snapshot = await get(matchesRef);
     if (snapshot.exists()) {
       const matches = snapshot.val();
-      const roomToJoin = Object.values(matches).find((m: any) => m.joinCode === joinCode && m.status === 'waiting') as MatchRoom | undefined;
+      const roomToJoin = Object.values(matches).find((m: any) => m.joinCode === joinCode && m.status === 'waiting') as any;
       
       if (roomToJoin) {
-        if (Object.keys(roomToJoin.participants).length >= 2) {
+        const currentProgressCount = Object.keys(roomToJoin.participants).length;
+        const maxPlayers = roomToJoin.isTeamBattle ? (roomToJoin.teamSize * 2) : 2;
+        if (currentProgressCount >= maxPlayers) {
           setError('Room is full');
           return;
+        }
+
+        let assignedTeam: 'blue' | 'red' | undefined = undefined;
+        if (roomToJoin.isTeamBattle) {
+           const blueCount = Object.values(roomToJoin.participants).filter((p: any) => p.team === 'blue').length;
+           const redCount = Object.values(roomToJoin.participants).filter((p: any) => p.team === 'red').length;
+           assignedTeam = blueCount <= redCount ? 'blue' : 'red';
         }
 
         const updates = {
@@ -99,7 +162,8 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
             score: 0,
             currentIndex: 0,
             finished: false,
-            accuracy: 0
+            accuracy: 0,
+            team: assignedTeam
           }
         };
         await update(ref(db, `matches/${roomToJoin.id}`), updates);
@@ -110,45 +174,124 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
     }
   };
 
+  const toggleTeam = async (userId: string) => {
+    if (!lobbyRoom) return;
+    const currentTeam = lobbyRoom.participants[userId]?.team || 'blue';
+    const nextTeam = currentTeam === 'blue' ? 'red' : 'blue';
+    
+    // Check if target team size is exceeded
+    const teamCount = Object.values(lobbyRoom.participants).filter((p: any) => p.team === nextTeam).length;
+    if (teamCount >= lobbyRoom.teamSize!) {
+       setError(`Cannot switch: Team ${nextTeam === 'blue' ? 'Blue' : 'Red'} is already full!`);
+       return;
+    }
+
+    await update(ref(db, `matches/${lobbyRoom.id}/participants/${userId}`), {
+       team: nextTeam
+    });
+    setError('');
+  };
+
   const startMatchAsHost = async () => {
     if (!lobbyRoom || !currentUser) return;
+    
+    // Auto fill with bots if there are empty slots!
+    const maxPlayers = lobbyRoom.isTeamBattle ? (lobbyRoom.teamSize! * 2) : 2;
+    const currentCount = Object.keys(lobbyRoom.participants).length;
+    if (currentCount < maxPlayers) {
+       await fillWithBots(lobbyRoom);
+    }
+
     await update(ref(db, `matches/${lobbyRoom.id}`), {
       status: 'playing',
       startTime: Date.now()
     });
-    onStartMatch(lobbyRoom.id, false);
+    onStartMatch(lobbyRoom.id, true); // Treat as bot-inclusive if we filled/started
+  };
+
+  const createBotMatchRoom = async () => {
+    if (!currentUser) return;
+    const roomRef = push(ref(db, 'matches'));
+    const roomId = roomRef.key!;
+    const botId = 'bot_' + Math.random().toString(36).substr(2, 5);
+    const randomBotUser = allUsers?.filter(u => u.isBot).sort(() => Math.random() - 0.5)[0];
+    const botName = randomBotUser?.name || 'Bot Elite';
+
+    const room: MatchRoom = {
+      id: roomId,
+      topicId: currentUser.selectedTopicId || 'general',
+      hostId: currentUser.id,
+      participants: {
+        [currentUser.id]: { userId: currentUser.id, userName: currentUser.name, score: 0, currentIndex: 0, finished: false, accuracy: 0 },
+        [botId]: { userId: botId, userName: botName, score: 0, currentIndex: 0, finished: false, accuracy: 0, isBot: true }
+      },
+      status: 'playing',
+      timerEnabled: false,
+      whoFirstMode: false,
+      totalTime: 10,
+      startTime: Date.now(),
+      createdAt: Date.now()
+    };
+
+    await set(roomRef, room);
+    setMatching(false);
+    onStartMatch(roomId, true);
   };
 
   const startOnlineMatch = async () => {
     if (!currentUser) return;
     setMatching(true);
-    
-    // Simulate real player or bot matching
-    setTimeout(async () => {
-      const roomRef = push(ref(db, 'matches'));
-      const roomId = roomRef.key!;
-      
-      const botId = 'bot_' + Math.random().toString(36).substr(2, 5);
-      
-      const room: MatchRoom = {
-        id: roomId,
-        topicId: currentUser.selectedTopicId || 'general',
-        hostId: currentUser.id,
-        participants: {
-          [currentUser.id]: { userId: currentUser.id, userName: currentUser.name, score: 0, currentIndex: 0, finished: false, accuracy: 0 },
-          [botId]: { userId: botId, userName: allUsers?.filter(u => u.isBot).sort(() => Math.random() - 0.5)[0]?.name || 'Rahee Player', score: 0, currentIndex: 0, finished: false, accuracy: 0 }
-        },
-        status: 'playing',
-        timerEnabled: false,
-        whoFirstMode: false,
-        totalTime: 10,
-        startTime: Date.now(),
-        createdAt: Date.now()
-      };
+    setError('');
 
-      await set(roomRef, room);
-      onStartMatch(roomId, true);
-    }, 2000);
+    if (prefOpponent === 'bot') {
+       setTimeout(async () => {
+          await createBotMatchRoom();
+       }, 1500);
+       return;
+    }
+
+    try {
+       const matchesSnap = await get(ref(db, 'matches'));
+       if (matchesSnap.exists()) {
+          const matches = matchesSnap.val();
+          const joinable = Object.values(matches).find((m: any) => 
+             m.status === 'waiting' && 
+             m.hostId !== currentUser.id &&
+             Object.keys(m.participants || {}).length < (m.isTeamBattle ? (m.teamSize * 2) : 2)
+          ) as any;
+
+          if (joinable) {
+             let assignedTeam: 'blue' | 'red' | undefined = undefined;
+             if (joinable.isTeamBattle) {
+                const blueCount = Object.values(joinable.participants || {}).filter((p: any) => p.team === 'blue').length;
+                const redCount = Object.values(joinable.participants || {}).filter((p: any) => p.team === 'red').length;
+                assignedTeam = blueCount <= redCount ? 'blue' : 'red';
+             }
+
+             const updates = {
+               [`participants/${currentUser.id}`]: {
+                 userId: currentUser.id,
+                 userName: currentUser.name,
+                 score: 0,
+                 currentIndex: 0,
+                 finished: false,
+                 accuracy: 0,
+                 team: assignedTeam
+               }
+             };
+             await update(ref(db, `matches/${joinable.id}`), updates);
+             setMatching(false);
+             onStartMatch(joinable.id, false);
+             return;
+          }
+       }
+    } catch (e) {
+       console.error("Matchmaking error: ", e);
+    }
+
+    setTimeout(async () => {
+       await createBotMatchRoom();
+    }, 4000);
   };
 
   if (!currentUser) return null;
@@ -205,43 +348,107 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
                   </div>
                </div>
 
-               <div className="grid grid-cols-2 gap-4">
-                  {/* Player 1 */}
-                  <div className="bg-white/5 border border-white/5 p-6 rounded-[2rem] flex flex-col items-center gap-3">
-                     <div className="w-16 h-16 bg-primary/20 rounded-2xl flex items-center justify-center text-primary border border-primary/20">
-                        <UserIcon size={32} />
+                {lobbyRoom.isTeamBattle ? (
+                  <div className="grid grid-cols-2 gap-4">
+                     {/* Team Blue Card */}
+                     <div className="bg-blue-500/5 border border-blue-500/10 p-5 rounded-[2rem] flex flex-col gap-3">
+                        <div className="flex items-center justify-between border-b border-blue-500/10 pb-2">
+                           <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest flex items-center gap-1">🔵 Team Blue</span>
+                           <span className="text-[9px] font-mono font-bold text-blue-400">{Object.values(lobbyRoom.participants).filter((p: any) => p.team === 'blue').length} / {lobbyRoom.teamSize}</span>
+                        </div>
+                        <div className="space-y-2 min-h-[120px] max-h-[180px] overflow-y-auto">
+                           {Object.values(lobbyRoom.participants).filter((p: any) => p.team === 'blue').map((p: any) => (
+                              <div key={p.userId} className="flex items-center justify-between text-left bg-white/5 p-2 px-3 rounded-xl border border-white/5 gap-1.5">
+                                 <div className="truncate pr-1">
+                                    <p className="font-bold text-xs uppercase truncate text-white">{p.userName}</p>
+                                    <div className="flex flex-wrap gap-1 mt-0.5">
+                                      {p.userId === lobbyRoom.hostId && <span className="text-[6px] bg-blue-500 text-black px-1 rounded-sm font-black tracking-widest uppercase">Host</span>}
+                                      {p.isBot && <span className="text-[6px] bg-amber-400 text-black px-1 rounded-sm font-black tracking-widest uppercase">BOT</span>}
+                                    </div>
+                                 </div>
+                                 {p.userId === currentUser.id && (
+                                    <button 
+                                      onClick={() => toggleTeam(p.userId)}
+                                      className="text-[7px] bg-[#32befa]/20 hover:bg-[#32befa]/30 text-white font-black uppercase px-1.5 py-1 rounded transition-all"
+                                    >
+                                      Switch
+                                    </button>
+                                 )}
+                              </div>
+                           ))}
+                        </div>
                      </div>
-                     <p className="font-black text-sm uppercase truncate w-full text-center">{currentUser.name}</p>
-                     <span className="text-[8px] font-black text-primary uppercase tracking-widest px-2 py-1 bg-primary/10 rounded-lg border border-primary/20">Host</span>
-                  </div>
 
-                  {/* Player 2 */}
-                  <div className={cn(
-                    "p-6 rounded-[2rem] flex flex-col items-center gap-3 transition-all duration-500",
-                    Object.keys(lobbyRoom.participants).length > 1 
-                      ? "bg-white/5 border border-white/5" 
-                      : "bg-white/[0.02] border border-dashed border-white/10 opacity-60"
-                  )}>
-                     {Object.keys(lobbyRoom.participants).length > 1 ? (
-                       <>
-                         <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center text-white/40 border border-white/10">
-                            <UserIcon size={32} />
-                         </div>
-                         <p className="font-black text-sm uppercase truncate w-full text-center">
-                           {allUsers?.find(u => u.id === Object.keys(lobbyRoom.participants).find(id => id !== currentUser.id))?.name || 'Player 2'}
-                         </p>
-                         <span className="text-[8px] font-black text-white/40 uppercase tracking-widest">Joined</span>
-                       </>
-                     ) : (
-                       <>
-                         <div className="w-16 h-16 rounded-2xl border border-dashed border-white/20 flex items-center justify-center text-white/10">
-                            <Plus size={32} />
-                         </div>
-                         <p className="font-black text-xs text-white/20 uppercase tracking-tighter">Waiting...</p>
-                       </>
-                     )}
+                     {/* Team Red Card */}
+                     <div className="bg-red-500/5 border border-red-500/10 p-5 rounded-[2rem] flex flex-col gap-3">
+                        <div className="flex items-center justify-between border-b border-red-500/10 pb-2">
+                           <span className="text-[10px] font-black text-red-450 uppercase tracking-widest flex items-center gap-1 flex-1 min-w-0">🔴 Team Red</span>
+                           <span className="text-[9px] font-mono font-bold text-red-400">{Object.values(lobbyRoom.participants).filter((p: any) => p.team === 'red').length} / {lobbyRoom.teamSize}</span>
+                        </div>
+                        <div className="space-y-2 min-h-[120px] max-h-[180px] overflow-y-auto">
+                           {Object.values(lobbyRoom.participants).filter((p: any) => p.team === 'red').map((p: any) => (
+                              <div key={p.userId} className="flex items-center justify-between text-left bg-white/5 p-2 px-3 rounded-xl border border-white/5 gap-1.5">
+                                 <div className="truncate pr-1">
+                                    <p className="font-bold text-xs uppercase truncate text-white">{p.userName}</p>
+                                    <div className="flex flex-wrap gap-1 mt-0.5">
+                                      {p.userId === lobbyRoom.hostId && <span className="text-[6px] bg-red-500 text-black px-1 rounded-sm font-black tracking-widest uppercase">Host</span>}
+                                      {p.isBot && <span className="text-[6px] bg-amber-400 text-black px-1 rounded-sm font-black tracking-widest uppercase">BOT</span>}
+                                    </div>
+                                 </div>
+                                 {p.userId === currentUser.id && (
+                                    <button 
+                                      onClick={() => toggleTeam(p.userId)}
+                                      className="text-[7px] bg-[#32befa]/20 hover:bg-[#32befa]/30 text-white font-black uppercase px-1.5 py-1 rounded transition-all"
+                                    >
+                                      Switch
+                                    </button>
+                                 )}
+                              </div>
+                           ))}
+                        </div>
+                     </div>
                   </div>
-               </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4">
+                     {/* Player 1 */}
+                     <div className="bg-white/5 border border-white/5 p-6 rounded-[2rem] flex flex-col items-center gap-3">
+                        <div className="w-16 h-16 bg-primary/20 rounded-2xl flex items-center justify-center text-primary border border-primary/20">
+                           <UserIcon size={32} />
+                        </div>
+                        <p className="font-black text-sm uppercase truncate w-full text-center">{currentUser.name}</p>
+                        <span className="text-[8px] font-black text-primary uppercase tracking-widest px-2 py-1 bg-primary/10 rounded-lg border border-primary/20">Host</span>
+                     </div>
+
+                     {/* Player 2 */}
+                     <div className={cn(
+                       "p-6 rounded-[2rem] flex flex-col items-center gap-3 transition-all duration-500",
+                       Object.keys(lobbyRoom.participants).length > 1 
+                         ? "bg-white/5 border border-white/5" 
+                         : "bg-white/[0.02] border border-dashed border-white/10 opacity-60"
+                     )}>
+                        {Object.keys(lobbyRoom.participants).length > 1 ? (
+                          <>
+                            <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center text-white/40 border border-white/10">
+                               <UserIcon size={32} />
+                            </div>
+                            <p className="font-black text-sm uppercase truncate w-full text-center">
+                              {((Object.values(lobbyRoom.participants) as MatchProgress[]).find((p) => p.userId !== currentUser?.id))?.userName || 'Player 2'}
+                            </p>
+                            <span className="text-[8px] font-black text-white/40 uppercase tracking-widest">
+                              {((Object.values(lobbyRoom.participants) as MatchProgress[]).find((p) => p.userId !== currentUser?.id))?.isBot ? 'BOT' : 'Joined'}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <div className="w-16 h-16 rounded-2xl border border-dashed border-white/20 flex items-center justify-center text-white/10">
+                               <Plus size={32} />
+                            </div>
+                            <p className="font-black text-xs text-white/20 uppercase tracking-tighter">Waiting...</p>
+                          </>
+                        )}
+                     </div>
+                  </div>
+                )}
 
                <div className="bg-white/5 rounded-3xl p-6 border border-white/5 space-y-4">
                  <div className="flex items-center justify-between">
@@ -274,14 +481,24 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
                </div>
 
                <div className="pt-4">
+                 {lobbyRoom.hostId === currentUser.id && Object.keys(lobbyRoom.participants).length < (lobbyRoom.isTeamBattle ? (lobbyRoom.teamSize! * 2) : 2) && (
+                    <button 
+                      onClick={() => fillWithBots(lobbyRoom)}
+                      className="w-full mb-3 bg-white/5 border border-dashed border-white/10 hover:border-white/20 text-white font-black py-4 rounded-[1.2rem] uppercase tracking-widest text-[9px] transition-all hover:scale-[1.01] flex items-center justify-center gap-2"
+                    >
+                       <Users size={14} className="text-primary" />
+                       Fill Slots with Bots
+                    </button>
+                 )}
+
                  {lobbyRoom.hostId === currentUser.id ? (
                     <button 
-                      disabled={Object.keys(lobbyRoom.participants).length < 2}
+                      disabled={!lobbyRoom.isTeamBattle && Object.keys(lobbyRoom.participants).length < 2}
                       onClick={startMatchAsHost}
                       className="w-full bg-primary text-black font-black py-5 rounded-[1.5rem] uppercase tracking-widest text-xs shadow-[0_10px_30px_rgba(var(--primary-color),0.2)] disabled:opacity-50 disabled:grayscale transition-all hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-3"
                     >
                        <Play size={20} fill="black" />
-                       Start Game
+                       Start Game {lobbyRoom.isTeamBattle && `(${Object.keys(lobbyRoom.participants).length}/${lobbyRoom.teamSize! * 2})`}
                     </button>
                  ) : (
                     <div className="w-full bg-white/5 py-5 rounded-[1.5rem] flex items-center justify-center gap-3 text-white/40 border border-white/5 animate-pulse">
@@ -430,9 +647,33 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
 
               {/* Online Match Section */}
               <div className="space-y-4 pt-6">
-                <div className="flex items-center gap-2 px-2">
-                  <Zap size={16} className="text-[#32befa]" />
-                  <h3 className="text-[10px] font-black uppercase tracking-widest text-white/40">Online Match</h3>
+                <div className="flex items-center justify-between px-2">
+                  <div className="flex items-center gap-2">
+                    <Zap size={16} className="text-[#32befa]" />
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-white/40">Online Match</h3>
+                  </div>
+                  <div className="flex bg-white/5 border border-white/5 rounded-lg p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setPrefOpponent('any')}
+                      className={cn(
+                        "px-2.5 py-1 rounded text-[8px] font-black uppercase tracking-wider transition-all",
+                        prefOpponent === 'any' ? "bg-[#32befa] text-black" : "text-white/40 hover:text-white"
+                      )}
+                    >
+                      Real Pref
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrefOpponent('bot')}
+                      className={cn(
+                        "px-2.5 py-1 rounded text-[8px] font-black uppercase tracking-wider transition-all",
+                        prefOpponent === 'bot' ? "bg-amber-400 text-black" : "text-white/40 hover:text-white"
+                      )}
+                    >
+                      Bot Only
+                    </button>
+                  </div>
                 </div>
                 
                 <button 
@@ -441,7 +682,9 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
                 >
                   <div className="relative z-10 text-left">
                     <h4 className="text-2xl font-black mb-1">Quick Battle</h4>
-                    <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest">Match with global opponents</p>
+                    <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest">
+                      {prefOpponent === 'any' ? "Match with global opponents (bot fallback)" : "Training with instant bot sparring"}
+                    </p>
                   </div>
                   <div className="relative z-10 w-16 h-16 bg-[#32befa]/10 rounded-2xl flex items-center justify-center text-[#32befa] group-hover:scale-110 group-hover:rotate-12 transition-all">
                     <Swords size={32} />

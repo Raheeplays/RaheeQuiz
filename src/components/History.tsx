@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, CheckCircle, XCircle, Search, HelpCircle, ChevronRight, Clock, Trophy, RefreshCw, AlertCircle, MessageSquare, Zap } from 'lucide-react';
+import { X, CheckCircle, XCircle, Search, HelpCircle, ChevronRight, Clock, Trophy, RefreshCw, AlertCircle, MessageSquare, Zap, Award, Download } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
 import { db } from '../firebase/config';
 import { ref, onValue, set, update } from 'firebase/database';
 import { Quiz, SessionHistory, User, QuizHistory } from '../types';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
+import { generateCertificate } from '../utils/certificate';
+import { downloadAnswerSheetPDF } from '../utils/quizDownload';
 
 interface HistoryProps {
   onClose: () => void;
@@ -145,7 +147,7 @@ export default function History({ onClose, onPlayAgain }: HistoryProps) {
             </div>
            ) : (
             <div className="max-w-3xl mx-auto space-y-4">
-              {sessions.map((session) => {
+              {sessions.map((session, sIdx) => {
                 const topicName = getTopicName(session.topicId, topics);
                 const isCooldown = Date.now() - session.timestamp < 24 * 60 * 60 * 1000;
                 const canPlayAgain = !isCooldown || currentUser?.extraTriesAllowed;
@@ -153,7 +155,7 @@ export default function History({ onClose, onPlayAgain }: HistoryProps) {
 
                 return (
                   <motion.div 
-                    key={`session-card-${session.id}`}
+                    key={`session-card-${session.id || sIdx}-${sIdx}`}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     className="group p-5 bg-[#0a0a0a] border border-white/5 rounded-[2rem] hover:border-primary/30 transition-all cursor-pointer relative overflow-hidden"
@@ -240,11 +242,11 @@ export default function History({ onClose, onPlayAgain }: HistoryProps) {
             </div>
            ) : (
             <div className="max-w-3xl mx-auto space-y-3">
-               {individualHistory.slice(0, 50).map((h) => {
+               {individualHistory.slice(0, 50).map((h, idx) => {
                  const quiz = quizzes[h.quizId];
                  return (
                    <motion.div 
-                     key={`recent-ans-${h.id}`}
+                     key={`recent-ans-${h.id || idx}-${idx}`}
                      initial={{ opacity: 0, x: -10 }}
                      animate={{ opacity: 1, x: 0 }}
                      className="bg-[#0a0a0a] border border-white/5 p-4 rounded-2xl flex items-center justify-between"
@@ -294,6 +296,44 @@ export default function History({ onClose, onPlayAgain }: HistoryProps) {
 }
 
 function SessionDetail({ session, quizzes, topics, onClose }: { session: SessionHistory, quizzes: Record<string, Quiz>, topics: Record<string, any>, onClose: () => void }) {
+  const { currentUser } = useUser();
+
+  const handleDownloadCertificate = () => {
+    if (!currentUser) return;
+    const resolvedTopicName = getTopicName(session.topicId, topics);
+    generateCertificate({
+      userName: currentUser.name || 'Player',
+      score: session.score,
+      total: session.total,
+      date: new Date(session.timestamp).toLocaleDateString(),
+      topicName: resolvedTopicName,
+      certificateColor: '#32befa'
+    });
+  };
+
+  const handleDownloadAnswerSheet = () => {
+    if (!currentUser) return;
+    const resolvedTopicName = getTopicName(session.topicId, topics);
+    
+    // Construct session quizzes list from record map
+    const sessionQuizzesList: Quiz[] = session.answers
+      .map(ans => quizzes[ans.quizId])
+      .filter((q): q is Quiz => q !== undefined);
+
+    downloadAnswerSheetPDF({
+      eventTitle: 'Rahee Historic Session',
+      topicName: resolvedTopicName,
+      quizzes: sessionQuizzesList,
+      candidateName: currentUser.name || 'Player',
+      results: {
+        score: session.score,
+        total: session.total,
+        completedAt: session.timestamp,
+        answers: session.answers
+      }
+    });
+  };
+
   return (
     <motion.div 
       initial={{ x: '100%' }}
@@ -305,11 +345,11 @@ function SessionDetail({ session, quizzes, topics, onClose }: { session: Session
       <div className="p-6 border-b border-white/5 flex items-center justify-between bg-[#0a0a0a]">
          <div className="flex items-center gap-3">
             <button onClick={onClose} className="p-2 text-white/40 hover:text-white transition-colors">
-              <ChevronRight size={24} className="rotate-180" />
+               <ChevronRight size={24} className="rotate-180" />
             </button>
             <div>
-              <h3 className="font-black tracking-tight text-white uppercase italic text-sm">QUIZ DETAILS</h3>
-              <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">{getTopicName(session.topicId, topics)}</p>
+               <h3 className="font-black tracking-tight text-white uppercase italic text-sm">QUIZ DETAILS</h3>
+               <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">{getTopicName(session.topicId, topics)}</p>
             </div>
          </div>
          <div className="px-4 py-2 bg-primary/10 rounded-2xl border border-primary/20">
@@ -327,6 +367,29 @@ function SessionDetail({ session, quizzes, topics, onClose }: { session: Session
             <div className="p-6 bg-[#0a0a0a] border border-white/5 rounded-[2rem] text-center">
               <p className="text-[10px] font-black text-white/20 uppercase tracking-widest mb-1">Total Questions</p>
               <p className="text-3xl font-black text-[#32befa]">{session.total}</p>
+            </div>
+          </div>
+
+          {/* Downloads Action Panel */}
+          <div className="bg-[#0a0a0a] border border-[#32befa]/20 p-5 rounded-[2rem] text-left space-y-3 shadow-[0_0_20px_rgba(50,190,250,0.05)]">
+            <p className="text-[#32befa] text-[10px] font-black uppercase tracking-[0.2em] px-1">
+              Score Verification Docs
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2.5">
+              <button
+                onClick={handleDownloadCertificate}
+                className="flex-1 bg-white/5 hover:bg-[#32befa]/20 hover:text-white border border-white/5 hover:border-[#32befa]/40 text-white text-[11px] font-black tracking-wider py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95"
+              >
+                <Award size={15} className="text-[#32befa]" />
+                GET CERTIFICATE
+              </button>
+              <button
+                onClick={handleDownloadAnswerSheet}
+                className="flex-1 bg-white/5 hover:bg-[#32befa]/20 hover:text-white border border-white/5 hover:border-[#32befa]/40 text-white text-[11px] font-black tracking-wider py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95"
+              >
+                <Download size={15} className="text-emerald-400" />
+                OMR SHEET
+              </button>
             </div>
           </div>
 

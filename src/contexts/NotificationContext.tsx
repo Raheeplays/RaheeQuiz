@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { ServiceAccount } from '../services/notificationService';
 import { db } from '../firebase/config';
-import { ref, onValue } from 'firebase/database';
+import { ref, onValue, get } from 'firebase/database';
 import { useUser } from './UserContext';
+import { NotificationService } from '../services/notificationService';
 
 interface NotificationContextType {
   serviceAccount: ServiceAccount | null;
@@ -34,6 +35,59 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       setServiceAccount(null);
     }
   }, [currentUser?.id]);
+
+  useEffect(() => {
+    (window as any).handleNotificationMatchAction = async (
+      actionType: string,
+      roomId?: string,
+      opponentId?: string,
+      hostId?: string
+    ) => {
+      console.log("FCM Action Received from Native Android:", actionType, roomId, opponentId, hostId);
+      if ((actionType === 'accept' || actionType === 'play_now') && roomId) {
+        // Dispatch start-match event to start the match globally
+        window.dispatchEvent(new CustomEvent('start-match', { detail: { roomId } }));
+      } else if (actionType === 'friend_accept' && opponentId) {
+        if (serviceAccount && currentUser) {
+          try {
+            const tokensSnap = await get(ref(db, `fcmTokens/${opponentId}`));
+            if (tokensSnap.exists()) {
+              const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
+              const title = 'Friend Request Accepted';
+              const body = `${currentUser.name} accepted your friend request!`;
+              for (const token of tokens) {
+                await NotificationService.sendToToken(serviceAccount, token, title, body);
+              }
+              console.log("Friend acceptance plain push notification sent to opponent:", opponentId);
+            }
+          } catch (e) {
+            console.error("Failed sending acceptance post-push:", e);
+          }
+        }
+      } else if (actionType === 'friend_reject' && opponentId) {
+        if (serviceAccount && currentUser) {
+          try {
+            const tokensSnap = await get(ref(db, `fcmTokens/${opponentId}`));
+            if (tokensSnap.exists()) {
+              const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
+              const title = 'Friend Request Declined';
+              const body = `${currentUser.name} rejected your friend request`;
+              for (const token of tokens) {
+                await NotificationService.sendToToken(serviceAccount, token, title, body);
+              }
+              console.log("Friend rejection push notification sent to opponent:", opponentId);
+            }
+          } catch (e) {
+            console.error("Failed sending rejection post-push:", e);
+          }
+        }
+      }
+    };
+
+    return () => {
+      delete (window as any).handleNotificationMatchAction;
+    };
+  }, [serviceAccount, currentUser]);
 
   return (
     <NotificationContext.Provider value={{ serviceAccount, setServiceAccount }}>

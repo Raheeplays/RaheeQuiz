@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../firebase/config';
-import { ref, onValue, set, update, get, push } from 'firebase/database';
+import { ref, onValue, set, update, get, push, remove } from 'firebase/database';
 import { Quiz, User, MatchRoom, MatchProgress, Settings as SettingsType } from '../types';
 import { useUser } from '../contexts/UserContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -131,19 +131,48 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
     });
   }, [roomId, winner]);
 
+  // Clean up challenges and replies when match status becomes 'playing'
+  useEffect(() => {
+    if (!room || room.status !== 'playing' || !currentUser) return;
+
+    const hostId = room.hostId;
+    const opponentId = Object.keys(room.participants).find(id => id !== hostId);
+
+    if (hostId && opponentId) {
+      remove(ref(db, `users/${hostId}/challenges/${opponentId}`));
+      remove(ref(db, `users/${hostId}/challengeReplies/${opponentId}`));
+      remove(ref(db, `users/${opponentId}/challenges/${hostId}`));
+      remove(ref(db, `users/${opponentId}/challengeReplies/${hostId}`));
+    }
+  }, [room?.status, currentUser?.id]);
+
   const finalizeGame = async (data: MatchRoom) => {
     const participants = Object.values(data.participants) as MatchProgress[];
-    // Score tie-break by index reached
-    const sorted = [...participants].sort((a, b) => b.score - a.score || b.currentIndex - a.currentIndex);
-    if (sorted[0]) setWinner(sorted[0].userId);
+    
+    if (data.isTeamBattle) {
+       const blueScore = participants.filter(p => p.team === 'blue').reduce((sum, p) => sum + p.score, 0);
+       const redScore = participants.filter(p => p.team === 'red').reduce((sum, p) => sum + p.score, 0);
+       
+       if (blueScore > redScore) {
+          setWinner('team_blue');
+       } else if (redScore > blueScore) {
+          setWinner('team_red');
+       } else {
+          setWinner('team_tie');
+       }
+    } else {
+       // Score tie-break by index reached
+       const sorted = [...participants].sort((a, b) => b.score - a.score || b.currentIndex - a.currentIndex);
+       if (sorted[0]) setWinner(sorted[0].userId);
+    }
     
     // Mark room as finished in DB so users don't get pulled back on reload
     if (data.status !== 'finished') {
-      try {
-        await update(ref(db, `matches/${roomId}`), { status: 'finished' });
-      } catch (err) {
-        console.error("Failed to mark match as finished:", err);
-      }
+       try {
+         await update(ref(db, `matches/${roomId}`), { status: 'finished' });
+       } catch (err) {
+         console.error("Failed to mark match as finished:", err);
+       }
     }
   };
 
@@ -187,34 +216,47 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
 
   // Bot Behavior
   useEffect(() => {
-    if (!isBot || !room || room.status !== 'playing' || winner) return;
-    
-    const botId = Object.keys(room.participants).find(id => id !== currentUser?.id);
-    if (!botId) return;
+    if (!room || room.status !== 'playing' || winner) return;
 
-    const botTimer = setInterval(async () => {
-      const botProgress = room.participants[botId];
-      if (botProgress.finished) {
-        clearInterval(botTimer);
-        return;
-      }
+    // Only host (or simple bot matches) simulate bot players to avoid duplicate ticks
+    const isRoomHost = room.hostId === currentUser?.id;
+    if (!isRoomHost && !isBot) return;
 
-      const newIndex = botProgress.currentIndex + 1;
-      const isCorrect = Math.random() > 0.3;
-      const newScore = botProgress.score + (isCorrect ? 100 : 0);
-      const isFinished = newIndex >= 10;
+    const botParticipants = (Object.values(room.participants) as MatchProgress[]).filter(p => p.isBot || p.userId.startsWith('bot_'));
+    if (botParticipants.length === 0) return;
 
-      await update(ref(db, `matches/${roomId}/participants/${botId}`), {
-        currentIndex: newIndex,
-        score: newScore,
-        finished: isFinished,
-        accuracy: Math.round((newScore / (newIndex * 100)) * 100) || 0
-      });
-      
-    }, 4000 + Math.random() * 4000);
+    const botTimers = botParticipants.map(bot => {
+       const bId = bot.userId;
+       const botTimer = setInterval(async () => {
+         const currentSnap = await get(ref(db, `matches/${roomId}/participants/${bId}`));
+         if (!currentSnap.exists()) return;
+         const progressProps = currentSnap.val() as MatchProgress;
+         if (progressProps.finished) {
+           clearInterval(botTimer);
+           return;
+         }
 
-    return () => clearInterval(botTimer);
-  }, [isBot, room?.id, winner]);
+         const nextIndex = progressProps.currentIndex + 1;
+         const isCorrect = Math.random() > 0.35;
+         const pointsEarned = isCorrect ? 100 : 0;
+         const nextScore = progressProps.score + pointsEarned;
+         const nextFinished = nextIndex >= 10;
+
+         await update(ref(db, `matches/${roomId}/participants/${bId}`), {
+            currentIndex: nextIndex,
+            score: nextScore,
+            finished: nextFinished,
+            accuracy: Math.round((nextScore / (nextIndex * 100)) * 100) || 0
+         });
+       }, 4500 + Math.random() * 5000);
+
+       return { id: bId, timer: botTimer };
+    });
+
+    return () => {
+       botTimers.forEach(t => clearInterval(t.timer));
+    };
+  }, [room?.status, room?.hostId, currentUser?.id, roomId, winner]);
 
   // Admin Auto Correct
   useEffect(() => {
@@ -415,34 +457,244 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
   const myProgress = room.participants[currentUser?.id || ''];
   const opponentProgress = room.participants[opponentId || ''];
 
-  if (winner) {
+  if (!isBot && (room.status === 'accepted' || room.status === 'waiting')) {
+    const handleReadyToggle = async () => {
+      try {
+        const dbPath = `matches/${roomId}/participants/${currentUser?.id}/ready`;
+        const nextReadyState = !myProgress?.ready;
+        await set(ref(db, dbPath), nextReadyState);
+
+        // Fetch latest room to see if everyone is ready
+        const roomSnap = await get(ref(db, `matches/${roomId}`));
+        if (roomSnap.exists()) {
+          const data = roomSnap.val();
+          const parts = Object.values(data.participants) as any[];
+          if (parts.length >= 2 && parts.every(p => p.ready)) {
+            await update(ref(db, `matches/${roomId}`), {
+              status: 'playing',
+              startTime: Date.now()
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Failed to toggle ready state:", err);
+      }
+    };
+
     return (
-      <div className="fixed inset-0 bg-black z-[140] flex flex-col items-center justify-center p-8 text-center backdrop-blur-xl">
-         <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mb-6 border border-white/10">
-            <Trophy size={32} className="text-primary" />
+      <div className="fixed inset-0 bg-[#050505] z-[130] flex flex-col items-center justify-center p-8 text-center transition-colors duration-300">
+         <div className="w-24 h-24 bg-primary/10 rounded-[2.5rem] flex items-center justify-center text-primary mb-6 animate-pulse border border-primary/20 shadow-[0_0_50px_rgba(250,204,21,0.15)]">
+            <Clock size={40} className="animate-spin duration-1000" style={{ animationDuration: '3s' }} />
          </div>
 
-         <h2 className="text-2xl font-black mb-10 tracking-tighter uppercase text-white">
-            Battle Completed
-         </h2>
+         <h2 className="text-2xl font-black mb-2 uppercase tracking-tighter text-white">
+            Match Lobby
+         </h2>/ / lobby-header-placeholder
+         <p className="text-[10px] font-black text-primary uppercase tracking-[0.3em] mb-8">
+            Challenge Accepted
+         </p>
 
-         <div className="flex gap-4 w-full max-w-sm mb-10">
-            <div className="flex-1 bg-white/5 p-4 rounded-2xl border border-white/5">
-                <p className="text-[8px] font-black text-white/20 uppercase tracking-widest mb-1">Your Score</p>
-                <p className="text-xl font-black text-primary">{myProgress.score}</p>
+         <div className="flex items-center gap-6 mb-8 w-full max-w-sm justify-center">
+            {/* My User Card */}
+            <div className={cn(
+              "flex-1 p-5 rounded-[2rem] bg-white/5 border transition-all duration-300 flex flex-col items-center",
+              myProgress?.ready ? "border-green-500/30 shadow-[0_0_20px_rgba(34,197,94,0.1)] bg-green-500/5" : "border-white/5"
+            )}>
+              <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center mb-3 text-white/60">
+                <Users size={20} />
+              </div>
+              <p className="font-black text-xs uppercase tracking-tight max-w-[100px] truncate text-white">
+                {currentUser?.name || "You"}
+              </p>
+              <span className={cn(
+                "text-[8px] font-black uppercase tracking-widest mt-2 px-2.5 py-1 rounded-full",
+                myProgress?.ready ? "bg-green-500/10 text-green-500" : "bg-white/5 text-white/40"
+              )}>
+                {myProgress?.ready ? "Ready" : "Waiting"}
+              </span>
             </div>
-            <div className="flex-1 bg-white/5 p-4 rounded-2xl border border-white/5">
-                <p className="text-[8px] font-black text-white/20 uppercase tracking-widest mb-1">Opponent</p>
-                <p className="text-xl font-black text-white">{opponentProgress.score}</p>
+
+            {/* Duel vs Icon */}
+            <div className="text-white/20 font-sans italic text-sm">VS</div>
+
+            {/* Opponent User Card */}
+            <div className={cn(
+              "flex-1 p-5 rounded-[2rem] bg-white/5 border transition-all duration-300 flex flex-col items-center",
+              opponentProgress?.ready ? "border-green-500/30 shadow-[0_0_20px_rgba(34,197,94,0.1)] bg-green-500/5" : "border-white/5"
+            )}>
+              <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center mb-3 text-white/60">
+                <Users size={20} />
+              </div>
+              <p className="font-black text-xs uppercase tracking-tight max-w-[100px] truncate text-white">
+                {opponentProgress?.userName || "Opponent"}
+              </p>
+              <span className={cn(
+                "text-[8px] font-black uppercase tracking-widest mt-2 px-2.5 py-1 rounded-full",
+                opponentProgress ? (opponentProgress.ready ? "bg-green-500/10 text-green-500" : "bg-white/5 text-white/40") : "bg-white/5 text-white/20"
+              )}>
+                {opponentProgress ? (opponentProgress.ready ? "Ready" : "Waiting") : "Joining..."}
+              </span>
             </div>
          </div>
 
-         <button 
-           onClick={onClose}
-           className="bg-primary text-black font-black px-12 py-4 rounded-2xl uppercase tracking-widest text-[10px] shadow-lg shadow-primary/20 hover:scale-105 transition-all"
-         >
-            Finish Battle
-         </button>
+         <div className="bg-white/5 p-6 rounded-[2rem] border border-white/5 max-w-sm w-full space-y-4 mb-8">
+            <p className="text-xs text-white/60 font-medium leading-relaxed">
+              Click <strong>Play Now</strong> to confirm you are ready. Once BOTH players click Play Now, the match will automatically begin!
+            </p>
+         </div>
+
+          <div className="flex flex-col gap-3 w-full max-w-sm">
+            <button 
+              onClick={handleReadyToggle}
+              className={cn(
+                "w-full py-4 rounded-2xl text-xs font-black uppercase tracking-[0.2em] transition-all transform hover:scale-105 active:scale-95 shadow-lg font-sans",
+                myProgress?.ready 
+                  ? "bg-white/10 hover:bg-white/15 text-white shadow-none" 
+                  : "bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-400 hover:to-emerald-400 text-black shadow-green-500/20 active:scale-95 animate-pulse"
+              )}
+            >
+              {myProgress?.ready ? "Cancel Ready" : "Play Now (Ready)"}
+            </button>
+
+           <button 
+             onClick={() => {
+               if (onMinimize) {
+                 onMinimize();
+               } else {
+                 onClose();
+               }
+             }}
+             className="w-full py-4 rounded-2xl bg-white/5 hover:bg-white/10 text-[10px] font-black uppercase tracking-[0.2em] transition-all border border-white/5 text-white/60 font-sans"
+           >
+             Play Later
+           </button>
+           
+           <button 
+             onClick={async () => {
+               const verified = await confirm({
+                 title: 'Leave Lobby?',
+                 description: 'Are you sure you want to exit this match lobby?',
+                 type: 'confirm'
+               });
+               if (!verified) return;
+
+               try {
+                 const hostId = room.hostId;
+                 const opponentId = Object.keys(room.participants).find(id => id !== hostId);
+                 
+                 // Clean up challenges & replies for both users
+                 if (hostId) {
+                   await remove(ref(db, `users/${hostId}/challenges/${opponentId || 'unknown'}`));
+                   await remove(ref(db, `users/${hostId}/challengeReplies/${opponentId || 'unknown'}`));
+                 }
+                 if (opponentId) {
+                   await remove(ref(db, `users/${opponentId}/challenges/${hostId || 'unknown'}`));
+                   await remove(ref(db, `users/${opponentId}/challengeReplies/${hostId || 'unknown'}`));
+                 }
+                 
+                 // Remove match
+                 await remove(ref(db, `matches/${roomId}`));
+                 onClose();
+               } catch (err) {
+                 console.error("Failed to exit lobby:", err);
+                 onClose();
+               }
+             }}
+             className="w-full py-4 rounded-2xl bg-white/5 hover:bg-red-500/10 hover:text-red-500 text-[10px] font-black uppercase tracking-[0.15em] transition-all border border-white/5 hover:border-red-500/20 text-white/40"
+           >
+             Leave Lobby
+           </button>
+         </div>
+      </div>
+    );
+  }
+
+  if (winner) {
+    const isTeam = room?.isTeamBattle;
+
+    // Define team aggregated values
+    const blueTeam = Object.values(room?.participants || {}).filter((p: any) => p.team === 'blue');
+    const redTeam = Object.values(room?.participants || {}).filter((p: any) => p.team === 'red');
+    const blueTotal = blueTeam.reduce((sum, p: any) => sum + p.score, 0);
+    const redTotal = redTeam.reduce((sum, p: any) => sum + p.score, 0);
+
+    return (
+      <div className="fixed inset-0 bg-black/95 z-[140] flex flex-col items-center justify-center p-8 text-center backdrop-blur-xl overflow-y-auto">
+          <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mb-6 border border-white/10">
+             <Trophy size={32} className="text-primary" />
+          </div>
+
+          <h2 className="text-2xl font-black mb-2 tracking-tighter uppercase text-white">
+             Battle Completed
+          </h2>
+
+          {isTeam ? (
+             <div className="mb-8">
+                <span className={cn(
+                   "text-xs font-black px-4 py-2 rounded-full uppercase tracking-widest border",
+                   winner === 'team_blue' ? "bg-blue-500/20 border-blue-500/30 text-blue-400" :
+                   winner === 'team_red' ? "bg-red-500/20 border-red-500/30 text-red-400" :
+                   "bg-yellow-500/20 border-yellow-500/30 text-yellow-500"
+                )}>
+                   {winner === 'team_blue' ? "🔵 TEAM BLUE VICTORIOUS!" :
+                    winner === 'team_red' ? "🔴 TEAM RED VICTORIOUS!" :
+                    "🤝 IT'S A TEAM TIE!"}
+                </span>
+             </div>
+          ) : (
+             <div className="mb-8">
+                <span className="text-sm font-black uppercase tracking-widest text-primary">
+                   {winner === currentUser?.id ? "🏆 YOU ARE VICTORIOUS!" : "💀 OPPONENT WON!"}
+                </span>
+             </div>
+          )}
+
+          {isTeam ? (
+             <div className="space-y-6 w-full max-w-sm mb-10">
+                <div className="flex gap-4">
+                   <div className="flex-1 bg-blue-500/5 p-4 rounded-2xl border border-blue-500/10 text-center">
+                       <p className="text-[8px] font-black text-blue-400 uppercase tracking-widest mb-1">Blue Team</p>
+                       <p className="text-lg font-black text-blue-300">{blueTotal} PTS</p>
+                   </div>
+                   <div className="flex-1 bg-red-500/5 p-4 rounded-2xl border border-red-500/10 text-center">
+                       <p className="text-[8px] font-black text-red-400 uppercase tracking-widest mb-1">Red Team</p>
+                       <p className="text-lg font-black text-red-300">{redTotal} PTS</p>
+                   </div>
+                </div>
+
+                <div className="bg-white/5 border border-white/5 rounded-3xl p-5 space-y-3.5 text-left">
+                   <p className="text-[9px] font-black uppercase tracking-widest text-white/40 border-b border-white/5 pb-2">Score Sheet</p>
+                   {Object.values(room?.participants || {}).sort((a: any, b: any) => b.score - a.score).map((p: any) => (
+                      <div key={p.userId} className="flex items-center justify-between">
+                         <div className="flex items-center gap-2">
+                            <span className={cn("w-2 h-2 rounded-full", p.team === 'blue' ? "bg-blue-400" : "bg-red-400")} />
+                            <span className="text-xs font-bold text-white/80">{p.userName}</span>
+                            {p.userId === currentUser?.id && <span className="text-[7px] bg-primary/20 text-primary px-1 rounded font-black uppercase font-bold">You</span>}
+                         </div>
+                         <span className="text-xs font-black text-white">{p.score} pts</span>
+                      </div>
+                   ))}
+                </div>
+             </div>
+          ) : (
+             <div className="flex gap-4 w-full max-w-sm mb-10">
+                <div className="flex-1 bg-white/5 p-4 rounded-2xl border border-white/5">
+                    <p className="text-[8px] font-black text-white/20 uppercase tracking-widest mb-1">Your Score</p>
+                    <p className="text-xl font-black text-primary">{myProgress.score}</p>
+                </div>
+                <div className="flex-1 bg-white/5 p-4 rounded-2xl border border-white/5">
+                    <p className="text-[8px] font-black text-white/20 uppercase tracking-widest mb-1">Opponent</p>
+                    <p className="text-xl font-black text-white">{opponentProgress.score}</p>
+                </div>
+             </div>
+          )}
+
+          <button 
+            onClick={onClose}
+            className="bg-primary text-black font-black px-12 py-4 rounded-2xl uppercase tracking-widest text-[10px] shadow-lg shadow-primary/20 hover:scale-105 transition-all w-full max-w-sm"
+          >
+             Finish Battle
+          </button>
       </div>
     );
   }
@@ -851,8 +1103,8 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
                   <p className="text-[10px] font-bold mt-2 text-black dark:text-white max-w-[200px]">Send a message to request secret access codes. Your message will be visible only to admins.</p>
                 </div>
               )}
-              {mySpecialMessages.map((msg: any) => (
-                <React.Fragment key={msg.id}>
+              {mySpecialMessages.map((msg: any, idx) => (
+                <React.Fragment key={`special-msg-${msg.id || idx}-${idx}`}>
                   {msg.adminReply && (msg.replyExpiresAt > Date.now()) && (
                     <div className="flex flex-col items-start translate-y-0 animate-in fade-in slide-in-from-left-4 duration-500">
                       <div className="bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 p-5 rounded-[1.5rem] rounded-tl-none max-w-[85%] relative overflow-hidden group shadow-xl">

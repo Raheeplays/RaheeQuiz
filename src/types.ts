@@ -63,8 +63,29 @@ export interface User {
   dailyXP?: number;
   weeklyXP?: number;
   autoCorrectEnabled?: boolean;
+  privacyEnabled?: boolean;
   referralCode?: string;
   referredBy?: string;
+  deviceUid?: string;
+  ambientModeEnabled?: boolean;
+  bgmEnabled?: boolean;
+  bgmPreset?: 'synth' | 'flute' | 'piano' | 'guitar' | 'ensemble' | 'violin' | 'harp' | 'custom_midi';
+  bgmVolumeSynth?: number;
+  bgmVolumeFlute?: number;
+  bgmVolumePiano?: number;
+  bgmVolumeGuitar?: number;
+  bgmVolumeBeats?: number;
+  bgmVolumeViolin?: number;
+  bgmVolumeHarp?: number;
+  bgmBpm?: number;
+  midiUrlSynth?: string;
+  midiUrlFlute?: string;
+  midiUrlPiano?: string;
+  midiUrlGuitar?: string;
+  midiUrlViolin?: string;
+  midiUrlHarp?: string;
+  midiPresetName?: string;
+  ambientThreshold?: number;
   playedDates?: string[];
   dailyRewards?: {
     lastClaimDate?: string;
@@ -137,6 +158,25 @@ export interface Settings {
   };
   specialPin?: string; // Hidden access pin
   code?: string; // Game update code node
+  bgmEnabled?: boolean;
+  bgmUrl?: string;
+  bgmPreset?: 'synth' | 'flute' | 'piano' | 'guitar' | 'ensemble' | 'violin' | 'harp' | 'custom_midi';
+  bgmVolumeSynth?: number;
+  bgmVolumeFlute?: number;
+  bgmVolumePiano?: number;
+  bgmVolumeGuitar?: number;
+  bgmVolumeBeats?: number;
+  bgmVolumeViolin?: number;
+  bgmVolumeHarp?: number;
+  bgmBpm?: number;
+  midiUrlSynth?: string;
+  midiUrlFlute?: string;
+  midiUrlPiano?: string;
+  midiUrlGuitar?: string;
+  midiUrlViolin?: string;
+  midiUrlHarp?: string;
+  midiPresetName?: string;
+  ambientThreshold?: number;
   updateCodeSettings?: {
     code: string;
     updateUrl?: string;
@@ -201,6 +241,8 @@ export interface MatchProgress {
   currentIndex: number;
   finished: boolean;
   accuracy: number;
+  team?: 'blue' | 'red';
+  isBot?: boolean;
 }
 
 export interface MatchRoom {
@@ -214,6 +256,8 @@ export interface MatchRoom {
   whoFirstMode: boolean; // New buzzer mode
   totalTime: number; // in minutes
   claimedQuestions?: { [questionIndex: number]: string }; // userId who claimed it
+  isTeamBattle?: boolean;
+  teamSize?: number;
   startTime?: number;
   createdAt: number;
 }
@@ -254,6 +298,7 @@ export interface Topic {
   name: string;
   description?: string;
   order?: number;
+  disableMultiSelect?: boolean;
   children?: { [childId: string]: Topic };
 }
 
@@ -273,6 +318,8 @@ export interface QuizHistory {
   userAnswerIndex: number;
   isCorrect: boolean;
   timestamp: number;
+  language?: 'en' | 'hi';
+  theme?: 'light' | 'dark';
 }
 
 export interface SessionHistory {
@@ -282,6 +329,8 @@ export interface SessionHistory {
   score: number;
   total: number;
   timestamp: number;
+  language?: 'en' | 'hi';
+  theme?: 'light' | 'dark';
   answers: {
     quizId: string;
     userAnswerIndex: number;

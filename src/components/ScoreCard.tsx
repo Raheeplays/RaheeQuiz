@@ -182,8 +182,8 @@ export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCoun
           <div className="space-y-3">
             <h4 className="text-[8px] font-black text-black/20 dark:text-white/20 uppercase tracking-[0.2em]">Topic Mastery</h4>
             <div className="flex flex-wrap gap-2">
-              {Object.entries(user.scores || {}).map(([topicId, score]) => (
-                <div key={topicId} className="bg-black/5 dark:bg-white/5 px-3 py-2 rounded-full border border-black/5 dark:border-white/10 flex items-center gap-2">
+              {Object.entries(user.scores || {}).map(([topicId, score], idx) => (
+                <div key={`scorecard-topic-${topicId || idx}-${idx}`} className="bg-black/5 dark:bg-white/5 px-3 py-2 rounded-full border border-black/5 dark:border-white/10 flex items-center gap-2">
                   <span className="text-[9px] font-black text-black/80 dark:text-white/80 uppercase">{topicId}</span>
                   <div className="h-1 w-8 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
                     <div 

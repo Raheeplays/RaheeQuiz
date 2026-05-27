@@ -216,7 +216,7 @@ export default function Leaderboard() {
          ) : (
            filteredPlayers.map((player, idx) => (
              <motion.div
-               key={player.id}
+               key={`leaderboard-row-${player.id || idx}-${idx}`}
                initial={{ x: -20, opacity: 0 }}
                animate={{ x: 0, opacity: 1 }}
                transition={{ delay: idx * 0.05 }}

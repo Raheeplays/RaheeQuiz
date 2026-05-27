@@ -64,9 +64,9 @@ export default function Chat({ onClose }: { onClose: () => void }) {
             </p>
          </div>
 
-         {messages.map((m: any) => (
+         {messages.map((m: any, idx: number) => (
            <div 
-             key={m.id} 
+             key={`chat-msg-${m.id || idx}-${idx}`} 
              className={cn(
                "max-w-[80%] p-4 rounded-2xl relative",
                m.userId === currentUser?.id ? "bg-[#32befa] text-black ml-auto rounded-tr-none" : "bg-white/5 text-white mr-auto rounded-tl-none border border-white/5"

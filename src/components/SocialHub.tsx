@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../firebase/config';
-import { ref, set, update, push, get } from 'firebase/database';
+import { ref, set, update, push, get, remove } from 'firebase/database';
 import { User } from '../types';
 import { useUser } from '../contexts/UserContext';
 import { useNotifications } from '../contexts/NotificationContext';
@@ -11,6 +11,7 @@ import { cn } from '../lib/utils';
 import ScoreCard from './ScoreCard';
 import { translations } from '../translations';
 import { NotificationService } from '../services/notificationService';
+import { logActivity } from '../services/activityService';
 
 interface SocialHubProps {
   onClose: () => void;
@@ -41,10 +42,22 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
         if (u.isBot && currentUser.role !== 'admin') return false;
         
         const query = searchQuery.trim().toLowerCase();
+        const cleanQuery = query.startsWith('@') ? query.slice(1) : query;
+        
+        const usernameLower = (u.username || '').toLowerCase();
+        const cleanUsernameLower = usernameLower.startsWith('@') ? usernameLower.slice(1) : usernameLower;
+        
+        const nameLower = (u.name || '').toLowerCase();
+
+        // Enforce privacy settings
+        if (u.privacyEnabled) {
+          // Can only match if search query is exact full username or exact full name
+          return cleanQuery === cleanUsernameLower || query === nameLower;
+        }
         
         // Match by name or username (partial match)
-        const nameMatch = (u.name || '').toLowerCase().includes(query);
-        const usernameMatch = (u.username || '').toLowerCase().includes(query);
+        const nameMatch = nameLower.includes(query);
+        const usernameMatch = usernameLower.includes(query) || cleanUsernameLower.includes(cleanQuery);
         
         return nameMatch || usernameMatch;
       }).slice(0, 5)
@@ -64,7 +77,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
         try {
           const tokensSnap = await get(ref(db, `fcmTokens/${targetUserId}`));
           if (tokensSnap.exists()) {
-            const tokens = Object.values(tokensSnap.val()) as string[];
+            const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
             const templateSnap = await get(ref(db, 'customNotifications/friendRequest'));
             let title = 'New Friend Request';
             let body = `${currentUser.name} wants to be your friend!`;
@@ -75,8 +88,16 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
               if (template?.body) body = template.body.replace('{player}', currentUser.name);
             }
 
+            const pushData = {
+              action_type: 'friend_request',
+              senderId: currentUser.id,
+              senderName: currentUser.name,
+              targetUserId: targetUserId,
+              targetUserName: allUsers.find(u => u.id === targetUserId)?.name || 'Opponent'
+            };
+
             for (const token of tokens) {
-              await NotificationService.sendToToken(serviceAccount, token, title, body);
+              await NotificationService.sendToToken(serviceAccount, token, title, body, undefined, pushData);
             }
           }
         } catch (e) {
@@ -100,7 +121,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
         try {
           const tokensSnap = await get(ref(db, `fcmTokens/${targetUserId}`));
           if (tokensSnap.exists()) {
-            const tokens = Object.values(tokensSnap.val()) as string[];
+            const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
             const templateSnap = await get(ref(db, 'customNotifications/friendAccept'));
             let title = 'Friend Request Accepted';
             let body = `${currentUser.name} accepted your friend request!`;
@@ -125,8 +146,34 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
   };
 
   const cancelOrDeclineRequest = async (targetUserId: string) => {
+    const isIncoming = currentUser?.pendingRequests?.[targetUserId] === 'incoming';
     await set(ref(db, `users/${currentUser.id}/pendingRequests/${targetUserId}`), null);
     await set(ref(db, `users/${targetUserId}/pendingRequests/${currentUser.id}`), null);
+
+    if (isIncoming && settings?.pushNotificationsEnabled !== false) {
+      try {
+        const tokensSnap = await get(ref(db, `fcmTokens/${targetUserId}`));
+        if (tokensSnap.exists()) {
+          const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
+          const templateSnap = await get(ref(db, 'customNotifications/friendReject'));
+          let title = 'Friend Request Declined';
+          let body = `${currentUser.name} rejected your friend request`;
+
+          if (templateSnap.exists()) {
+            const template = templateSnap.val();
+            if (template?.title) title = template.title;
+            if (template?.body) body = template.body.replace('{player}', currentUser.name);
+          }
+
+          for (const token of tokens) {
+            await NotificationService.sendToToken(serviceAccount, token, title, body);
+          }
+          console.log("Friend rejection notification sent to:", targetUserId);
+        }
+      } catch (e) {
+        console.error("Failed sending decline notification:", e);
+      }
+    }
   };
 
   const removeFriend = async (targetUserId: string) => {
@@ -154,7 +201,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
       joinCode: code,
       hostId: currentUser.id,
       participants: {
-        [currentUser.id]: { userId: currentUser.id, score: 0, currentIndex: 0, finished: false, accuracy: 0 }
+        [currentUser.id]: { userId: currentUser.id, userName: currentUser.name, score: 0, currentIndex: 0, finished: false, accuracy: 0 }
       },
       status: 'waiting',
       timerEnabled: true,
@@ -184,7 +231,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
         // Get target user's tokens
         const tokensSnapshot = await get(ref(db, `fcmTokens/${targetUserId}`));
         if (tokensSnapshot.exists()) {
-          const tokens = Object.values(tokensSnapshot.val()) as string[];
+          const tokens = NotificationService.getTokensFromValue(tokensSnapshot.val());
           
           // Get template
           const templateSnapshot = await get(ref(db, 'customNotifications/challenge'));
@@ -197,8 +244,17 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
             if (template?.body) body = template.body.replace('{player}', currentUser.name);
           }
 
+          const pushData = {
+            action_type: 'challenge',
+            roomId,
+            hostId: currentUser.id,
+            hostName: currentUser.name,
+            targetUserId: targetUserId,
+            targetUserName: allUsers.find(u => u.id === targetUserId)?.name || 'Opponent'
+          };
+
           for (const token of tokens) {
-            await NotificationService.sendToToken(serviceAccount, token, title, body);
+            await NotificationService.sendToToken(serviceAccount, token, title, body, undefined, pushData);
           }
         }
       } catch (err) {
@@ -206,7 +262,81 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
       }
     }
     
+    // Log user activity
+    const targetUserObj = allUsers.find(u => u.id === targetUserId);
+    await logActivity(
+      currentUser.id,
+      currentUser.name,
+      'send_challenge',
+      `Sent a match challenge request to ${targetUserObj?.name || 'opponent'}`
+    );
+
     setSentChallenges(prev => [...prev, targetUserId]);
+  };
+
+  const cancelChallenge = async (targetUserId: string) => {
+    if (!currentUser) return;
+    try {
+      const challengeRef = ref(db, `users/${targetUserId}/challenges/${currentUser.id}`);
+      const snap = await get(challengeRef);
+      let roomId = '';
+      if (snap.exists()) {
+        roomId = snap.val().roomId || '';
+      }
+
+      if (roomId) {
+        await remove(ref(db, `matches/${roomId}`));
+      }
+
+      // Write 'cancelled_by_host' to challengeReplies to trigger clean local alert modal dismissal
+      await set(ref(db, `users/${targetUserId}/challengeReplies/${currentUser.id}`), {
+        opponentId: currentUser.id,
+        opponentName: currentUser.name,
+        roomId: roomId || 'none',
+        status: 'cancelled_by_host',
+        timestamp: Date.now()
+      });
+
+      if (serviceAccount && settings?.pushNotificationsEnabled !== false) {
+        try {
+          const tokensSnapshot = await get(ref(db, `fcmTokens/${targetUserId}`));
+          if (tokensSnapshot.exists()) {
+            const tokens = NotificationService.getTokensFromValue(tokensSnapshot.val());
+            const title = "Challenge Cancelled";
+            const body = `${currentUser.name} has cancelled the match challenge.`;
+            const pushData = {
+              action_type: 'reply_rejected',
+              roomId: roomId || 'none',
+              opponentId: currentUser.id,
+              opponentName: currentUser.name,
+              reason: 'cancelled_by_host'
+            };
+            for (const token of tokens) {
+              await NotificationService.sendToToken(serviceAccount, token, title, body, undefined, pushData);
+            }
+          }
+        } catch (err) {
+          console.error("FCM cancel notify failed:", err);
+        }
+      }
+
+      // Delete the active challenge invitation
+      await remove(challengeRef);
+
+      // Log user activity
+      const targetUserObj = allUsers.find(u => u.id === targetUserId);
+      await logActivity(
+        currentUser.id,
+        currentUser.name,
+        'cancel_challenge',
+        `Cancelled the match challenge sent to ${targetUserObj?.name || 'opponent'}`
+      );
+
+      // Local state update
+      setSentChallenges(prev => prev.filter(id => id !== targetUserId));
+    } catch (err) {
+      console.error("Error cancelling challenge:", err);
+    }
   };
 
   return (
@@ -270,9 +400,9 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
 
               <div className="space-y-3">
                 {filteredUsers.length > 0 ? (
-                  filteredUsers.map(user => (
+                  filteredUsers.map((user, idx) => (
                     <motion.div 
-                  key={`friend-${user.id}`}
+                      key={`friend-${user.id || idx}-${idx}`}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       className="bg-black/5 dark:bg-white/5 p-4 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between group hover:border-primary/20 transition-all"
@@ -338,9 +468,9 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
           {activeTab === 'friends' && (
             <div className="space-y-3">
               {friends.length > 0 ? (
-                friends.map(user => (
+                friends.map((user, idx) => (
                   <div 
-                    key={`search-res-${user.id}`}
+                    key={`search-res-${user.id || idx}-${idx}`}
                     className="bg-black/5 dark:bg-white/5 p-4 rounded-2xl border border-black/5 dark:border-white/5 flex items-center justify-between group hover:border-primary/20 transition-all"
                   >
                     <div 
@@ -363,6 +493,16 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
                        </div>
                     </div>
                     <div className="flex items-center gap-2">
+                       {sentChallenges.includes(user.id) && (
+                         <button
+                           onClick={() => cancelChallenge(user.id)}
+                           className="px-3 py-2 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-all rounded-xl text-[8px] font-black uppercase tracking-widest flex items-center gap-1"
+                           title="Cancel Match Challenge"
+                         >
+                           <X size={10} />
+                           Cancel
+                         </button>
+                       )}
                        <button 
                          onClick={() => !sentChallenges.includes(user.id) && sendChallenge(user.id)}
                          disabled={sentChallenges.includes(user.id)}
@@ -402,8 +542,8 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
               {pendingIncoming.length > 0 && (
                 <div className="space-y-3">
                   <p className="text-[10px] font-black text-primary uppercase tracking-widest px-2">Incoming Requests</p>
-                  {pendingIncoming.map(user => (
-                    <div key={`pending-in-${user.id}`} className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl border border-black/5 dark:border-white/5 flex items-center justify-between">
+                  {pendingIncoming.map((user, idx) => (
+                    <div key={`pending-in-${user.id || idx}-${idx}`} className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl border border-black/5 dark:border-white/5 flex items-center justify-between">
                        <div className="flex items-center gap-4 text-black dark:text-white">
                           <div className="w-10 h-10 bg-black/5 dark:bg-white/10 rounded-xl flex items-center justify-center text-black/30 dark:text-white/40 overflow-hidden">
                              {user.avatarUrl ? (
@@ -439,8 +579,8 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
               {pendingOutgoing.length > 0 && (
                 <div className="space-y-3">
                   <p className="text-[10px] font-black text-black/30 dark:text-white/40 uppercase tracking-widest px-2">Pending Requests</p>
-                  {pendingOutgoing.map(user => (
-                    <div key={`pending-out-${user.id}`} className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl border border-black/5 dark:border-white/5 flex items-center justify-between opacity-60">
+                  {pendingOutgoing.map((user, idx) => (
+                    <div key={`pending-out-${user.id || idx}-${idx}`} className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl border border-black/5 dark:border-white/5 flex items-center justify-between opacity-60">
                        <div className="flex items-center gap-4 text-black dark:text-white">
                           <div className="w-10 h-10 bg-black/5 dark:bg-white/10 rounded-xl flex items-center justify-center text-black/20 dark:text-white/20 overflow-hidden">
                              {user.avatarUrl ? (

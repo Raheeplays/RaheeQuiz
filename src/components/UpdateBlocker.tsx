@@ -82,7 +82,9 @@ export default function UpdateBlocker({ children }: UpdateBlockerProps) {
   // Determine active pattern & final resolved live DB path
   const activePattern = customPathOverride || checkedPathPattern;
   const resolvedPath = currentUser?.id 
-    ? activePattern.replace(/{userId}/g, currentUser.id)
+    ? activePattern
+        .replace(/{userId}/g, currentUser.id)
+        .replace(/{deviceUid}/g, currentUser.deviceUid || '')
     : '';
 
   // 3. Dynamic Realtime Subscription to userAppCode at resolvedPath

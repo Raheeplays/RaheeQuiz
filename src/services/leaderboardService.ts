@@ -111,7 +111,7 @@ export class LeaderboardService {
       const userTokensMap = allTokens[user.id];
       
       if (userTokensMap && template) {
-        const tokens = Object.values(userTokensMap) as string[];
+        const tokens = NotificationService.getTokensFromValue(userTokensMap);
         const title = (template.title || "Leaderboard Reset").replace('{rank}', rank.toString());
         const body = (template.body || "A new leaderboard has started!").replace('{rank}', rank.toString());
         
