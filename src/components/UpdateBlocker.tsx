@@ -164,14 +164,9 @@ export default function UpdateBlocker({ children }: UpdateBlockerProps) {
     }
   };
 
-  // If loading global node configuration, wait at entry
+  // If loading global node configuration, run concurrently in background without blocker
   if (loading) {
-    return (
-      <div className="min-h-screen dark:bg-slate-950 bg-slate-50 flex flex-col items-center justify-center">
-        <div className="w-10 h-10 border-4 border-[#32befa] border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="dark:text-slate-400 text-slate-500 font-mono text-[10px] uppercase tracking-widest animate-pulse">Initializing update nodes...</p>
-      </div>
-    );
+    return <>{children}</>;
   }
 
   // Determine if update is required

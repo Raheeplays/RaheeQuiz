@@ -9,7 +9,7 @@ import WaitingRoom from './components/WaitingRoom';
 import MainMenu from './components/MainMenu';
 import NotificationManager from './components/NotificationManager';
 import UpdateBlocker from './components/UpdateBlocker';
-import { AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 import { db } from './firebase/config';
 import { ref, onValue } from 'firebase/database';
@@ -137,12 +137,8 @@ function AppContent() {
     return () => unsubscribe();
   }, [currentUser?.ambientModeEnabled, currentUser?.deviceUid, currentUser?.ambientThreshold, settings?.ambientThreshold, setIsDark]);
 
-  if (showSplash) {
-    return <Splash />;
-  }
-
   const containerClass = cn(
-    "min-h-screen transition-colors duration-300 font-sans selection:bg-primary selection:text-black",
+    "min-h-screen transition-colors duration-300 font-sans selection:bg-primary selection:text-black relative",
     isDark ? "dark bg-black text-white" : "bg-white text-black"
   );
 
@@ -162,6 +158,20 @@ function AppContent() {
           <MainMenu />
         </UpdateBlocker>
       )}
+
+      {/* Elegant fading Splash screen overlay loaded concurrently */}
+      <AnimatePresence>
+        {showSplash && (
+          <motion.div
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.4, ease: "easeInOut" }}
+            className="fixed inset-0 z-[10000] bg-black"
+          >
+            <Splash />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

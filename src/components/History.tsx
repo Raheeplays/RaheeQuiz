@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, CheckCircle, XCircle, Search, HelpCircle, ChevronRight, Clock, Trophy, RefreshCw, AlertCircle, MessageSquare, Zap, Award, Download } from 'lucide-react';
+import { X, CheckCircle, XCircle, Search, HelpCircle, ChevronRight, Clock, Trophy, RefreshCw, AlertCircle, MessageSquare, Zap, Award, Download, FileText } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
 import { db } from '../firebase/config';
 import { ref, onValue, set, update } from 'firebase/database';
@@ -8,7 +8,7 @@ import { Quiz, SessionHistory, User, QuizHistory } from '../types';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 import { generateCertificate } from '../utils/certificate';
-import { downloadAnswerSheetPDF } from '../utils/quizDownload';
+import { downloadAnswerSheetPDF, downloadQuestionPaperPDF } from '../utils/quizDownload';
 
 interface HistoryProps {
   onClose: () => void;
@@ -311,11 +311,9 @@ function SessionDetail({ session, quizzes, topics, onClose }: { session: Session
     });
   };
 
-  const handleDownloadAnswerSheet = () => {
+  const handleDownloadOMRSheet = () => {
     if (!currentUser) return;
     const resolvedTopicName = getTopicName(session.topicId, topics);
-    
-    // Construct session quizzes list from record map
     const sessionQuizzesList: Quiz[] = session.answers
       .map(ans => quizzes[ans.quizId])
       .filter((q): q is Quiz => q !== undefined);
@@ -325,12 +323,27 @@ function SessionDetail({ session, quizzes, topics, onClose }: { session: Session
       topicName: resolvedTopicName,
       quizzes: sessionQuizzesList,
       candidateName: currentUser.name || 'Player',
+      candidateUsername: currentUser.username,
       results: {
         score: session.score,
         total: session.total,
         completedAt: session.timestamp,
         answers: session.answers
       }
+    });
+  };
+
+  const handleDownloadQuestionPaper = () => {
+    const resolvedTopicName = getTopicName(session.topicId, topics);
+    const sessionQuizzesList: Quiz[] = session.answers
+      .map(ans => quizzes[ans.quizId])
+      .filter((q): q is Quiz => q !== undefined);
+
+    downloadQuestionPaperPDF({
+      eventTitle: 'Rahee Historic Session',
+      topicName: resolvedTopicName,
+      quizzes: sessionQuizzesList,
+      language: 'en'
     });
   };
 
@@ -372,23 +385,30 @@ function SessionDetail({ session, quizzes, topics, onClose }: { session: Session
 
           {/* Downloads Action Panel */}
           <div className="bg-[#0a0a0a] border border-[#32befa]/20 p-5 rounded-[2rem] text-left space-y-3 shadow-[0_0_20px_rgba(50,190,250,0.05)]">
-            <p className="text-[#32befa] text-[10px] font-black uppercase tracking-[0.2em] px-1">
+            <p className="text-[#32befa] text-[10px] font-black uppercase tracking-[0.2em] px-1 text-center">
               Score Verification Docs
             </p>
-            <div className="flex flex-col sm:flex-row gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <button
                 onClick={handleDownloadCertificate}
-                className="flex-1 bg-white/5 hover:bg-[#32befa]/20 hover:text-white border border-white/5 hover:border-[#32befa]/40 text-white text-[11px] font-black tracking-wider py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95"
+                className="bg-white/5 hover:bg-[#32befa]/20 hover:text-white border border-white/5 hover:border-[#32befa]/40 text-white text-[10px] font-black tracking-wider py-3.5 px-2 rounded-xl flex items-center justify-center gap-1.5 transition-all active:scale-95"
               >
-                <Award size={15} className="text-[#32befa]" />
-                GET CERTIFICATE
+                <Award size={13} className="text-[#32befa]" />
+                CERTIFICATE
               </button>
               <button
-                onClick={handleDownloadAnswerSheet}
-                className="flex-1 bg-white/5 hover:bg-[#32befa]/20 hover:text-white border border-white/5 hover:border-[#32befa]/40 text-white text-[11px] font-black tracking-wider py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95"
+                onClick={handleDownloadOMRSheet}
+                className="bg-white/5 hover:bg-[#32befa]/20 hover:text-white border border-white/5 hover:border-[#32befa]/40 text-white text-[10px] font-black tracking-wider py-3.5 px-2 rounded-xl flex items-center justify-center gap-1.5 transition-all active:scale-95"
               >
-                <Download size={15} className="text-emerald-400" />
+                <FileText size={13} className="text-[#32befa]" />
                 OMR SHEET
+              </button>
+              <button
+                onClick={handleDownloadQuestionPaper}
+                className="bg-white/5 hover:bg-emerald-500/20 hover:text-white border border-white/5 hover:border-emerald-500/40 text-white text-[10px] font-black tracking-wider py-3.5 px-2 rounded-xl flex items-center justify-center gap-1.5 transition-all active:scale-95"
+              >
+                <Download size={13} className="text-emerald-400" />
+                QUESTION PAPER
               </button>
             </div>
           </div>

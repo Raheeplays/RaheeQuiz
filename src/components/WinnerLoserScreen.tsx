@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Trophy, Star, Clock, Home, RotateCcw, MessageCircle, AlertTriangle, Award, FileDown, Download } from 'lucide-react';
+import { Trophy, Star, Clock, Home, RotateCcw, MessageCircle, AlertTriangle, Award, FileDown, Download, FileText } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
 import { useDialog } from '../contexts/DialogContext';
 import { db } from '../firebase/config';
@@ -8,7 +8,7 @@ import { ref, set, onValue } from 'firebase/database';
 import { QuizHistory, Quiz } from '../types';
 import { cn } from '../lib/utils';
 import { generateCertificate } from '../utils/certificate';
-import { downloadAnswerSheetPDF } from '../utils/quizDownload';
+import { downloadAnswerSheetPDF, downloadQuestionPaperPDF } from '../utils/quizDownload';
 
 interface WinnerLoserScreenProps {
   history: QuizHistory[];
@@ -90,7 +90,7 @@ export default function WinnerLoserScreen({ history, onClose, total, topicId, qu
     });
   };
 
-  const handleDownloadAnswerSheet = () => {
+  const handleDownloadOMRSheet = () => {
     if (!currentUser || !quizzes) return;
     const results = {
       score: correctCount,
@@ -107,7 +107,18 @@ export default function WinnerLoserScreen({ history, onClose, total, topicId, qu
       topicName: resolvedTopicName,
       quizzes,
       candidateName: currentUser.name || 'Player',
+      candidateUsername: currentUser.username,
       results
+    });
+  };
+
+  const handleDownloadQuestionPaper = () => {
+    if (!quizzes) return;
+    downloadQuestionPaperPDF({
+      eventTitle: 'Rahee Quiz Battle',
+      topicName: resolvedTopicName,
+      quizzes,
+      language: 'en'
     });
   };
 
@@ -165,23 +176,30 @@ export default function WinnerLoserScreen({ history, onClose, total, topicId, qu
 
         {/* Document Downloads Section */}
         <div className="bg-[#111] border border-[#32befa]/20 p-5 rounded-[2rem] mb-6 text-left space-y-3 shadow-[0_0_20px_rgba(50,190,250,0.05)]">
-          <p className="text-[#32befa] text-[10px] font-black uppercase tracking-[0.2em] px-1">
+          <p className="text-[#32befa] text-[10px] font-black uppercase tracking-[0.2em] px-1 text-center">
             Score Verification Docs
           </p>
-          <div className="flex flex-col sm:flex-row gap-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <button
               onClick={handleDownloadCertificate}
-              className="flex-1 bg-white/5 hover:bg-[#32befa]/20 hover:text-white border border-white/5 hover:border-[#32befa]/40 text-white text-[11px] font-black tracking-wider py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95"
+              className="bg-white/5 hover:bg-[#32befa]/20 hover:text-white border border-white/5 hover:border-[#32befa]/40 text-white text-[10px] font-black tracking-wider py-3 px-2 rounded-xl flex items-center justify-center gap-1.5 transition-all active:scale-95"
             >
-              <Award size={15} className="text-[#32befa]" />
-              GET CERTIFICATE
+              <Award size={13} className="text-[#32befa]" />
+              CERTIFICATE
             </button>
             <button
-              onClick={handleDownloadAnswerSheet}
-              className="flex-1 bg-white/5 hover:bg-emerald-500/20 hover:text-white border border-white/5 hover:border-emerald-500/40 text-white text-[11px] font-black tracking-wider py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 animate-pulse"
+              onClick={handleDownloadOMRSheet}
+              className="bg-white/5 hover:bg-[#32befa]/20 hover:text-white border border-white/5 hover:border-[#32befa]/40 text-white text-[10px] font-black tracking-wider py-3 px-2 rounded-xl flex items-center justify-center gap-1.5 transition-all active:scale-95"
             >
-              <Download size={15} className="text-emerald-400" />
+              <FileText size={13} className="text-[#32befa]" />
               OMR SHEET
+            </button>
+            <button
+              onClick={handleDownloadQuestionPaper}
+              className="bg-white/5 hover:bg-emerald-500/20 hover:text-white border border-white/5 hover:border-emerald-500/40 text-white text-[10px] font-black tracking-wider py-3 px-2 rounded-xl flex items-center justify-center gap-1.5 transition-all active:scale-95"
+            >
+              <Download size={13} className="text-emerald-400" />
+              QUESTION PAPER
             </button>
           </div>
         </div>
