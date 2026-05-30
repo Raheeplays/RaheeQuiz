@@ -250,7 +250,7 @@ export default function Settings({
                   </div>
 
                   {/* Custom Studio Audio Mixer panel for players */}
-                  {(currentUser?.bgmEnabled !== false) && (
+                  {(currentUser?.bgmEnabled !== false && currentUser?.role === 'admin') && (
                     <div className="p-3.5 bg-black/5 dark:bg-white/5 rounded-2xl space-y-3.5 text-left">
                        <p className="font-black text-[10px] uppercase tracking-wider text-primary flex items-center gap-1.5 justify-between">
                          <span>🎼 {lang === 'hi' ? 'आपका पर्सनल स्टूडियो मिक्सर' : 'Personal Studio Mixer'}</span>

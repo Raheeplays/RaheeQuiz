@@ -13,6 +13,7 @@ interface CertificateData {
   certificateSubtitle?: string;
   certificateFooter?: string;
   certificateColor?: string;
+  previewOnly?: boolean;
   certificateLayout?: {
     borderWidth?: number;
     headerFontSize?: number;
@@ -167,5 +168,9 @@ export const generateCertificate = (data: CertificateData) => {
   doc.text('Authorized Signature', pageWidth - 70, pageHeight - 25, { align: 'center' });
 
   // Save the PDF
+  if (data.previewOnly) {
+    return doc;
+  }
   doc.save(`certificate_${data.userName.replace(/\s+/g, '_')}_${data.topicName.replace(/\s+/g, '_')}.pdf`);
+  return doc;
 };

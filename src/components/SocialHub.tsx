@@ -11,7 +11,7 @@ import { cn } from '../lib/utils';
 import ScoreCard from './ScoreCard';
 import { translations } from '../translations';
 import { NotificationService } from '../services/notificationService';
-import { logActivity } from '../services/activityService';
+import { logActivity } from '../activityService';
 
 interface SocialHubProps {
   onClose: () => void;

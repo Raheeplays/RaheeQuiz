@@ -18,6 +18,7 @@ interface DownloadOptions {
     }[];
   };
   language?: 'en' | 'hi';
+  previewOnly?: boolean;
 }
 
 const hexToRgb = (hex: string) => {
@@ -165,6 +166,9 @@ export const downloadQuestionPaperPDF = (options: DownloadOptions) => {
   });
 
   // Save the PDF
+  if (options.previewOnly) {
+    return doc;
+  }
   const filename = `Question_Paper_${eventTitle.replace(/\s+/g, '_')}.pdf`;
   doc.save(filename);
 };
@@ -416,6 +420,9 @@ export const downloadAnswerSheetPDF = (options: DownloadOptions) => {
   }
 
   // Save the PDF
+  if (options.previewOnly) {
+    return doc;
+  }
   const filename = `OMR_Sheet_${candidateName.replace(/\s+/g, '_')}_${eventTitle.replace(/\s+/g, '_')}.pdf`;
   doc.save(filename);
 };

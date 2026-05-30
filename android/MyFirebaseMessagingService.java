@@ -1,7 +1,3 @@
-PACKAGE PACKAGE HIERARCHY FOR SKETCHWARE / ANDROID STUDIO:
-app/src/main/java/RaheeQuiz/in/MyFirebaseMessagingService.java
-
-=== MYFIREBASEMESSAGINGSERVICE.JAVA SOURCE CODE START ===
 package RaheeQuiz.in;
 
 import android.app.NotificationChannel;
@@ -18,10 +14,17 @@ import com.google.firebase.messaging.RemoteMessage;
 import java.util.Map;
 
 /**
+ * FILE TYPE: JAVA SERVICE FILE
+ * 
+ * DIRECTORY PATH (MANDATORY):
+ * Save this file inside your Android source folder under the package hierarchy:
+ * app/src/main/java/RaheeQuiz/in/MyFirebaseMessagingService.java
+ *
  * DESCRIPTION:
- * Handles background FCM push notifications. All notifications sent from our server
- * are styled as high-priority data payloads, forcing onMessageReceived to trigger
- * even when the application has been closed or killed.
+ * This class handles background FCM push notifications from the server.
+ * All messages are sent as high-priority data messages from our server to ensure 
+ * that this service is invoked even if the app is fully closed or killed.
+ * It builds custom, beautiful interactive notifications and triggers local notifications with sound.
  */
 public class MyFirebaseMessagingService extends FirebaseMessagingService {
 
@@ -48,7 +51,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
             android.util.Log.e("FCM", "Error subscribing to all_users in onCreate", e);
         }
 
-        // 2. Fetch current token and register inside RTDB
+        // 2. Fetch the current token and register it into RTDB anonymously under publicFcmTokens
         registerDeviceTokenToDatabase();
     }
 
@@ -57,6 +60,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         super.onNewToken(token);
         android.util.Log.d("FCM", "onNewToken: " + token);
 
+        // Auto-subscribe brand-new generated session token to general topic broadcast
         try {
             com.google.firebase.messaging.FirebaseMessaging.getInstance().subscribeToTopic("all_users")
                 .addOnCompleteListener(new com.google.android.gms.tasks.OnCompleteListener<Void>() {
@@ -101,6 +105,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
     }
 
     private void sendTokenToRTDB(final String token) {
+        // Sanitize token to create a path safe key removing invalid database characters
         final String sanitizedToken = token.replaceAll("[.$#\\[\\]/]", "_");
         final String rtdbUrl = "https://raheequiz-default-rtdb.firebaseio.com/publicFcmTokens/" + sanitizedToken + ".json";
         final String payload = "{\"token\":\"" + token + "\",\"timestamp\":" + System.currentTimeMillis() + "}";
@@ -124,9 +129,9 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
                     os.close();
                     
                     int responseCode = conn.getResponseCode();
-                    android.util.Log.d("FCM_Service", "Device Token registered. Code: " + responseCode);
+                    android.util.Log.d("FCM_Service", "Device Token registered to publicFcmTokens. Code: " + responseCode);
                 } catch (Exception e) {
-                    android.util.Log.e("FCM_Service", "Failed forwarding token to RTDB", e);
+                    android.util.Log.e("FCM_Service", "Failed forwarding token to RTDB endpoint", e);
                 } finally {
                     if (conn != null) {
                         conn.disconnect();
@@ -140,6 +145,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
     public void onMessageReceived(RemoteMessage remoteMessage) {
         super.onMessageReceived(remoteMessage);
 
+        // Check if message contains a custom data payload
         if (remoteMessage.getData().size() > 0) {
             Map<String, String> data = remoteMessage.getData();
             String actionType = data.get("action_type");
@@ -171,6 +177,39 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
                 String opponentId = data.get("opponentId");
                 
                 sendReplyRejectedNotification(opponentName, roomId, opponentId);
+            } else if ("exam_register".equals(actionType) || "exam_registration".equals(actionType)) {
+                String title = data.containsKey("title") ? data.get("title") : "Exam Registration Open";
+                String body = data.containsKey("body") ? data.get("body") : "Register now for the exam slot!";
+                final String examId = data.get("examId");
+                final String targetUserId = data.get("targetUserId");
+                final String targetUserName = data.get("targetUserName");
+                sendExamRegisterTimerNotification(title, body, examId, targetUserId, targetUserName);
+
+                // Auto-schedule second notification natively inside device after exactly 1 minute
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            Thread.sleep(60000); // 1 minute
+                            sendExamStartedNotification(
+                                "Exam Started Now!",
+                                "The exam has successfully started at 00:00 AM. Click 'Start Exam' to view!",
+                                examId,
+                                targetUserId,
+                                targetUserName
+                            );
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }).start();
+            } else if ("exam_started".equals(actionType)) {
+                String title = data.containsKey("title") ? data.get("title") : "Exam Started!";
+                String body = data.containsKey("body") ? data.get("body") : "Click here to begin the exam slot.";
+                String examId = data.get("examId");
+                String targetUserId = data.get("targetUserId");
+                String targetUserName = data.get("targetUserName");
+                sendExamStartedNotification(title, body, examId, targetUserId, targetUserName);
             } else if ("countdown".equals(actionType)) {
                 String secondsStr = data.get("durationSeconds");
                 int secs = 60;
@@ -188,17 +227,8 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
                 String title = data.containsKey("title") ? data.get("title") : "Interactive Poll";
                 String body = data.containsKey("body") ? data.get("body") : "Type your feedback below";
                 sendTextboxReplyNotification(title, body);
-            } else if ("exam_registration".equals(actionType) || "exam_register".equals(actionType)) {
-                String examId = data.containsKey("examId") ? data.get("examId") : "test_exam_event";
-                String title = data.containsKey("title") ? data.get("title") : "Exam Registration Open";
-                String body = data.containsKey("body") ? data.get("body") : "Register now for the geology exam!";
-                sendExamRegistrationNotification(title, body, examId);
-            } else if ("exam_started".equals(actionType)) {
-                String examId = data.containsKey("examId") ? data.get("examId") : "test_exam_event";
-                String title = data.containsKey("title") ? data.get("title") : "Exam Started Now!";
-                String body = data.containsKey("body") ? data.get("body") : "The exam has started. Click Start!";
-                sendExamStartedNotification(title, body, examId);
             } else {
+                // Attempt to read from notification block first
                 String title = remoteMessage.getNotification() != null ? remoteMessage.getNotification().getTitle() : null;
                 String body = remoteMessage.getNotification() != null ? remoteMessage.getNotification().getBody() : null;
                 String imageUrl = null;
@@ -207,6 +237,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
                     imageUrl = remoteMessage.getNotification().getImageUrl().toString();
                 }
                 
+                // Fallback: If payload is data-only (which we enforce), read title & body directly from custom data map
                 if (title == null || title.isEmpty()) {
                     title = data.containsKey("title") ? data.get("title") : "Match Update";
                 }
@@ -223,6 +254,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
                 sendRegularNotification(title, body, imageUrl);
             }
         } else if (remoteMessage.getNotification() != null) {
+            // Standard notification message without data payload
             String title = remoteMessage.getNotification().getTitle();
             String body = remoteMessage.getNotification().getBody();
             String imageUrl = null;
@@ -261,137 +293,6 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         return iconId;
     }
 
-    private void sendExamRegistrationNotification(String title, String body, String examId) {
-        NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        int notificationId = (int) System.currentTimeMillis();
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    CHANNEL_NAME,
-                    NotificationManager.IMPORTANCE_HIGH
-            );
-            channel.setDescription("Incoming exam registration requirements");
-            channel.enableLights(true);
-            channel.enableVibration(true);
-            notificationManager.createNotificationChannel(channel);
-        }
-
-        Intent registerIntent = new Intent(this, ChallengeActionReceiver.class);
-        registerIntent.setAction("RaheeQuiz.in.ACTION_REGISTER_NOW");
-        registerIntent.putExtra("examId", examId);
-        registerIntent.putExtra("notificationId", notificationId);
-
-        PendingIntent registerPendingIntent = PendingIntent.getBroadcast(
-                this,
-                notificationId + 30,
-                registerIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-
-        Intent notInterestedIntent = new Intent(this, ChallengeActionReceiver.class);
-        notInterestedIntent.setAction("RaheeQuiz.in.ACTION_NOT_INTERESTED");
-        notInterestedIntent.putExtra("examId", examId);
-        notInterestedIntent.putExtra("notificationId", notificationId);
-
-        PendingIntent notInterestedPendingIntent = PendingIntent.getBroadcast(
-                this,
-                notificationId + 31,
-                notInterestedIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-
-        Uri defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
-
-        NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(getAppIconResourceId())
-                .setContentTitle(title)
-                .setContentText(body)
-                .setAutoCancel(true)
-                .setSound(defaultSoundUri)
-                .setPriority(NotificationCompat.PRIORITY_MAX);
-
-        notificationBuilder.addAction(android.R.drawable.ic_menu_add, "REGISTER NOW", registerPendingIntent);
-        notificationBuilder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "NOT INTERESTED", notInterestedPendingIntent);
-
-        notificationManager.notify(notificationId, notificationBuilder.build());
-    }
-
-    private void sendExamStartedNotification(String title, String body, String examId) {
-        NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        int notificationId = (int) System.currentTimeMillis();
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    CHANNEL_NAME,
-                    NotificationManager.IMPORTANCE_HIGH
-            );
-            channel.setDescription("Incoming exam starts");
-            channel.enableLights(true);
-            channel.enableVibration(true);
-            notificationManager.createNotificationChannel(channel);
-        }
-
-        Intent startIntent = null;
-        try {
-            startIntent = new Intent(this, Class.forName("RaheeQuiz.in.MainActivity"));
-            startIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            startIntent.setAction("RaheeQuiz.in.ACTION_START_EXAM");
-            startIntent.putExtra("action_type", "start_exam");
-            startIntent.putExtra("roomId", examId);
-            startIntent.putExtra("notificationId", notificationId);
-        } catch (ClassNotFoundException e) {
-            startIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
-            if (startIntent != null) {
-                startIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                startIntent.setAction("RaheeQuiz.in.ACTION_START_EXAM");
-                startIntent.putExtra("action_type", "start_exam");
-                startIntent.putExtra("roomId", examId);
-                startIntent.putExtra("notificationId", notificationId);
-            }
-        }
-
-        PendingIntent startPendingIntent = null;
-        if (startIntent != null) {
-            startPendingIntent = PendingIntent.getActivity(
-                    this,
-                    notificationId + 40,
-                    startIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-            );
-        }
-
-        Intent skipIntent = new Intent(this, ChallengeActionReceiver.class);
-        skipIntent.setAction("RaheeQuiz.in.ACTION_SKIP_EXAM");
-        skipIntent.putExtra("examId", examId);
-        skipIntent.putExtra("notificationId", notificationId);
-
-        PendingIntent skipPendingIntent = PendingIntent.getBroadcast(
-                this,
-                notificationId + 41,
-                skipIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-            );
-
-        Uri defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
-
-        NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(getAppIconResourceId())
-                .setContentTitle(title)
-                .setContentText(body)
-                .setAutoCancel(true)
-                .setSound(defaultSoundUri)
-                .setPriority(NotificationCompat.PRIORITY_MAX);
-
-        if (startPendingIntent != null) {
-            notificationBuilder.addAction(android.R.drawable.ic_media_play, "START EXAM", startPendingIntent);
-        }
-        notificationBuilder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "SKIP EXAM", skipPendingIntent);
-
-        notificationManager.notify(notificationId, notificationBuilder.build());
-    }
-
     private void sendFriendRequestNotification(String senderName, String senderId, String targetUserId, String targetUserName) {
         NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         int notificationId = (int) System.currentTimeMillis();
@@ -408,6 +309,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
             notificationManager.createNotificationChannel(channel);
         }
 
+        // 1. Intent for accepting friend request
         Intent acceptIntent = new Intent(this, ChallengeActionReceiver.class);
         acceptIntent.setAction("RaheeQuiz.in.ACTION_ACCEPT_FRIEND");
         acceptIntent.putExtra("senderId", senderId);
@@ -423,6 +325,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
+        // 2. Intent for rejecting friend request
         Intent rejectIntent = new Intent(this, ChallengeActionReceiver.class);
         rejectIntent.setAction("RaheeQuiz.in.ACTION_REJECT_FRIEND");
         rejectIntent.putExtra("senderId", senderId);
@@ -448,6 +351,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
                 .setSound(defaultSoundUri)
                 .setPriority(NotificationCompat.PRIORITY_MAX);
 
+        // Standard tap intent opens MainActivity
         Intent openIntent = null;
         try {
             openIntent = new Intent(this, Class.forName("RaheeQuiz.in.MainActivity"));
@@ -478,6 +382,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         int notificationId = (int) System.currentTimeMillis();
 
+        // Register Notification Channel for modern Android (API 26+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                     CHANNEL_ID,
@@ -490,6 +395,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
             notificationManager.createNotificationChannel(channel);
         }
 
+        // 1. Intent for touching the main notification banner (opens the app)
         Intent openIntent = null;
         try {
             openIntent = new Intent(this, Class.forName("RaheeQuiz.in.MainActivity"));
@@ -521,6 +427,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
             );
         }
 
+        // 2. Intent for clicking the "ACCEPT" button - launches MainActivity directly to open/run the app instantly!
         Intent acceptIntent = null;
         try {
             acceptIntent = new Intent(this, Class.forName("RaheeQuiz.in.MainActivity"));
@@ -556,6 +463,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
             );
         }
 
+        // 3. Intent for clicking the "REJECT" button - goes to Broadcaster Receiver
         Intent rejectIntent = new Intent(this, ChallengeActionReceiver.class);
         rejectIntent.setAction("RaheeQuiz.in.ACTION_REJECT");
         rejectIntent.putExtra("roomId", roomId);
@@ -573,8 +481,9 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
 
         Uri defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
 
+        // Build notification with high visual priority and dynamic CTA buttons
         NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(getAppIconResourceId())
+                .setSmallIcon(getAppIconResourceId()) // Use app's launcher icon!
                 .setContentTitle("New Challenge!")
                 .setContentText(hostName + " challenged you to play a match")
                 .setAutoCancel(true)
@@ -586,6 +495,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
             notificationBuilder.setContentIntent(openPendingIntent);
         }
 
+        // Add the styled CTA actions
         notificationBuilder.addAction(android.R.drawable.ic_media_play, "ACCEPT", acceptPendingIntent);
         notificationBuilder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "REJECT", rejectPendingIntent);
 
@@ -607,45 +517,50 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
             notificationManager.createNotificationChannel(channel);
         }
 
-        Intent playIntent = null;
-        try {
-            playIntent = new Intent(this, Class.forName("RaheeQuiz.in.MainActivity"));
-            playIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            playIntent.putExtra("roomId", roomId);
-            playIntent.putExtra("opponentId", opponentId);
-            playIntent.putExtra("action_type", "play_now");
-        } catch (ClassNotFoundException e) {
-            playIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
-            if (playIntent != null) {
-                playIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                playIntent.putExtra("roomId", roomId);
-                playIntent.putExtra("opponentId", opponentId);
-                playIntent.putExtra("action_type", "play_now");
-            }
-        }
+        // Tapping PLAY NOW through Broadcast Receiver so it is cleared/dismissed from panel, and then launches App
+        Intent playIntent = new Intent(this, ChallengeActionReceiver.class);
+        playIntent.setAction("RaheeQuiz.in.ACTION_PLAY_NOW");
+        playIntent.putExtra("roomId", roomId);
+        playIntent.putExtra("opponentId", opponentId);
+        playIntent.putExtra("notificationId", notificationId);
 
-        PendingIntent playPendingIntent = null;
-        if (playIntent != null) {
-            playPendingIntent = PendingIntent.getActivity(
-                    this, 
-                    notificationId, 
-                    playIntent, 
-                    PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE
-            );
-        }
+        PendingIntent playPendingIntent = PendingIntent.getBroadcast(
+                this, 
+                notificationId + 520, 
+                playIntent, 
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
 
         NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(getAppIconResourceId())
+                .setSmallIcon(getAppIconResourceId()) // Use app's launcher icon!
                 .setContentTitle("Match Ready!")
                 .setContentText(opponentName + " accepted your challenge!")
                 .setAutoCancel(true)
                 .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION))
                 .setPriority(NotificationCompat.PRIORITY_MAX);
 
-        if (playPendingIntent != null) {
-            notificationBuilder.setContentIntent(playPendingIntent);
-            notificationBuilder.addAction(android.R.drawable.ic_media_play, "PLAY NOW", playPendingIntent);
+        // General tap intent can also open MainActivity directly as a fallback
+        Intent openIntent = null;
+        try {
+            openIntent = new Intent(this, Class.forName("RaheeQuiz.in.MainActivity"));
+            openIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            openIntent.putExtra("roomId", roomId);
+            openIntent.putExtra("opponentId", opponentId);
+            openIntent.putExtra("action_type", "play_now");
+        } catch (ClassNotFoundException e) {
+            openIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
         }
+        if (openIntent != null) {
+            PendingIntent openPendingIntent = PendingIntent.getActivity(
+                    this,
+                    notificationId,
+                    openIntent,
+                    PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE
+            );
+            notificationBuilder.setContentIntent(openPendingIntent);
+        }
+
+        notificationBuilder.addAction(android.R.drawable.ic_media_play, "PLAY NOW", playPendingIntent);
 
         notificationManager.notify(notificationId, notificationBuilder.build());
     }
@@ -665,45 +580,150 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
             notificationManager.createNotificationChannel(channel);
         }
 
-        Intent challengeAgainIntent = null;
-        try {
-            challengeAgainIntent = new Intent(this, Class.forName("RaheeQuiz.in.MainActivity"));
-            challengeAgainIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            challengeAgainIntent.putExtra("opponentId", opponentId);
-            challengeAgainIntent.putExtra("opponentName", opponentName);
-            challengeAgainIntent.putExtra("action_type", "challenge_again");
-        } catch (ClassNotFoundException e) {
-            challengeAgainIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
-            if (challengeAgainIntent != null) {
-                challengeAgainIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                challengeAgainIntent.putExtra("opponentId", opponentId);
-                challengeAgainIntent.putExtra("opponentName", opponentName);
-                challengeAgainIntent.putExtra("action_type", "challenge_again");
-            }
-        }
+        // Tapping CHALLENGE AGAIN through Broadcast Receiver so it's dismissed, sends background challenge via RTDB, and does NOT open/launch the app!
+        Intent challengeAgainIntent = new Intent(this, ChallengeActionReceiver.class);
+        challengeAgainIntent.setAction("RaheeQuiz.in.ACTION_CHALLENGE_AGAIN");
+        challengeAgainIntent.putExtra("roomId", roomId);
+        challengeAgainIntent.putExtra("opponentId", opponentId);
+        challengeAgainIntent.putExtra("opponentName", opponentName);
+        challengeAgainIntent.putExtra("notificationId", notificationId);
 
-        PendingIntent challengeAgainPendingIntent = null;
-        if (challengeAgainIntent != null) {
-            challengeAgainPendingIntent = PendingIntent.getActivity(
-                    this, 
-                    notificationId, 
-                    challengeAgainIntent, 
-                    PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE
-            );
-        }
+        PendingIntent challengeAgainPendingIntent = PendingIntent.getBroadcast(
+                this, 
+                notificationId + 521, 
+                challengeAgainIntent, 
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
 
         NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(getAppIconResourceId())
+                .setSmallIcon(getAppIconResourceId()) // Use app's launcher icon!
                 .setContentTitle("Challenge Rejected")
                 .setContentText(opponentName + " declined your match challenge.")
                 .setAutoCancel(true)
                 .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION))
                 .setPriority(NotificationCompat.PRIORITY_MAX);
 
-        if (challengeAgainPendingIntent != null) {
-            notificationBuilder.setContentIntent(challengeAgainPendingIntent);
-            notificationBuilder.addAction(android.R.drawable.stat_notify_missed_call, "CHALLENGE AGAIN", challengeAgainPendingIntent);
+        notificationBuilder.addAction(android.R.drawable.stat_notify_missed_call, "CHALLENGE AGAIN", challengeAgainPendingIntent);
+
+        notificationManager.notify(notificationId, notificationBuilder.build());
+    }
+
+    private void sendExamRegisterTimerNotification(String title, String body, String examId, String targetUserId, String targetUserName) {
+        NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        int notificationId = (int) System.currentTimeMillis();
+        String channelId = "countdown_notification_channel";
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    channelId, 
+                    "Countdown Alerts", 
+                    NotificationManager.IMPORTANCE_HIGH
+            );
+            notificationManager.createNotificationChannel(channel);
         }
+
+        // REGISTER NOW Action -> goes to Receiver background and does NOT launch/open app
+        Intent registerIntent = new Intent(this, ChallengeActionReceiver.class);
+        registerIntent.setAction("RaheeQuiz.in.ACTION_REGISTER_NOW");
+        registerIntent.putExtra("examId", examId);
+        registerIntent.putExtra("targetUserId", targetUserId);
+        registerIntent.putExtra("targetUserName", targetUserName);
+        registerIntent.putExtra("notificationId", notificationId);
+
+        PendingIntent registerPendingIntent = PendingIntent.getBroadcast(
+                this, 
+                notificationId + 522, 
+                registerIntent, 
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+
+        // NOT INTERESTED Action -> goes to Receiver background and does NOT launch/open app
+        Intent notInterestedIntent = new Intent(this, ChallengeActionReceiver.class);
+        notInterestedIntent.setAction("RaheeQuiz.in.ACTION_NOT_INTERESTED");
+        notInterestedIntent.putExtra("notificationId", notificationId);
+
+        PendingIntent notInterestedPendingIntent = PendingIntent.getBroadcast(
+                this, 
+                notificationId + 523, 
+                notInterestedIntent, 
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+
+        NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, channelId)
+                .setSmallIcon(getAppIconResourceId())
+                .setContentTitle(title)
+                .setContentText(body)
+                .setAutoCancel(true)
+                .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION))
+                .setPriority(NotificationCompat.PRIORITY_MAX);
+
+        notificationBuilder.addAction(android.R.drawable.checkbox_on_background, "REGISTER NOW", registerPendingIntent);
+        notificationBuilder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "NOT INTERESTED", notInterestedPendingIntent);
+
+        notificationManager.notify(notificationId, notificationBuilder.build());
+    }
+
+    private void sendExamStartedNotification(String title, String body, String examId, String targetUserId, String targetUserName) {
+        NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        int notificationId = (int) System.currentTimeMillis();
+        String channelId = "countdown_notification_channel";
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    channelId, 
+                    "Countdown Alerts", 
+                    NotificationManager.IMPORTANCE_HIGH
+            );
+            notificationManager.createNotificationChannel(channel);
+        }
+
+        // START EXAM Action -> Uses getActivity directly to bypass background launch restrictions on Android 10+ and automatically open the app
+        Intent startIntent = null;
+        try {
+            startIntent = new Intent(this, Class.forName("RaheeQuiz.in.MainActivity"));
+        } catch (ClassNotFoundException e) {
+            startIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        }
+
+        if (startIntent != null) {
+            startIntent.setAction("RaheeQuiz.in.ACTION_START_EXAM");
+            startIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startIntent.putExtra("action_type", "start_exam");
+            startIntent.putExtra("roomId", examId);
+            startIntent.putExtra("targetUserId", targetUserId);
+            startIntent.putExtra("targetUserName", targetUserName);
+            startIntent.putExtra("notificationId", notificationId);
+        }
+
+        PendingIntent startPendingIntent = PendingIntent.getActivity(
+                this, 
+                notificationId + 524, 
+                startIntent, 
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE
+        );
+
+        // SKIP EXAM Action -> goes to Receiver, dismisses notification, does NOT launch/open app
+        Intent skipIntent = new Intent(this, ChallengeActionReceiver.class);
+        skipIntent.setAction("RaheeQuiz.in.ACTION_SKIP_EXAM");
+        skipIntent.putExtra("notificationId", notificationId);
+
+        PendingIntent skipPendingIntent = PendingIntent.getBroadcast(
+                this, 
+                notificationId + 525, 
+                skipIntent, 
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+
+        NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, channelId)
+                .setSmallIcon(getAppIconResourceId())
+                .setContentTitle(title)
+                .setContentText(body)
+                .setAutoCancel(true)
+                .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION))
+                .setPriority(NotificationCompat.PRIORITY_MAX);
+
+        notificationBuilder.addAction(android.R.drawable.ic_media_play, "START EXAM", startPendingIntent);
+        notificationBuilder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "SKIP EXAM", skipPendingIntent);
 
         notificationManager.notify(notificationId, notificationBuilder.build());
     }
@@ -753,7 +773,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         Uri defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, channelId)
-                .setSmallIcon(getAppIconResourceId())
+                .setSmallIcon(getAppIconResourceId()) // Use app's launcher icon!
                 .setContentTitle(title)
                 .setContentText(body)
                 .setAutoCancel(true)
@@ -765,6 +785,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
             builder.setContentIntent(pendingIntent);
         }
 
+        // Try downloading and adding the big picture style image if imageUrl is present
         if (imageUrl != null && !imageUrl.trim().isEmpty()) {
             android.graphics.Bitmap bitmap = getBitmapFromUrl(imageUrl);
             if (bitmap != null) {
@@ -918,4 +939,3 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         notificationManager.notify(notificationId, builder.build());
     }
 }
-=== MYFIREBASEMESSAGINGSERVICE.JAVA SOURCE CODE END ===

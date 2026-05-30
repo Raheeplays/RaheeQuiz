@@ -5,7 +5,7 @@ import { db, firebaseConfig } from '../firebase/config';
 import { ref, onValue, set, push, remove, get, update, query, orderByChild, equalTo } from 'firebase/database';
 import { User, Topic, Quiz, Feedback, QuizHistory, SpecialMessage, Ad } from '../types';
 import ScoreCard from './ScoreCard';
-import { Database, Folder, Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2, Coins, TrendingUp, Calendar, Sun, Moon, Star, Settings as SettingsIcon, Bell, Send, Share2, Image as ImageIcon, Search, Volume2, Play, RotateCcw, Zap, ChevronUp, ChevronDown, CornerDownRight } from 'lucide-react';
+import { Database, Folder, Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2, Coins, TrendingUp, Calendar, Sun, Moon, Star, Settings as SettingsIcon, Bell, Send, Share2, Image as ImageIcon, Search, Volume2, Play, RotateCcw, Zap, ChevronUp, ChevronDown, CornerDownRight, Download } from 'lucide-react';
 import { NotificationService, ServiceAccount } from '../services/notificationService';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -16,7 +16,7 @@ import Papa from 'papaparse';
 import { motion, AnimatePresence } from 'motion/react';
 import { SKINS, Event } from '../types';
 import { CLASSES, SUBJECTS } from '../constants';
-import { logActivity } from '../services/activityService';
+import { logActivity } from '../activityService';
 
 import { generateCertificate } from '../utils/certificate';
 import CertificatePreview from './CertificatePreview';
@@ -98,11 +98,14 @@ export default function AdminPanel() {
   const [jsonImporterPath, setJsonImporterPath] = useState('');
   const [jsonImporterMode, setJsonImporterMode] = useState<'update' | 'set'>('update');
   const [isImportingJson, setIsImportingJson] = useState(false);
+  const [csvMakerText, setCsvMakerText] = useState('');
+  const [csvMakerError, setCsvMakerError] = useState('');
   const [tokenLinkInput, setTokenLinkInput] = useState('');
   const [adminPlayerUsernameInput, setAdminPlayerUsernameInput] = useState('');
   const [localUpdateCode, setLocalUpdateCode] = useState('');
   const [localUpdateUrl, setLocalUpdateUrl] = useState('');
   const [localUpdateMessage, setLocalUpdateMessage] = useState('');
+  const [testFcmToken, setTestFcmToken] = useState('');
 
   const [globalUpdateCode, setGlobalUpdateCode] = useState('');
   const [globalUpdateUrl, setGlobalUpdateUrl] = useState('');
@@ -165,6 +168,7 @@ export default function AdminPanel() {
   });
   const [pendingTokens, setPendingTokens] = useState<Record<string, string>>({});
   const [isSendingNotif, setIsSendingNotif] = useState(false);
+  const [examTestTimer, setExamTestTimer] = useState<number | null>(null);
   const [scheduleTime, setScheduleTime] = useState('');
   const [searchTokenUser, setSearchTokenUser] = useState('');
   const [certPreviewData, setCertPreviewData] = useState<any>(null);
@@ -449,7 +453,7 @@ export default function AdminPanel() {
     }
   };
 
-  const sendTestNotificationType = async (type: 'challenge' | 'reply_accepted' | 'reply_rejected' | 'countdown' | 'textbox_reply' | 'raw' | 'friend_request' | 'friend_accept' | 'friend_reject') => {
+  const sendTestExamWorkflow = async () => {
     if (!serviceAccount) {
       await alert({ title: 'Error', description: 'Please upload Admin SDK JSON first.', type: 'error' });
       return;
@@ -486,7 +490,7 @@ export default function AdminPanel() {
       }
       targetTokens = [notifForm.token];
     } else {
-      await alert({ title: 'Error', description: 'Testing is supported for "All Users", "Single Player", or "Specific Token" target types.', type: 'error' });
+      await alert({ title: 'Error', description: 'Testing supports "All Users", "Single Player", or "Specific Token" target types.', type: 'error' });
       return;
     }
 
@@ -494,6 +498,116 @@ export default function AdminPanel() {
       await alert({ title: 'Error', description: 'No active FCM tokens found for the target.', type: 'error' });
       return;
     }
+
+    let targetExamId = "test_exam_event";
+    if (events && events.length > 0) {
+      targetExamId = events[0].id;
+    } else {
+      const defaultEvent = {
+        id: "test_exam_event",
+        title: "Physical Geology Exam",
+        description: "Standard Test Exam for geology physical parameters",
+        topicId: "petrology",
+        questionsCount: 5,
+        durationMinutes: 10,
+        createdAt: Date.now()
+      };
+      await set(ref(db, `events/test_exam_event`), defaultEvent);
+    }
+
+    setIsSendingNotif(true);
+    try {
+      const regTitle = "Exam Registration Open";
+      const regBody = "Quiz Exam starts at 00:00 AM (Registration closes in 1 min). Register now!";
+      const regPushData = {
+        action_type: "exam_registration",
+        examId: targetExamId,
+        title: regTitle,
+        body: regBody
+      };
+
+      if (notifForm.targetType === 'all') {
+        await NotificationService.sendToAll(serviceAccount, regTitle, regBody, undefined, regPushData);
+      } else {
+        for (const token of targetTokens) {
+          try {
+            await NotificationService.sendToToken(serviceAccount, token, regTitle, regBody, undefined, regPushData);
+          } catch (e) {
+            console.error("FCM Send token reg error:", e);
+          }
+        }
+      }
+
+      await alert({ 
+        title: "Registration Sent", 
+        description: `Step 1 sent. Second notification (Exam Started) will trigger automatically in exactly 1 minute. Do not close this tab or panel!`, 
+        type: 'success' 
+      });
+
+      let remaining = 60;
+      setExamTestTimer(remaining);
+
+      const intervalId = setInterval(async () => {
+        remaining--;
+        setExamTestTimer(remaining);
+
+        if (remaining <= 0) {
+          clearInterval(intervalId);
+          setExamTestTimer(null);
+
+          try {
+            const startTitle = "Exam Started Now!";
+            const startBody = "The exam has successfully started at 00:00 AM. Click 'Start Exam' to view!";
+            const startPushData = {
+              action_type: "exam_started",
+              examId: targetExamId,
+              title: startTitle,
+              body: startBody
+            };
+
+            if (notifForm.targetType === 'all') {
+              await NotificationService.sendToAll(serviceAccount, startTitle, startBody, undefined, startPushData);
+            } else {
+              for (const token of targetTokens) {
+                try {
+                  await NotificationService.sendToToken(serviceAccount, token, startTitle, startBody, undefined, startPushData);
+                } catch (e) {
+                  console.error("Failed to deliver 2nd notification to token:", token, e);
+                }
+              }
+            }
+            await alert({ 
+              title: "Exam Started Notification Sent!", 
+              description: "The second notification with 'START EXAM' and 'SKIP EXAM' actions has been successfully sent to target devices.", 
+              type: "success" 
+            });
+          } catch (err2: any) {
+            console.error("Failed sending 2nd exam notification:", err2);
+          }
+        }
+      }, 1000);
+
+    } catch (err: any) {
+      await alert({ title: 'Error', description: err.message, type: 'error' });
+    } finally {
+      setIsSendingNotif(false);
+    }
+  };
+
+  const sendTestNotificationType = async (type: 'challenge' | 'reply_accepted' | 'reply_rejected' | 'countdown' | 'textbox_reply' | 'raw' | 'friend_request' | 'friend_accept' | 'friend_reject') => {
+    if (!serviceAccount) {
+      await alert({ title: 'Error', description: 'Please upload Admin SDK JSON first.', type: 'error' });
+      return;
+    }
+
+    const trimmedToken = testFcmToken.trim();
+    if (!trimmedToken) {
+      await alert({ title: 'Error', description: 'Please enter a target FCM Token in the test layout below.', type: 'error' });
+      return;
+    }
+
+    const targetTokens = [trimmedToken];
+    const userId = "test_target_player";
 
     setIsSendingNotif(true);
     try {
@@ -574,26 +688,11 @@ export default function AdminPanel() {
         body = notifForm.body || "This is a raw notification with no buttons.";
       }
 
-      let topicSent = false;
-      let topicError = null;
-
-      // 1. If Target Type is "All Users", trigger real FCM Topic Broadcast via the auto-subscribed 'all_users' topic!
-      if (notifForm.targetType === 'all') {
-        try {
-          const imgUrl = notifForm.imageUrl || undefined;
-          await NotificationService.sendToAll(serviceAccount, title, body, imgUrl, type === 'raw' ? undefined : pushData);
-          topicSent = true;
-        } catch (topicErr: any) {
-          console.error("FCM test topic broadcast failed:", topicErr);
-          topicError = topicErr.message;
-        }
-      }
-
       let successCount = 0;
       let failCount = 0;
       let lastErrorMessage = "";
 
-      // 2. Fallback: deliver individually to active tokens
+      // deliver individually to the testFcmToken
       for (const token of targetTokens) {
         try {
           if (type === 'raw') {
@@ -610,7 +709,7 @@ export default function AdminPanel() {
         }
       }
 
-      if (successCount === 0 && failCount > 0 && !topicSent) {
+      if (successCount === 0 && failCount > 0) {
         let errMsg = lastErrorMessage;
         if (errMsg.includes('Requested entity was not found')) {
           errMsg = "Requested entity was not found. This standard FCM error means that the target device's FCM token is invalid or expired for this service account's project. Please re-run the Android app, check your linked FCM tokens, or upload an Admin SDK JSON matching the project!";
@@ -620,7 +719,7 @@ export default function AdminPanel() {
 
       await alert({ 
         title: 'Test Broadcast Completed', 
-        description: `Successfully sent test "${type}" notification! ${notifForm.targetType === 'all' ? `Topic Broadcast: ${topicSent ? 'SUCCESS' : 'FAILED (' + topicError + ')'}. ` : ''}Reached: ${successCount} devices (${failCount} expired devices skipped).`, 
+        description: `Successfully sent test "${type}" notification securely to FCM Token. Reached: ${successCount} devices (${failCount} expired devices skipped).`, 
         type: 'success' 
       });
     } catch (err: any) {
@@ -687,15 +786,15 @@ export default function AdminPanel() {
             if (tokensSnap.exists()) {
               const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
               for (const token of tokens) {
-                await NotificationService.sendToToken(authObj, token, payload);
+                await NotificationService.sendToToken(authObj, token, payload, undefined, undefined, schedule.data);
               }
             }
           } else if (schedule.targetType === 'all') {
-            await NotificationService.sendToAll(authObj, payload);
+            await NotificationService.sendToAll(authObj, payload, undefined, undefined, schedule.data);
           } else if (schedule.targetType === 'topic') {
-            await NotificationService.sendToTopic(authObj, schedule.topic || 'all_users', payload);
+            await NotificationService.sendToTopic(authObj, schedule.topic || 'all_users', payload, undefined, undefined, schedule.data);
           } else if (schedule.targetType === 'token') {
-            await NotificationService.sendToToken(authObj, schedule.token || '', payload);
+            await NotificationService.sendToToken(authObj, schedule.token || '', payload, undefined, undefined, schedule.data);
           }
 
           // Remove after sending
@@ -830,6 +929,9 @@ export default function AdminPanel() {
     topicId: '',
     startTime: '',
     durationHours: '1',
+    durationMinutes: '0',
+    isTesting: false,
+    selectedPlayers: [] as string[],
     type: 'test' as 'test' | 'exam' | 'contest',
     hasTimer: false,
     timerDuration: '30',
@@ -3591,10 +3693,23 @@ export default function AdminPanel() {
                   How to test:
                 </p>
                 <ol className="list-decimal list-inside text-[11px] text-black/50 dark:text-white/40 space-y-1">
-                  <li>Set Target Type above to <strong className="text-primary">Single Player</strong> or <strong className="text-primary">Specific Token</strong>.</li>
-                  <li>Choose the player you are logged into on the Android app.</li>
-                  <li>Click one of the test actions below to send a push directly and trigger action buttons on your device notification bar!</li>
+                  <li>Paste your device's individual Firebase Cloud Messaging (<strong className="text-primary">FCM Token</strong>) into the input box below.</li>
+                  <li>Ensure the Android application is running or in the background on your device.</li>
+                  <li>Click one of the test actions below to send a secure push notification directly to your device!</li>
                 </ol>
+              </div>
+
+              <div className="space-y-1 mb-6">
+                <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Target FCM Token For Test (Isolated Safe Delivery)</label>
+                <div className="relative">
+                  <Zap className="absolute left-4 top-1/2 -translate-y-1/2 text-primary animate-pulse" size={18} />
+                  <input 
+                    value={testFcmToken}
+                    onChange={e => setTestFcmToken(e.target.value)}
+                    className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 pl-12 rounded-2xl font-bold outline-none focus:border-primary text-xs"
+                    placeholder="Enter or paste individual FCM token to receive test push..."
+                  />
+                </div>
               </div>
 
               <div className="flex flex-col gap-3">
@@ -3696,6 +3811,15 @@ export default function AdminPanel() {
                 >
                   <XCircle size={14} />
                   9. Send "Declined Friend" Notification
+                </button>
+
+                <button 
+                  disabled={isSendingNotif || examTestTimer !== null}
+                  onClick={sendTestExamWorkflow}
+                  className="w-full bg-[#fcd34d]/10 hover:bg-[#fcd34d]/20 border border-[#fcd34d]/15 text-[#f59e0b] font-black uppercase tracking-widest py-3.5 rounded-2xl transition-all flex items-center justify-center gap-2 text-xs"
+                >
+                  <Calendar size={14} />
+                  {examTestTimer !== null ? `Exam Starts in ${examTestTimer}s (Do not close)...` : '10. Trigger Scheduled 1-Min Exam Notification (Two-Stage)'}
                 </button>
 
                 {/* Real-time Notification Replies Monitor */}
@@ -4798,23 +4922,43 @@ export default function AdminPanel() {
                         </p>
                      </div>
                   </div>
-                  <button 
-                    onClick={async () => {
-                      const key = prompt("Enter Key Name:");
-                      if (!key) return;
-                      const value = prompt("Enter Value (JSON supported):");
-                      if (value === null) return;
-                      let parsedValue: any = value;
-                      try {
-                        parsedValue = JSON.parse(value);
-                      } catch (e) {}
-                      
-                      await set(ref(db, `${dbExplorerPath.join('/')}/${key}`), parsedValue);
-                    }}
-                    className="bg-primary text-black px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all"
-                  >
-                    <Plus size={14} /> Add Property
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => {
+                        const jsonStr = JSON.stringify(dbExplorerData, null, 2);
+                        const blob = new Blob([jsonStr], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        const pathName = dbExplorerPath.length === 0 ? 'root' : dbExplorerPath.join('_');
+                        a.download = `database_${pathName}_${new Date().toISOString().split('T')[0]}.json`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                      }}
+                      className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all shadow-lg shadow-green-500/20"
+                    >
+                      <Download size={14} /> Download Node JSON
+                    </button>
+                    <button 
+                      onClick={async () => {
+                        const key = prompt("Enter Key Name:");
+                        if (!key) return;
+                        const value = prompt("Enter Value (JSON supported):");
+                        if (value === null) return;
+                        let parsedValue: any = value;
+                        try {
+                          parsedValue = JSON.parse(value);
+                        } catch (e) {}
+                        
+                        await set(ref(db, `${dbExplorerPath.join('/')}/${key}`), parsedValue);
+                      }}
+                      className="bg-primary text-black px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all"
+                    >
+                      <Plus size={14} /> Add Property
+                    </button>
+                  </div>
                </div>
 
                <div className="divide-y divide-black/5 dark:divide-white/5">
@@ -5047,6 +5191,142 @@ export default function AdminPanel() {
                >
                  <Database size={12} />
                  {isImportingJson ? 'Writing to database...' : 'Execute Import'}
+                </button>
+             </div>
+
+             {/* JSON to CSV Maker Utility Panel */}
+             <div className="bg-white dark:bg-[#0a0a0a] border border-black/5 dark:border-white/5 rounded-[2.5rem] p-8 shadow-2xl space-y-6">
+                <div>
+                   <h3 className="font-black text-sm uppercase tracking-tight text-black dark:text-white flex items-center gap-2">
+                     <FileText className="text-[#32befa]" size={18} />
+                     JSON to CSV Maker
+                   </h3>
+                   <p className="text-[9px] text-black/40 dark:text-white/40 uppercase tracking-wider font-bold mt-1">Convert JSON arrays or dictionary nodes into dynamic CSV sheets</p>
+                </div>
+
+                <div className="space-y-4">
+                   <div className="flex justify-between items-center px-1">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-black/45 dark:text-white/45 block">Input JSON Code</label>
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          if (dbExplorerData) {
+                            setCsvMakerText(JSON.stringify(dbExplorerData, null, 2));
+                            setCsvMakerError('');
+                          } else {
+                            setCsvMakerError('Current explorer path has no active data.');
+                          }
+                        }}
+                        className="text-[8px] bg-primary/15 text-primary hover:bg-primary hover:text-black font-black uppercase tracking-widest px-2 py-1 rounded transition-all"
+                      >
+                        ⚡ Feed Active Node Data ({dbExplorerPath.length === 0 ? 'ROOT' : dbExplorerPath[dbExplorerPath.length - 1]})
+                      </button>
+                   </div>
+                   <textarea 
+                     value={csvMakerText}
+                     onChange={e => {
+                       setCsvMakerText(e.target.value);
+                       setCsvMakerError('');
+                     }}
+                     placeholder={`[\n  { "name": "Player 1", "score": 25 },\n  { "name": "Player 2", "score": 40 }\n]\nOR\n{\n  "id1": { "name": "Player A", "xp": 10 },\n  "id2": { "name": "Player B", "xp": 20 }\n}`}
+                     className="w-full h-44 bg-black/5 dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-mono text-[10px] text-slate-800 dark:text-slate-200 outline-none focus:border-[#32befa] transition-all resize-none animate-none"
+                   />
+                   {csvMakerError && (
+                     <p className="text-[9px] font-bold text-red-500 pl-1 line-clamp-2">
+                       Error: {csvMakerError}
+                     </p>
+                   )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!csvMakerText.trim()) {
+                      setCsvMakerError('Please provide JSON code first.');
+                      return;
+                    }
+                    try {
+                      // Custom flattener for dictionary and lists
+                      const jsonToCsv = (jsonInput: string): string => {
+                        const parsed = JSON.parse(jsonInput);
+                        let rows: any[] = [];
+                        if (Array.isArray(parsed)) {
+                          rows = parsed;
+                        } else if (typeof parsed === 'object' && parsed !== null) {
+                          const values = Object.values(parsed);
+                          if (values.every(v => typeof v === 'object' && v !== null)) {
+                            rows = Object.entries(parsed).map(([key, value]: [string, any]) => ({
+                              id: key,
+                              ...value
+                            }));
+                          } else {
+                            rows = [parsed];
+                          }
+                        } else {
+                          throw new Error("JSON must be an array of objects or an object dictionary.");
+                        }
+
+                        if (rows.length === 0) return "";
+
+                        const allKeys = new Set<string>();
+                        rows.forEach(row => {
+                          if (typeof row === 'object' && row !== null) {
+                            Object.keys(row).forEach(k => allKeys.add(k));
+                          }
+                        });
+
+                        const headers = Array.from(allKeys);
+                        const csvRows = [headers.join(',')];
+
+                        rows.forEach(row => {
+                          const values = headers.map(header => {
+                            let val = row[header];
+                            if (val === undefined || val === null) {
+                              val = "";
+                            } else if (typeof val === 'object') {
+                              val = JSON.stringify(val);
+                            } else {
+                              val = String(val);
+                            }
+                            const escaped = val.replace(/"/g, '""');
+                            return `"${escaped}"`;
+                          });
+                          csvRows.push(values.join(','));
+                        });
+
+                        return csvRows.join('\n');
+                      };
+
+                      const csvContent = jsonToCsv(csvMakerText);
+                      if (!csvContent) {
+                        setCsvMakerError('Empty CSV generated.');
+                        return;
+                      }
+                      
+                      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                      const url = URL.createObjectURL(blob);
+                      const link = document.createElement("a");
+                      link.setAttribute("href", url);
+                      link.setAttribute("download", `converted_data_${new Date().toISOString().split('T')[0]}.csv`);
+                      link.style.visibility = 'hidden';
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                      setCsvMakerError('');
+                    } catch (err: any) {
+                      setCsvMakerError(err.message);
+                    }
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-4 bg-[#32befa] hover:bg-opacity-90 text-black rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-lg shadow-[#32befa]/20"
+                >
+                  <Download size={12} />
+                  Convert & Download CSV
+                </button>
+             </div>
+
+             <div className="hidden">
+                <button>
+                  {isImportingJson ? 'Writing to database...' : 'Execute Import'}
                </button>
             </div>
           </div>
@@ -5903,18 +6183,22 @@ export default function AdminPanel() {
         );
       case 'events':
         const addEvent = async () => {
-          if (!newEvent.title || !newEvent.topicId || !newEvent.startTime) {
+          const durationHours = parseInt(newEvent.durationHours) || 0;
+          const durationMinutes = parseInt(newEvent.durationMinutes) || 0;
+          const isImmediate = !newEvent.startTime && !newEvent.endTime && (durationHours > 0 || durationMinutes > 0);
+
+          if (!newEvent.title || !newEvent.topicId || (!newEvent.startTime && !isImmediate)) {
             await alert({
               title: "Incomplete Fields",
-              description: 'Fill all fields',
+              description: 'Fill all fields. (To start immediately, leave Start and End times blank and configure Duration).',
               type: 'error'
             });
             return;
           }
           const eventId = `event-${Date.now()}`;
-          const startTime = new Date(newEvent.startTime).getTime();
-          // Use end time if provided, otherwise fallback to duration calculation
-          let endTime = newEvent.endTime ? new Date(newEvent.endTime).getTime() : (startTime + (parseInt(newEvent.durationHours) * 60 * 60 * 1000));
+          const startTime = newEvent.startTime ? new Date(newEvent.startTime).getTime() : Date.now();
+          const totalDurationMs = (durationHours * 60 * 60 * 1000) + (durationMinutes * 60 * 1000);
+          let endTime = newEvent.endTime ? new Date(newEvent.endTime).getTime() : (startTime + totalDurationMs);
           
           const event: Event = {
             id: eventId,
@@ -5931,12 +6215,84 @@ export default function AdminPanel() {
             certificateFooter: newEvent.certificateFooter,
             certificateColor: newEvent.certificateColor || '#32befa',
             certificateLayout: newEvent.certificateLayout,
-            createdAt: Date.now()
+            createdAt: Date.now(),
+            isImmediate: isImmediate,
+            isTesting: newEvent.isTesting,
+            selectedPlayers: newEvent.selectedPlayers
           };
           
           await set(ref(db, `events/${eventId}`), event);
+
+          // Send FCM notifications instantly for immediate events or testing events
+          if ((isImmediate || newEvent.isTesting) && serviceAccount) {
+            try {
+              const regTitle = newEvent.isTesting 
+                ? `[TESTING MODE] New Exam: ${event.title}` 
+                : `New Exam: ${event.title}`;
+              const regBody = newEvent.isTesting 
+                ? `Testing Event is active. Tap to view and test.` 
+                : `Exam is starting immediately! Tap REGISTER NOW to join.`;
+              const regPushData = {
+                action_type: "exam_registration",
+                examId: eventId,
+                title: regTitle,
+                body: regBody
+              };
+
+              const tokensSnap = await get(ref(db, 'fcmTokens'));
+              let targetTokens: string[] = [];
+
+              if (tokensSnap.exists()) {
+                const allTokensVal = tokensSnap.val();
+                
+                if (newEvent.isTesting) {
+                  // Determine allowed notification recipients
+                  const allowedUserIds = new Set<string>();
+                  if (newEvent.selectedPlayers && newEvent.selectedPlayers.length > 0) {
+                    newEvent.selectedPlayers.forEach(id => allowedUserIds.add(id));
+                  } else {
+                    // Default solely to the Admin creating/testing this event if none selected
+                    allowedUserIds.add(adminUser?.id || '');
+                  }
+
+                  Object.entries(allTokensVal).forEach(([userId, userMap]: [string, any]) => {
+                    if (allowedUserIds.has(userId)) {
+                      const tokens = NotificationService.getTokensFromValue(userMap);
+                      tokens.forEach(t => targetTokens.push(t));
+                    }
+                  });
+                } else {
+                  // Standard immediate broadcast: collect all users' tokens
+                  const uniqueTokens = new Set<string>();
+                  Object.values(allTokensVal).forEach((userMap: any) => {
+                    const tokens = NotificationService.getTokensFromValue(userMap);
+                    tokens.forEach(t => uniqueTokens.add(t));
+                  });
+                  targetTokens = Array.from(uniqueTokens);
+                }
+              }
+
+              // Only broadcast globally to all users if NOT under testing mode!
+              if (!newEvent.isTesting) {
+                await NotificationService.sendToAll(serviceAccount, regTitle, regBody, undefined, regPushData);
+              }
+
+              // Send to resolved individual target devices
+              for (const token of targetTokens) {
+                try {
+                  await NotificationService.sendToToken(serviceAccount, token, regTitle, regBody, undefined, regPushData);
+                } catch (err) {
+                  // silent error
+                }
+              }
+            } catch (notifErr) {
+              console.error("Failed sending immediate event notifications:", notifErr);
+            }
+          }
+
           setNewEvent({ 
-            title: '', description: '', topicId: '', startTime: '', endTime: '', durationHours: '1', type: 'test',
+            title: '', description: '', topicId: '', startTime: '', endTime: '', durationHours: '1', durationMinutes: '0', 
+            isTesting: false, selectedPlayers: [], type: 'test',
             hasTimer: false, timerDuration: '30', certificateTitle: 'CERTIFICATE OF ACHIEVEMENT',
             certificateSubtitle: 'This is to certify that', certificateFooter: 'Rahee Quiz Team',
             certificateColor: '#32befa',
@@ -6072,7 +6428,7 @@ export default function AdminPanel() {
                             />
                          </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         <div className="space-y-1">
                            <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Duration (Hours)</label>
                            <input 
@@ -6080,6 +6436,18 @@ export default function AdminPanel() {
                              value={newEvent.durationHours}
                              onChange={e => setNewEvent({...newEvent, durationHours: e.target.value})}
                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary"
+                           />
+                        </div>
+                        <div className="space-y-1">
+                           <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Duration (Minutes)</label>
+                           <input 
+                             type="number"
+                             value={newEvent.durationMinutes || '0'}
+                             onChange={e => setNewEvent({...newEvent, durationMinutes: e.target.value})}
+                             className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary"
+                             min="0"
+                             max="59"
+                             placeholder="Minutes"
                            />
                         </div>
                         <div className="space-y-1">
@@ -6104,6 +6472,52 @@ export default function AdminPanel() {
                               <input type="checkbox" checked={newEvent.hasTimer} onChange={e => setNewEvent({...newEvent, hasTimer: e.target.checked})} className="sr-only peer" />
                               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
                            </label>
+                        </div>
+
+                        {/* Testing Mode controls */}
+                        <div className="pt-4 border-t border-black/5 dark:border-white/5 space-y-4">
+                           <div className="flex items-center justify-between px-2">
+                              <div>
+                                 <span className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 block">Testing Exam / Event</span>
+                                 <span className="text-[8px] text-black/40 dark:text-white/40 block mt-0.5">If active, only selected players see this event on their screen. If no players are selected, ONLY you (Admin) can see and test it.</span>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                 <input type="checkbox" checked={newEvent.isTesting} onChange={e => setNewEvent({...newEvent, isTesting: e.target.checked})} className="sr-only peer" />
+                                 <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-[#32befa]"></div>
+                              </label>
+                           </div>
+                           {newEvent.isTesting && (
+                             <div className="space-y-2 bg-black/5 p-4 rounded-2xl border border-black/5 dark:border-white/5">
+                                <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2 block">Assign to Selected Players</label>
+                                <div className="max-h-40 overflow-y-auto space-y-1 border border-black/10 dark:border-white/10 rounded-xl p-2 bg-white dark:bg-black">
+                                   {users.filter(u => !u.isBot).map(user => {
+                                      const isSelected = newEvent.selectedPlayers?.includes(user.id) || false;
+                                      return (
+                                        <label key={`test-p-${user.id}`} className="flex items-center gap-2 px-2 py-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg cursor-pointer text-xs font-bold text-black dark:text-white">
+                                           <input 
+                                             type="checkbox"
+                                             checked={isSelected}
+                                             onChange={() => {
+                                               const currentSelected = newEvent.selectedPlayers || [];
+                                               const updated = isSelected 
+                                                 ? currentSelected.filter(id => id !== user.id)
+                                                 : [...currentSelected, user.id];
+                                               setNewEvent({...newEvent, selectedPlayers: updated});
+                                             }}
+                                             className="rounded border-black/10 text-[#32befa] focus:ring-[#32befa]"
+                                           />
+                                           <span>{user.name} (@{user.username})</span>
+                                        </label>
+                                      );
+                                   })}
+                                </div>
+                                <p className="text-[8px] text-[#32befa] uppercase tracking-wider font-extrabold px-2">
+                                  {(!newEvent.selectedPlayers || newEvent.selectedPlayers.length === 0) 
+                                    ? "⚠ No players selected: Only Admin can see notifications and test it" 
+                                    : `Selected: ${newEvent.selectedPlayers.length} custom receiver(s)`}
+                                </p>
+                             </div>
+                           )}
                         </div>
                         {newEvent.hasTimer && (
                           <div className="space-y-1">
@@ -7196,7 +7610,7 @@ export default function AdminPanel() {
                        await update(ref(db, 'settings'), { livesEnabledForAll: newState });
                      }}
                      className={cn(
-                       "w-full py-6 rounded-3xl font-black uppercase tracking-widest text-xs transition-all border shadow-lg",
+                       "w-full py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all border shadow-lg",
                        settings?.livesEnabledForAll 
                          ? "bg-green-500 text-white border-green-400 shadow-green-500/20" 
                          : "bg-red-500 text-white border-red-400 shadow-red-500/20"
@@ -7204,6 +7618,26 @@ export default function AdminPanel() {
                    >
                      {settings?.livesEnabledForAll ? 'SYSTEM LIVES ENABLED' : 'SYSTEM LIVES DISABLED'}
                    </button>
+
+                   <div className="pt-4 border-t border-black/5 dark:border-white/5 space-y-2">
+                     <p className="text-xs font-bold text-black/60 dark:text-white/60 leading-relaxed">
+                       Allow players to buy extra lives from the Shop using coins.
+                     </p>
+                     <button 
+                       onClick={async () => {
+                         const newState = !settings?.shopLivesEnabled;
+                         await update(ref(db, 'settings'), { shopLivesEnabled: newState });
+                       }}
+                       className={cn(
+                         "w-full py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all border shadow-lg",
+                         settings?.shopLivesEnabled 
+                           ? "bg-emerald-500 text-white border-emerald-400 shadow-emerald-500/20" 
+                           : "bg-red-500 text-white border-red-400 shadow-red-500/20"
+                       )}
+                     >
+                       {settings?.shopLivesEnabled ? 'SHOP LIVES ENABLED' : 'SHOP LIVES DISABLED'}
+                     </button>
+                   </div>
                 </div>
               </div>
 

@@ -10,7 +10,7 @@ import { translations } from '../translations';
 import { cn } from '../lib/utils';
 
 export default function Shop({ onClose, language }: { onClose: () => void, language: string }) {
-  const { currentUser } = useUser();
+  const { currentUser, settings } = useUser();
   const { alert } = useDialog();
   const [couponCode, setCouponCode] = useState('');
   const [isRedeeming, setIsRedeeming] = useState(false);
@@ -238,33 +238,35 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
         </section>
 
         {/* Lives Section */}
-        <section id="shop-lives" className="space-y-4">
-          <p className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 px-2">Lives Refill</p>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {livesPacks.map((pack, i) => (
-              <motion.button 
-                key={pack.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.3 + i * 0.1 }}
-                onClick={() => buyLives(pack.count, pack.cost)}
-                className="p-6 bg-red-500/5 dark:bg-red-500/10 rounded-3xl border border-red-500/10 hover:border-red-500/30 transition-all text-center space-y-4 group"
-              >
-                <div className="w-16 h-16 bg-red-500/20 rounded-2xl flex items-center justify-center text-red-500 mx-auto group-hover:scale-110 transition-transform">
-                  <Heart size={32} className="fill-red-500" />
-                </div>
-                <div>
-                   <p className="text-xl font-black text-black dark:text-white">+{pack.count} {pack.count === 1 ? 'Life' : 'Lives'}</p>
-                   {pack.label && <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">{pack.label}</p>}
-                </div>
-                <div className="flex items-center justify-center gap-2 py-3 bg-black/5 dark:bg-white/10 rounded-xl text-black dark:text-white font-black text-xs">
-                   <Coins size={14} className="text-primary italic" />
-                   {pack.cost}
-                </div>
-              </motion.button>
-            ))}
-          </div>
-        </section>
+        {settings?.shopLivesEnabled && (
+          <section id="shop-lives" className="space-y-4">
+            <p className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 px-2">Lives Refill</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {livesPacks.map((pack, i) => (
+                <motion.button 
+                  key={pack.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.3 + i * 0.1 }}
+                  onClick={() => buyLives(pack.count, pack.cost)}
+                  className="p-6 bg-red-500/5 dark:bg-red-500/10 rounded-3xl border border-red-500/10 hover:border-red-500/30 transition-all text-center space-y-4 group"
+                >
+                  <div className="w-16 h-16 bg-red-500/20 rounded-2xl flex items-center justify-center text-red-500 mx-auto group-hover:scale-110 transition-transform">
+                    <Heart size={32} className="fill-red-500" />
+                  </div>
+                  <div>
+                     <p className="text-xl font-black text-black dark:text-white">+{pack.count} {pack.count === 1 ? 'Life' : 'Lives'}</p>
+                     {pack.label && <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">{pack.label}</p>}
+                  </div>
+                  <div className="flex items-center justify-center gap-2 py-3 bg-black/5 dark:bg-white/10 rounded-xl text-black dark:text-white font-black text-xs">
+                     <Coins size={14} className="text-primary italic" />
+                     {pack.cost}
+                  </div>
+                </motion.button>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Coupons Section */}
         <section className="space-y-4">

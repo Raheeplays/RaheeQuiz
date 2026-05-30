@@ -27,7 +27,43 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
   const [timeLimit, setTimeLimit] = useState(16);
   const [isTeamMode, setIsTeamMode] = useState(false);
   const [teamSize, setTeamSize] = useState<2 | 3 | 4>(2);
-  const [prefOpponent, setPrefOpponent] = useState<'any' | 'bot'>('any');
+  const [matchmakingRoomId, setMatchmakingRoomId] = useState<string | null>(null);
+
+  const cancelMatchmaking = async () => {
+    if (matchmakingRoomId) {
+      await remove(ref(db, `matches/${matchmakingRoomId}`));
+      setMatchmakingRoomId(null);
+    }
+    setMatching(false);
+  };
+
+  useEffect(() => {
+    if (matchmakingRoomId) {
+      const roomRef = ref(db, `matches/${matchmakingRoomId}`);
+      const unsubscribe = onValue(roomRef, async (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.val();
+          if (data.status === 'playing') {
+            setMatching(false);
+            setMatchmakingRoomId(null);
+            onStartMatch(matchmakingRoomId, false);
+            return;
+          }
+          const participants = Object.values(data.participants || {}) as MatchProgress[];
+          if (participants.length >= 2) {
+            await update(roomRef, {
+              status: 'playing',
+              startTime: Date.now()
+            });
+            setMatching(false);
+            setMatchmakingRoomId(null);
+            onStartMatch(matchmakingRoomId, false);
+          }
+        }
+      });
+      return () => unsubscribe();
+    }
+  }, [matchmakingRoomId]);
 
   useEffect(() => {
     if (lobbyRoom) {
@@ -209,33 +245,25 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
     onStartMatch(lobbyRoom.id, true); // Treat as bot-inclusive if we filled/started
   };
 
-  const createBotMatchRoom = async () => {
+  const createPublicPendingRoom = async () => {
     if (!currentUser) return;
     const roomRef = push(ref(db, 'matches'));
     const roomId = roomRef.key!;
-    const botId = 'bot_' + Math.random().toString(36).substr(2, 5);
-    const randomBotUser = allUsers?.filter(u => u.isBot).sort(() => Math.random() - 0.5)[0];
-    const botName = randomBotUser?.name || 'Bot Elite';
-
-    const room: MatchRoom = {
+    const room: any = {
       id: roomId,
       topicId: currentUser.selectedTopicId || 'general',
       hostId: currentUser.id,
       participants: {
-        [currentUser.id]: { userId: currentUser.id, userName: currentUser.name, score: 0, currentIndex: 0, finished: false, accuracy: 0 },
-        [botId]: { userId: botId, userName: botName, score: 0, currentIndex: 0, finished: false, accuracy: 0, isBot: true }
+        [currentUser.id]: { userId: currentUser.id, userName: currentUser.name, score: 0, currentIndex: 0, finished: false, accuracy: 0 }
       },
-      status: 'playing',
+      status: 'waiting',
       timerEnabled: false,
       whoFirstMode: false,
       totalTime: 10,
-      startTime: Date.now(),
       createdAt: Date.now()
     };
-
     await set(roomRef, room);
-    setMatching(false);
-    onStartMatch(roomId, true);
+    setMatchmakingRoomId(roomId);
   };
 
   const startOnlineMatch = async () => {
@@ -243,19 +271,13 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
     setMatching(true);
     setError('');
 
-    if (prefOpponent === 'bot') {
-       setTimeout(async () => {
-          await createBotMatchRoom();
-       }, 1500);
-       return;
-    }
-
     try {
        const matchesSnap = await get(ref(db, 'matches'));
        if (matchesSnap.exists()) {
           const matches = matchesSnap.val();
           const joinable = Object.values(matches).find((m: any) => 
              m.status === 'waiting' && 
+             !m.joinCode &&
              m.hostId !== currentUser.id &&
              Object.keys(m.participants || {}).length < (m.isTeamBattle ? (m.teamSize * 2) : 2)
           ) as any;
@@ -269,15 +291,15 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
              }
 
              const updates = {
-               [`participants/${currentUser.id}`]: {
-                 userId: currentUser.id,
-                 userName: currentUser.name,
-                 score: 0,
-                 currentIndex: 0,
-                 finished: false,
-                 accuracy: 0,
-                 team: assignedTeam
-               }
+                [`participants/${currentUser.id}`]: {
+                  userId: currentUser.id,
+                  userName: currentUser.name,
+                  score: 0,
+                  currentIndex: 0,
+                  finished: false,
+                  accuracy: 0,
+                  team: assignedTeam
+                }
              };
              await update(ref(db, `matches/${joinable.id}`), updates);
              setMatching(false);
@@ -289,9 +311,8 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
        console.error("Matchmaking error: ", e);
     }
 
-    setTimeout(async () => {
-       await createBotMatchRoom();
-    }, 4000);
+    // Since no waiting public match is available, host a public matching room
+    await createPublicPendingRoom();
   };
 
   if (!currentUser) return null;
@@ -652,28 +673,6 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
                     <Zap size={16} className="text-[#32befa]" />
                     <h3 className="text-[10px] font-black uppercase tracking-widest text-white/40">Online Match</h3>
                   </div>
-                  <div className="flex bg-white/5 border border-white/5 rounded-lg p-0.5">
-                    <button
-                      type="button"
-                      onClick={() => setPrefOpponent('any')}
-                      className={cn(
-                        "px-2.5 py-1 rounded text-[8px] font-black uppercase tracking-wider transition-all",
-                        prefOpponent === 'any' ? "bg-[#32befa] text-black" : "text-white/40 hover:text-white"
-                      )}
-                    >
-                      Real Pref
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPrefOpponent('bot')}
-                      className={cn(
-                        "px-2.5 py-1 rounded text-[8px] font-black uppercase tracking-wider transition-all",
-                        prefOpponent === 'bot' ? "bg-amber-400 text-black" : "text-white/40 hover:text-white"
-                      )}
-                    >
-                      Bot Only
-                    </button>
-                  </div>
                 </div>
                 
                 <button 
@@ -683,7 +682,7 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
                   <div className="relative z-10 text-left">
                     <h4 className="text-2xl font-black mb-1">Quick Battle</h4>
                     <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest">
-                      {prefOpponent === 'any' ? "Match with global opponents (bot fallback)" : "Training with instant bot sparring"}
+                      Find and battle with active system users
                     </p>
                   </div>
                   <div className="relative z-10 w-16 h-16 bg-[#32befa]/10 rounded-2xl flex items-center justify-center text-[#32befa] group-hover:scale-110 group-hover:rotate-12 transition-all">

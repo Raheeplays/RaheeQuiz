@@ -9,7 +9,7 @@ import { Bell, Swords, Trophy, X, Clock, ChevronLeft, ChevronRight } from 'lucid
 import { cn } from '../lib/utils';
 import { NotificationService } from '../services/notificationService';
 import { LeaderboardService } from '../services/leaderboardService';
-import { logActivity } from '../services/activityService';
+import { logActivity } from '../activityService';
 
 export default function NotificationManager() {
   const { currentUser, settings } = useUser();

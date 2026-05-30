@@ -10,9 +10,12 @@ import { cn } from '../lib/utils';
 import QuizScreen from './QuizScreen';
 import { generateCertificate } from '../utils/certificate';
 import { downloadQuestionPaperPDF, downloadAnswerSheetPDF } from '../utils/quizDownload';
+import { useNotifications } from '../contexts/NotificationContext';
+import { NotificationService } from '../services/notificationService';
 
 export default function Events() {
   const [events, setEvents] = useState<Event[]>([]);
+  const { serviceAccount } = useNotifications();
   const [topics, setTopics] = useState<Topic[]>([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(Date.now());
@@ -30,6 +33,205 @@ export default function Events() {
   const [reviewFilter, setReviewFilter] = useState<'all' | 'correct' | 'incorrect' | 'unattempted'>('all');
   const [downloadingEventId, setDownloadingEventId] = useState<string | null>(null);
 
+  const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
+  const [previewPdfTitle, setPreviewPdfTitle] = useState<string>('');
+  const [showPdfModal, setShowPdfModal] = useState<boolean>(false);
+  const [holdingId, setHoldingId] = useState<string | null>(null);
+  const pressTimerRef = React.useRef<any>(null);
+  const isHoldingRef = React.useRef<boolean>(false);
+
+  // In-app high fidelity native document preview states
+  const [expandedDocsEventId, setExpandedDocsEventId] = useState<string | null>(null);
+  const [previewQuizzes, setPreviewQuizzes] = useState<Quiz[]>([]);
+  const [previewEvent, setPreviewEvent] = useState<Event | null>(null);
+  const [previewType, setPreviewType] = useState<'omr' | 'question_paper' | 'answer_sheet' | 'certificate' | null>(null);
+  const [previewResults, setPreviewResults] = useState<any>(null);
+  const [previewTopicPath, setPreviewTopicPath] = useState<string>('');
+
+  const startDocHold = (event: Event, type: 'omr' | 'question_paper' | 'answer_sheet', buttonId: string) => {
+    isHoldingRef.current = false;
+    setHoldingId(buttonId);
+    
+    pressTimerRef.current = setTimeout(() => {
+      isHoldingRef.current = true;
+      setHoldingId(null);
+      processDocumentAction(event, type, 'download');
+    }, 600);
+  };
+
+  const endDocHold = (event: Event, type: 'omr' | 'question_paper' | 'answer_sheet') => {
+    if (pressTimerRef.current) {
+      clearTimeout(pressTimerRef.current);
+      pressTimerRef.current = null;
+    }
+    setHoldingId(null);
+    
+    if (!isHoldingRef.current) {
+      processDocumentAction(event, type, 'preview');
+    }
+    isHoldingRef.current = false;
+  };
+
+  const cancelDocHold = () => {
+    if (pressTimerRef.current) {
+      clearTimeout(pressTimerRef.current);
+      pressTimerRef.current = null;
+    }
+    setHoldingId(null);
+    isHoldingRef.current = false;
+  };
+
+  const processDocumentAction = async (event: Event, type: 'omr' | 'question_paper' | 'answer_sheet' | 'certificate', actionType: 'preview' | 'download') => {
+    if (downloadingEventId) return;
+    setDownloadingEventId(event.id);
+    try {
+      const match = findTopicAndPathRecursive(topics, event.topicId);
+      const previewOnly = actionType === 'preview';
+      let doc: any = null;
+      let omrResult: any = null;
+      let quizzesList: Quiz[] = [];
+
+      if (type === 'certificate') {
+        if (!currentUser) return;
+        const result = event.results?.[currentUser.id] || {
+          score: 8,
+          total: 10,
+          completedAt: Date.now()
+        };
+        omrResult = result;
+        doc = generateCertificate({
+          userName: currentUser.name || 'Player',
+          score: result.score,
+          total: result.total,
+          date: new Date(result.completedAt).toLocaleDateString(),
+          topicName: match?.path.join(' / ') || 'Special Tournament',
+          certificateTitle: event.certificateTitle,
+          certificateSubtitle: event.certificateSubtitle,
+          certificateFooter: event.certificateFooter,
+          certificateColor: event.certificateColor,
+          previewOnly
+        });
+
+        if (previewOnly && doc) {
+          const blob = doc.output('blob');
+          const url = URL.createObjectURL(blob);
+          setPreviewPdfUrl(url);
+          setPreviewPdfTitle(`${event.title} - Certificate of Achievement`);
+          setPreviewQuizzes([]);
+          setPreviewEvent(event);
+          setPreviewType(type);
+          setPreviewTopicPath(match?.path.join(' / ') || 'Special Tournament');
+          setPreviewResults(omrResult);
+          setShowPdfModal(true);
+        }
+      } else {
+        const quizzesRef = ref(db, `topicQuizzes/${event.topicId}`);
+        const snap = await get(quizzesRef);
+        if (snap.exists()) {
+          quizzesList = Object.values(snap.val()) as Quiz[];
+
+          if (type === 'question_paper') {
+            doc = downloadQuestionPaperPDF({
+              eventTitle: event.title,
+              topicName: match?.path.join(' / ') || 'General Topic',
+              quizzes: quizzesList,
+              language: 'en',
+              previewOnly
+            });
+          } else if (type === 'omr') {
+            if (!currentUser) return;
+            let result: any = event.results?.[currentUser.id];
+            if (!result) {
+              const mockAnswers = quizzesList.map((q, idx) => {
+                const isAttempted = idx % 5 !== 4;
+                const isCorrect = idx % 4 !== 3;
+                const userAnswerIndex = isCorrect ? q.correctAnswerIndex : ((q.correctAnswerIndex + 1) % (q.options?.en?.length || 4));
+                return {
+                  quizId: q.id,
+                  userAnswerIndex: isAttempted ? userAnswerIndex : -1,
+                  isCorrect: isAttempted && isCorrect
+                };
+              });
+              result = {
+                score: mockAnswers.filter(a => a.isCorrect && a.userAnswerIndex !== -1).length,
+                total: quizzesList.length || 10,
+                completedAt: Date.now(),
+                answers: mockAnswers
+              };
+            }
+            omrResult = result;
+            doc = downloadAnswerSheetPDF({
+              eventTitle: event.title,
+              topicName: match?.path.join(' / ') || 'General Topic',
+              quizzes: quizzesList,
+              candidateName: currentUser.name || 'Player',
+              candidateUsername: currentUser.username,
+              results: result,
+              language: 'en',
+              previewOnly
+            });
+          } else if (type === 'answer_sheet') {
+            doc = downloadAnswerSheetPDF({
+              eventTitle: event.title,
+              topicName: match?.path.join(' / ') || 'General Topic',
+              quizzes: quizzesList,
+              candidateName: 'OFFICIAL ANSWER KEYS',
+              candidateUsername: 'master_key',
+              results: {
+                score: quizzesList.length,
+                total: quizzesList.length,
+                completedAt: Date.now(),
+                answers: quizzesList.map(q => ({
+                  quizId: q.id,
+                  userAnswerIndex: q.correctAnswerIndex,
+                  isCorrect: true
+                }))
+              },
+              language: 'en',
+              previewOnly
+            });
+          }
+
+          if (previewOnly && doc) {
+            const blob = doc.output('blob');
+            const url = URL.createObjectURL(blob);
+            setPreviewPdfUrl(url);
+            setPreviewPdfTitle(`${event.title} - ${type === 'omr' ? 'OMR Sheet' : type === 'question_paper' ? 'Question Paper' : 'Official Answer Sheet'}`);
+            
+            setPreviewQuizzes(quizzesList);
+            setPreviewEvent(event);
+            setPreviewType(type);
+            setPreviewTopicPath(match?.path.join(' / ') || 'General Topic');
+            if (type === 'omr') {
+              setPreviewResults(omrResult);
+            } else if (type === 'answer_sheet') {
+              setPreviewResults({
+                score: quizzesList.length,
+                total: quizzesList.length,
+                completedAt: Date.now(),
+                answers: quizzesList.map(q => ({
+                  quizId: q.id,
+                  userAnswerIndex: q.correctAnswerIndex,
+                  isCorrect: true
+                }))
+              });
+            } else {
+              setPreviewResults(null);
+            }
+            
+            setShowPdfModal(true);
+          }
+        } else {
+          alert("No questions found for this exam.");
+        }
+      }
+    } catch (e) {
+      console.error("Failed to process document", e);
+    } finally {
+      setDownloadingEventId(null);
+    }
+  };
+
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
@@ -40,9 +242,18 @@ export default function Events() {
     const unsubscribeEvents = onValue(eventsRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-        const eventList = Object.entries(data)
+        let eventList = Object.entries(data)
           .filter(([_, val]) => val !== null)
           .map(([id, val]: [string, any]) => ({ ...val, id })) as Event[];
+
+        // Filter testing events: only visible to Admin or explicitly allowed players
+        eventList = eventList.filter(event => {
+          if (!event.isTesting) return true;
+          if (currentUser?.role === 'admin') return true;
+          if (event.selectedPlayers?.includes(currentUser?.id || '')) return true;
+          return false;
+        });
+
         setEvents(eventList.sort((a, b) => a.startTime - b.startTime));
       } else {
         setEvents([]);
@@ -51,7 +262,7 @@ export default function Events() {
     });
 
     const topicsRef = ref(db, 'topics');
-    const unsubscribeTopics = onValue(topicsRef, (snapshot) => {
+    const unsubscribeTopics = onValue(unsubscribeEvents ? topicsRef : topicsRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
         setTopics(Object.values(data) as Topic[]);
@@ -62,7 +273,7 @@ export default function Events() {
       unsubscribeEvents();
       unsubscribeTopics();
     };
-  }, []);
+  }, [currentUser]);
 
   const joinEvent = async (eventId: string) => {
     if (!currentUser) return;
@@ -71,6 +282,35 @@ export default function Events() {
       await update(ref(db, `events/${eventId}/participants`), {
         [currentUser.id]: true
       });
+
+      // Send start and skip exam notifications quickly for immediate starting event
+      const targetEvent = events.find(e => e.id === eventId);
+      if (targetEvent && targetEvent.isImmediate && serviceAccount) {
+        try {
+          const tokensSnap = await get(ref(db, `fcmTokens/${currentUser.id}`));
+          if (tokensSnap.exists()) {
+            const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
+            const startTitle = `Exam Live: ${targetEvent.title}`;
+            const startBody = `The exam has started! Tap START EXAM or SKIP EXAM.`;
+            const startPushData = {
+              action_type: "exam_started",
+              examId: eventId,
+              title: startTitle,
+              body: startBody
+            };
+
+            for (const token of tokens) {
+              try {
+                await NotificationService.sendToToken(serviceAccount, token, startTitle, startBody, undefined, startPushData);
+              } catch (e) {
+                console.error("FCM start error for token:", e);
+              }
+            }
+          }
+        } catch (fcmErr) {
+          console.error("FCM quick notifications failed:", fcmErr);
+        }
+      }
     } catch (error) {
       console.error("Error joining event:", error);
     }
@@ -374,10 +614,10 @@ export default function Events() {
                         {isJoined && result && (
                           <button 
                             type="button"
-                            onClick={() => handleDownloadCertificate(event)}
+                            onClick={() => processDocumentAction(event, 'certificate', 'preview')}
                             className="flex items-center gap-1.5 text-primary font-black text-[9px] uppercase tracking-widest hover:underline mt-1 bg-white/5 border border-white/5 hover:border-white/10 px-3 py-1.5 rounded-lg transition-all"
                           >
-                            <Download size={11} />
+                            <Award size={11} />
                             Certificate
                           </button>
                         )}
@@ -406,39 +646,68 @@ export default function Events() {
                 </div>
 
                 {isJoined && (
-                  <div className="mt-6 p-4 rounded-3xl bg-black/5 dark:bg-white/[0.02] border border-black/5 dark:border-white/5 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-black tracking-wider text-primary uppercase">Exam Verification Documents</span>
-                      <span className="text-[9px] font-mono text-black/40 dark:text-white/40">Verified Certificate, OMR & Paper</span>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="mt-6 col-span-full">
+                    {expandedDocsEventId !== event.id ? (
                       <button
                         type="button"
-                        onClick={() => handleDownloadCertificate(event)}
-                        className="bg-primary hover:bg-opacity-90 text-black font-black text-[9px] uppercase tracking-wider py-2.5 px-3 rounded-2xl flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-md shadow-primary/5"
+                        onClick={() => setExpandedDocsEventId(event.id)}
+                        className="w-full bg-white/5 hover:bg-white/10 dark:bg-white/[0.03] dark:hover:bg-white/[0.08] border border-black/10 dark:border-white/5 rounded-2xl py-3.5 px-5 flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-primary hover:text-primary/90 transition-all active:scale-[0.98]"
                       >
-                        <Award size={12} />
-                        Certificate
+                        <span className="flex items-center gap-2">
+                          <FileText size={14} className="text-primary" />
+                          View Exam Documents Card
+                        </span>
+                        <div className="flex items-center gap-1 text-white/40">
+                          <span className="text-[8px] font-mono lowercase">tap to open</span>
+                          <ChevronRight size={14} />
+                        </div>
                       </button>
-                      <button
-                        type="button"
-                        disabled={downloadingEventId === event.id}
-                        onClick={() => fetchEventQuizzesAndDownload(event, 'omr')}
-                        className="bg-black/10 dark:bg-white/5 hover:bg-black/25 dark:hover:bg-white/10 text-black dark:text-white border border-black/10 dark:border-white/10 font-black text-[9px] uppercase tracking-wider py-2.5 px-3 rounded-2xl flex items-center justify-center gap-1.5 active:scale-95 transition-all disabled:opacity-50"
-                      >
-                        <FileText size={12} className="text-primary" />
-                        {downloadingEventId === event.id ? 'Loading OMR...' : 'OMR Sheet'}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={downloadingEventId === event.id}
-                        onClick={() => fetchEventQuizzesAndDownload(event, 'question_paper')}
-                        className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/10 dark:border-emerald-500/20 font-black text-[9px] uppercase tracking-wider py-2.5 px-3 rounded-2xl flex items-center justify-center gap-1.5 active:scale-95 transition-all disabled:opacity-50"
-                      >
-                        <Download size={12} />
-                        {downloadingEventId === event.id ? 'Loading Paper...' : 'Question Paper'}
-                      </button>
-                    </div>
+                    ) : (
+                      <div className="p-4 rounded-3xl bg-black/5 dark:bg-white/[0.02] border border-black/5 dark:border-white/5 space-y-3">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[9px] font-black tracking-wider text-primary uppercase">Exam Verification Documents</span>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedDocsEventId(null)}
+                            className="text-[8px] font-bold text-zinc-400 hover:text-white uppercase tracking-wider bg-white/5 px-2 py-0.5 rounded-lg active:scale-95 transition-all"
+                          >
+                            Hide Card
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => processDocumentAction(event, 'certificate', 'preview')}
+                            className="bg-primary hover:bg-opacity-90 text-black font-black text-[9px] uppercase tracking-wider py-2.5 px-3 rounded-2xl flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-md shadow-primary/5"
+                          >
+                            <Award size={12} />
+                            Certificate
+                          </button>
+                          
+                          <button
+                            type="button"
+                            disabled={downloadingEventId === event.id}
+                            onClick={() => processDocumentAction(event, 'omr', 'preview')}
+                            className="relative bg-black/10 dark:bg-white/5 hover:bg-black/25 dark:hover:bg-white/10 text-black dark:text-white border border-black/10 dark:border-white/10 font-black text-[9px] uppercase tracking-wider py-2.5 px-3 rounded-2xl flex items-center justify-center gap-1.5 active:scale-95 transition-all disabled:opacity-50 overflow-hidden"
+                            title="Tap to View OMR Sheet"
+                          >
+                            <FileText size={12} className="text-primary" />
+                            {downloadingEventId === event.id ? 'Loading...' : 'OMR Sheet'}
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={downloadingEventId === event.id}
+                            onClick={() => processDocumentAction(event, 'question_paper', 'preview')}
+                            className="relative bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/10 dark:border-emerald-500/20 font-black text-[9px] uppercase tracking-wider py-2.5 px-3 rounded-2xl flex items-center justify-center gap-1.5 active:scale-95 transition-all disabled:opacity-50 overflow-hidden"
+                            title="Tap to View Question Paper"
+                          >
+                            <BookOpen size={12} className="text-emerald-500" />
+                            {downloadingEventId === event.id ? 'Loading...' : 'Question Paper'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -574,18 +843,18 @@ export default function Events() {
               <div className="text-center lg:text-left">
                 <h4 className="text-xs font-black text-white/95 uppercase tracking-widest flex items-center justify-center lg:justify-start gap-1.5">
                   <Printer size={13} className="text-primary" />
-                  Verification Documents & Offline Files (PDF)
+                  Verification Documents & Portal Sheets (PDF Preview)
                 </h4>
-                <p className="text-[10px] text-white/40 italic mt-0.5">Download your verified score certificate, custom OMR attempt sheet, and standard question paper</p>
+                <p className="text-[10px] text-white/40 italic mt-0.5">View your verified score certificate, custom OMR attempt sheet, and standard question paper in-app</p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full lg:w-auto">
                 <button
                   type="button"
                   disabled={loadingReview}
-                  onClick={() => handleDownloadCertificate(selectedEventForReview)}
+                  onClick={() => selectedEventForReview && processDocumentAction(selectedEventForReview, 'certificate', 'preview')}
                   className="bg-primary hover:bg-primary/95 text-black disabled:opacity-40 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-md"
-                  title="Download your verified certificate"
+                  title="View your verified certificate"
                 >
                   <Award size={13} />
                   Certificate
@@ -593,10 +862,10 @@ export default function Events() {
 
                 <button
                   type="button"
-                  disabled={loadingReview}
-                  onClick={() => handleDownloadAnswerSheet(selectedEventForReview, reviewQuizzes)}
-                  className="bg-white/5 hover:bg-white/10 active:scale-95 border border-white/5 hover:border-white/10 text-white/90 disabled:opacity-40 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all"
-                  title="Download your custom OMR sheet"
+                  disabled={loadingReview || downloadingEventId === selectedEventForReview?.id}
+                  onClick={() => selectedEventForReview && processDocumentAction(selectedEventForReview, 'omr', 'preview')}
+                  className="relative bg-white/5 hover:bg-white/10 text-white/90 disabled:opacity-40 border border-white/5 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all overflow-hidden"
+                  title="View OMR Sheet"
                 >
                   <FileText size={13} className="text-primary" />
                   OMR Sheet
@@ -604,11 +873,12 @@ export default function Events() {
 
                 <button
                   type="button"
-                  disabled={loadingReview}
-                  onClick={() => handleDownloadQuestionPaper(selectedEventForReview, reviewQuizzes)}
-                  className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 disabled:opacity-40 border border-emerald-500/10 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all"
+                  disabled={loadingReview || downloadingEventId === selectedEventForReview?.id}
+                  onClick={() => selectedEventForReview && processDocumentAction(selectedEventForReview, 'question_paper', 'preview')}
+                  className="relative bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 disabled:opacity-40 border border-emerald-500/10 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all overflow-hidden"
+                  title="View Question Paper"
                 >
-                  <Download size={13} />
+                  <BookOpen size={13} className="text-emerald-400" />
                   Question Paper
                 </button>
               </div>
@@ -846,6 +1116,420 @@ export default function Events() {
               <span>Total Questions: {reviewQuizzes.length}</span>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* Dynamic PDF Preview Modal */}
+      {showPdfModal && (
+        <div className="fixed inset-0 bg-zinc-950 z-[9999] flex flex-col w-screen h-screen">
+          <div className="bg-zinc-900 w-full h-full flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 bg-black/60 border-b border-white/5 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-black uppercase text-white tracking-widest flex items-center gap-2">
+                  <Eye className="text-primary animate-pulse" size={16} />
+                  {previewPdfTitle}
+                </h3>
+                <p className="text-[10px] text-white/40 mt-0.5 uppercase tracking-wider font-mono flex items-center gap-1">In-App Live Document View (No Download Needed)</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowPdfModal(false);
+                  if (previewPdfUrl) {
+                    URL.revokeObjectURL(previewPdfUrl);
+                    setPreviewPdfUrl(null);
+                  }
+                }}
+                className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 text-white/100 hover:text-white flex items-center justify-center transition-all active:scale-95"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Scrollable Document Container */}
+            <div className="flex-1 overflow-y-auto bg-zinc-950 p-2 sm:p-8 selection:bg-primary/25 touch-pan-y" style={{ WebkitOverflowScrolling: 'touch' }}>
+              <div className="w-full min-h-full flex justify-center items-start">
+              {previewType === 'certificate' ? (
+                <div className="relative w-full max-w-4xl border-[12px] border-double border-primary/80 bg-[#fdfdfd] p-6 sm:p-12 text-center flex flex-col items-center justify-center space-y-8 text-zinc-800 min-h-[480px] rounded shadow-2xl">
+                  {/* Watermark Pattern */}
+                  <div className="absolute inset-0 opacity-[0.02] bg-[radial-gradient(#000_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none" />
+                  
+                  <div className="space-y-2">
+                    <Award className="mx-auto text-primary animate-bounce select-none" size={48} />
+                    <h2 className="text-2xl sm:text-4xl font-serif font-black tracking-widest text-zinc-900 uppercase">
+                      {previewEvent?.certificateTitle || 'CERTIFICATE OF ACHIEVEMENT'}
+                    </h2>
+                    <p className="text-xs sm:text-sm font-serif italic text-zinc-500">
+                      {previewEvent?.certificateSubtitle || 'This is to certify that'}
+                    </p>
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="text-3xl sm:text-5xl font-black font-serif italic text-primary tracking-wide select-text">
+                      {currentUser?.name || 'Player'}
+                    </div>
+                    <div className="text-[10px] font-mono tracking-widest text-zinc-400 uppercase">
+                      Candidate ID: @{currentUser?.username || 'player'}
+                    </div>
+                    <div className="w-48 h-0.5 bg-primary/40 mx-auto mt-2" />
+                  </div>
+
+                  <div className="max-w-2xl text-xs sm:text-base leading-relaxed space-y-1 select-text">
+                    <p>has successfully completed the official verified exam on</p>
+                    <p className="font-bold text-zinc-900 text-base sm:text-xl border-y border-zinc-200 py-1 inline-block px-4 font-serif">
+                      {previewEvent?.title || 'RaheeQuiz Competition'}
+                    </p>
+                    <p className="text-xs text-zinc-500 font-mono mt-1">
+                      Topic: {previewTopicPath || 'General Knowledge'}
+                    </p>
+                  </div>
+
+                  <div className="bg-zinc-50 border border-zinc-200 rounded-xl px-6 py-3 text-center space-y-0.5 shadow-sm max-w-sm">
+                    <p className="text-[10px] text-zinc-400 uppercase font-mono tracking-wider font-bold">Accuracy & Grand Score</p>
+                    <p className="text-xl sm:text-2xl font-black text-zinc-900 font-mono select-text">
+                      {previewResults?.score ?? 8} / {previewResults?.total ?? 10} Correct
+                    </p>
+                    <p className="text-[9px] text-zinc-500 font-bold font-mono">
+                      Verification Code: {Math.random().toString(36).substring(2, 10).toUpperCase()}-VERIFIED
+                    </p>
+                  </div>
+
+                  <div className="pt-8 w-full border-t border-zinc-200 grid grid-cols-2 gap-4 text-left font-mono text-[9px] sm:text-xs">
+                    <div>
+                      <p className="text-zinc-400 uppercase font-bold text-[8px]">Issued Date</p>
+                      <p className="font-bold text-zinc-700">{new Date(previewResults?.completedAt || Date.now()).toLocaleDateString()}</p>
+                      <p className="text-[8px] text-zinc-400 mt-1 uppercase">Issued by: Rahee Quiz Team</p>
+                    </div>
+                    <div className="text-right flex flex-col items-end justify-end space-y-1">
+                      <p className="italic font-serif text-[11px] font-bold text-zinc-800 tracking-wider">
+                        {previewEvent?.certificateFooter || 'Rahee Quiz Team'}
+                      </p>
+                      <div className="h-0.5 w-32 bg-zinc-350" />
+                      <p className="text-[8px] text-zinc-400 uppercase font-bold">Authorized Digital Signature</p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="relative w-full max-w-4xl bg-white text-zinc-900 p-6 sm:p-12 rounded shadow-2xl border-[6px] border-double border-zinc-800 text-left font-sans flex flex-col space-y-8 select-text overflow-hidden">
+                
+                {/* Simulated Stamp / Security Watermark */}
+                <div className="absolute inset-0 pointer-events-none opacity-[0.035] flex items-center justify-center select-none rotate-12">
+                  <div className="text-zinc-900 border-[10px] border-zinc-900 font-extrabold text-5xl sm:text-7xl p-8 rounded-full tracking-widest leading-none uppercase">
+                    RAHEE VERIFIED
+                  </div>
+                </div>
+
+                {/* Document Header Branding */}
+                <div className="border-b-4 border-zinc-900 pb-6 text-center space-y-3 relative">
+                  {/* Simulated barcode */}
+                  <div className="absolute top-0 right-0 hidden sm:flex flex-col items-end">
+                    <div className="h-6 w-32 bg-zinc-900" style={{ backgroundImage: "repeating-linear-gradient(90deg, #000, #000 2px, #fff 2px, #fff 4px)" }} />
+                    <span className="text-[7px] font-mono tracking-widest text-zinc-500 mt-1 uppercase">REG-ID-{previewEvent?.id || "999"}</span>
+                  </div>
+
+                  <h1 className="text-3xl font-black tracking-widest text-zinc-900 uppercase">
+                    {previewType === 'question_paper' ? 'OFFICIAL QUESTION PAPER' : previewType === 'omr' ? 'OFFICIAL OMR ANSWER RESPONSES' : 'OFFICIAL ANSWER KEY SHEET'}
+                  </h1>
+                  <p className="text-[11px] font-mono tracking-widest uppercase text-zinc-650 font-bold border-y border-zinc-300 py-1 inline-block">
+                    Official Verification copy • RaheeQuiz.in • SECURE DIGI-COPY
+                  </p>
+                  
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4 text-[11px] font-mono border-t border-dashed border-zinc-300 text-left font-sans">
+                    <div className="bg-zinc-50 p-2 rounded border border-zinc-200">
+                      <span className="block text-[8px] text-zinc-400 uppercase font-bold">Exam Slot</span>
+                      <span className="font-black text-zinc-800">{previewEvent?.title || 'Main Exam'}</span>
+                    </div>
+                    <div className="bg-zinc-50 p-2 rounded border border-zinc-200">
+                      <span className="block text-[8px] text-zinc-400 uppercase font-bold">Subject / Topic</span>
+                      <span className="font-black text-zinc-800 truncate block max-w-full" title={previewTopicPath}>{previewTopicPath || 'General'}</span>
+                    </div>
+                    <div className="bg-zinc-50 p-2 rounded border border-zinc-200">
+                      <span className="block text-[8px] text-zinc-400 uppercase font-bold">Time Allocated</span>
+                      <span className="font-black text-zinc-800">
+                        {previewEvent?.endTime && previewEvent?.startTime 
+                          ? `${Math.round((previewEvent.endTime - previewEvent.startTime) / 60000)} Mins` 
+                          : '60 Mins'}
+                      </span>
+                    </div>
+                    <div className="bg-zinc-50 p-2 rounded border border-zinc-200">
+                      <span className="block text-[8px] text-zinc-400 uppercase font-bold">Total Questions</span>
+                      <span className="font-black text-zinc-800">{previewQuizzes.length} Questions</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Candidate Copy Header (Only for OMR Sheet) */}
+                {previewType === 'omr' && (
+                  <div className="bg-zinc-50 border-2 border-zinc-800 rounded-lg p-5 grid grid-cols-1 sm:grid-cols-3 gap-4 text-[11px] font-mono">
+                    <div className="space-y-1">
+                      <span className="block text-[8px] text-zinc-400 uppercase font-bold">Candidate Name</span>
+                      <span className="font-bold text-zinc-900 border-b border-zinc-300 pb-0.5 block">{previewResults?.candidateName || 'Player'}</span>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="block text-[8px] text-zinc-400 uppercase font-bold">Username</span>
+                      <span className="font-bold text-zinc-900 border-b border-zinc-300 pb-0.5 block">@{previewResults?.candidateUsername || 'username'}</span>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="block text-[8px] text-zinc-400 uppercase font-bold">Score Achieved</span>
+                      <span className="font-extrabold text-emerald-800 bg-emerald-100 border-2 border-emerald-800 px-3 py-1 rounded block text-center uppercase tracking-wider">
+                        {previewResults?.score ?? 0} / {previewQuizzes.length} Correct
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Document Sub-sections depending on Type */}
+                
+                {/* 1. QUESTION PAPER PREVIEW */}
+                {previewType === 'question_paper' && (
+                  <div className="space-y-8 divide-y divide-zinc-150">
+                    <div className="bg-zinc-50 border-2 border-zinc-800 rounded-lg p-5 text-xs text-zinc-900 leading-relaxed space-y-2">
+                      <p className="font-black uppercase tracking-wider text-[10px] border-b border-zinc-300 pb-1">General Instructions to Candidate / उम्मीदवार के लिए निर्देश:</p>
+                      <ul className="list-decimal pl-4 space-y-1 text-[11px]">
+                        <li>This paper contains {previewQuizzes.length} multiple choice questions (MCQs). <span className="text-zinc-500 italic">(इस प्रश्नपत्र में {previewQuizzes.length} बहुविकल्पीय प्रश्न हैं।)</span></li>
+                        <li>Each question has four options labeled A, B, C, and D. <span className="text-zinc-500 italic">(प्रत्येक प्रश्न के चार विकल्प A, B, C और D हैं।)</span></li>
+                        <li>All options are bilingually presented. Please refer to both versions. <span className="text-zinc-500 italic">(सभी विकल्प द्विभाषी प्रस्तुत किए गए हैं।)</span></li>
+                        <li>Verification copies are official system compilations. <span className="text-zinc-500 italic">(सत्यापन प्रतियाँ आधिकारिक सिस्टम संकलन हैं।)</span></li>
+                      </ul>
+                    </div>
+
+                    <div className="space-y-6 pt-6 animate-none">
+                      {previewQuizzes.map((quiz, quizIdx) => {
+                        const optEn = quiz.options?.en || [];
+                        const optHi = quiz.options?.hi || [];
+                        return (
+                          <div key={quiz.id} className="space-y-3 pb-6 border-b border-zinc-100 last:border-b-0">
+                            {/* Question Title */}
+                            <div>
+                              <div className="flex items-start gap-2.5">
+                                <span className="font-black text-sm bg-zinc-900 text-white rounded px-2 py-0.5 mt-0.5 shrink-0 w-6 h-6 flex items-center justify-center">{quizIdx + 1}</span>
+                                <div className="space-y-1.5 flex-1 text-left">
+                                  <p className="text-zinc-900 font-bold text-sm leading-snug">{quiz.question?.en}</p>
+                                  {quiz.question?.hi && (
+                                    <p className="text-blue-900/80 italic font-medium text-xs leading-snug">{quiz.question.hi}</p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Options Grid */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-12 font-sans">
+                              {optEn.map((opt, optIdx) => {
+                                const label = String.fromCharCode(65 + optIdx);
+                                return (
+                                  <div key={optIdx} className="flex items-start gap-3 p-3 bg-zinc-50 rounded border border-zinc-300 text-xs text-left">
+                                    <span className="w-5 h-5 rounded bg-zinc-200 border border-zinc-400 font-black text-zinc-800 flex items-center justify-center text-[10px] shrink-0">{label}</span>
+                                    <div className="flex-1">
+                                      <p className="text-zinc-850 font-bold leading-snug">{opt}</p>
+                                      {optHi[optIdx] && (
+                                        <p className="text-zinc-500 italic leading-snug text-[11px] mt-1">{optHi[optIdx]}</p>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. OMR ANSWER RESPONSE COPY */}
+                {previewType === 'omr' && (
+                  <div className="space-y-6">
+                    <div className="bg-zinc-50 border-2 border-zinc-800 rounded-lg p-5 text-xs text-zinc-900 leading-relaxed space-y-1">
+                      <p className="font-black uppercase tracking-wider text-[10px] border-b border-zinc-300 pb-1">Optical Mark Recognition (OMR) Sheet Grid / ओएमआर उत्तर पुस्तिका ग्रिड:</p>
+                      <p className="text-[11px]">Darkened options represent recorded answers. Correct slots represent the master keys.</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 pt-2">
+                      {previewQuizzes.map((quiz, quizIdx) => {
+                        const scoreAnswers = previewResults?.answers || [];
+                        const userAnswer = scoreAnswers.find((a: any) => a.quizId === quiz.id);
+                        const userIndex = userAnswer ? userAnswer.userAnswerIndex : -1;
+                        const correctIndex = quiz.correctAnswerIndex;
+                        const correctLetter = String.fromCharCode(65 + correctIndex);
+                        const userLetter = userIndex !== -1 ? String.fromCharCode(65 + userIndex) : 'N/A';
+
+                        return (
+                          <div key={quiz.id} className="flex items-center justify-between p-3 rounded-xl border border-zinc-300 bg-white hover:bg-zinc-50 transition-colors font-mono text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="w-6 h-6 rounded bg-zinc-950 text-white font-extrabold flex items-center justify-center text-[10px] shrink-0 font-sans">
+                                {quizIdx + 1}
+                              </span>
+                              <div className="text-[10px] space-y-0.5 text-left font-sans">
+                                <span className="block font-black text-zinc-700">Answer: {userIndex === -1 ? 'UNATTEMPTED' : userLetter}</span>
+                                <span className="block text-[8px] text-emerald-600 font-extrabold uppercase font-mono">Key: {correctLetter}</span>
+                              </div>
+                            </div>
+
+                            {/* Circular Bubbles */}
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {[0, 1, 2, 3].map((optIdx) => {
+                                const bubbleLetter = String.fromCharCode(65 + optIdx);
+                                const isUserChoice = userIndex === optIdx;
+                                const isCorrectChoice = correctIndex === optIdx;
+
+                                let bubbleStyle = "border-zinc-300 text-zinc-500 hover:bg-zinc-100";
+                                let icon = bubbleLetter;
+
+                                if (isUserChoice) {
+                                  if (isCorrectChoice) {
+                                    bubbleStyle = "bg-emerald-600 border-emerald-700 text-white font-black scale-110 shadow-sm";
+                                    icon = "✓";
+                                  } else {
+                                    bubbleStyle = "bg-red-600 border-red-700 text-white font-black scale-110 shadow-sm";
+                                    icon = "✗";
+                                  }
+                                } else if (isCorrectChoice) {
+                                  bubbleStyle = "bg-emerald-50 border-emerald-500 text-emerald-700 font-bold border-2 border-dashed";
+                                  icon = bubbleLetter;
+                                }
+
+                                return (
+                                  <div
+                                    key={optIdx}
+                                    className={cn(
+                                      "w-7 h-7 rounded-full border text-[10px] flex items-center justify-center transition-all select-none duration-150 font-bold shrink-0 font-sans",
+                                      bubbleStyle
+                                    )}
+                                  >
+                                    {icon}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. OFFICIAL ANSWER KEYS PREVIEW */}
+                {previewType === 'answer_sheet' && (
+                  <div className="space-y-6">
+                    <div className="bg-zinc-50 border-2 border-zinc-800 rounded-lg p-5 text-xs text-zinc-900 leading-relaxed font-sans">
+                      <span className="font-extrabold text-zinc-900 block uppercase mb-1">Official Correct Answer Keys / आधिकारिक उत्तर कुंजी</span>
+                      Showing correct solutions together with reference notes and logical explanations for active study and review.
+                    </div>
+
+                    <div className="space-y-6 pt-2">
+                      {previewQuizzes.map((quiz, quizIdx) => {
+                        const correctIndex = quiz.correctAnswerIndex;
+                        const currentCorrectOptEn = quiz.options?.en?.[correctIndex] || '';
+                        const currentCorrectOptHi = quiz.options?.hi?.[correctIndex] || '';
+                        const correctLetter = String.fromCharCode(65 + correctIndex);
+
+                        return (
+                          <div key={quiz.id} className="p-4 rounded-xl border border-zinc-300 bg-white space-y-3 text-xs leading-relaxed text-left">
+                            {/* Question and Q.Number */}
+                            <div className="flex items-start gap-2.5">
+                              <span className="font-black text-xs bg-emerald-600 text-white rounded px-2 py-0.5 mt-0.5 shrink-0 font-sans">
+                                Q. {quizIdx + 1}
+                              </span>
+                              <div className="space-y-1">
+                                <p className="font-bold text-zinc-900 text-[13px]">{quiz.question?.en}</p>
+                                {quiz.question?.hi && (
+                                  <p className="text-blue-900/75 italic font-medium text-[11px]">{quiz.question.hi}</p>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Correct Selected Box */}
+                            <div className="pl-8 text-left">
+                              <div className="border border-emerald-300 bg-emerald-50 p-3 rounded-lg flex items-start gap-2.5 max-w-xl text-left">
+                                <span className="w-5 h-5 rounded-full bg-emerald-600 border border-emerald-700 text-white font-black text-[9px] flex items-center justify-center shrink-0">
+                                  ✓
+                                </span>
+                                <div>
+                                  <p className="text-[10px] font-black uppercase text-emerald-700 tracking-wider">Correct Option {correctLetter}</p>
+                                  <p className="text-zinc-800 font-bold mt-0.5 leading-snug">{currentCorrectOptEn}</p>
+                                  {currentCorrectOptHi && (
+                                    <p className="text-blue-900/60 italic font-medium leading-snug text-[11px] mt-0.5">{currentCorrectOptHi}</p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Explanation Notes */}
+                            {(quiz.explanation?.en || quiz.explanation?.hi) && (
+                              <div className="pl-8 select-text text-left">
+                                <div className="border border-zinc-200 bg-zinc-50 p-3 rounded-lg space-y-1 select-text text-left">
+                                  <span className="text-[9px] font-black uppercase text-zinc-400 tracking-wider font-mono">Reference solution explanation:</span>
+                                  {quiz.explanation?.en && (
+                                    <p className="text-zinc-[700] leading-relaxed text-[11px]">{quiz.explanation.en}</p>
+                                  )}
+                                  {quiz.explanation?.hi && (
+                                    <p className="text-blue-900/50 italic leading-relaxed text-[11px] pt-0.5 border-t border-dashed border-zinc-200">{quiz.explanation.hi}</p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Simulated Registrar Seal & Verification Signatures */}
+                <div className="pt-12 mt-12 border-t-2 border-zinc-900 grid grid-cols-2 gap-8 text-[11px] font-sans">
+                  <div>
+                    <p className="font-bold text-zinc-500 uppercase tracking-wider text-[8px]">DIGITAL SIGNATURE ID:</p>
+                    <p className="font-mono text-[9px] text-zinc-700 tracking-tight">SHA256: {Math.random().toString(16).substring(2, 10).toUpperCase()}-RAHEE-VERIFIED-COPY</p>
+                    <p className="text-zinc-400 mt-1 uppercase text-[8px]">TIMESTAMP: {new Date().toUTCString()}</p>
+                  </div>
+                  <div className="text-right flex flex-col items-end justify-end space-y-1">
+                    <div className="italic font-serif text-[11px] font-bold text-zinc-800 tracking-wider font-sans">Rahee Quiz Registrar</div>
+                    <div className="h-0.5 w-32 bg-zinc-400" />
+                    <p className="text-[8px] text-zinc-500 uppercase tracking-widest font-black">Authorized Verification Officer</p>
+                  </div>
+                </div>
+              </div>
+            )}
+              </div>
+            </div>
+
+            {/* Navigation / Actions Bar */}
+            <div className="px-6 py-4 bg-black/60 border-t border-white/10 flex flex-col sm:flex-row justify-between items-center gap-4">
+              <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                <Printer size={12} className="text-primary" />
+                This document is verified and stored securely!
+              </span>
+              <div className="flex gap-2">
+                {previewPdfUrl && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.open(previewPdfUrl, '_blank');
+                    }}
+                    className="bg-[#32befa] hover:bg-[#32befa]/85 text-black text-xs px-5 py-2.5 rounded-xl border border-transparent font-black uppercase tracking-wider transition-all active:scale-95 flex items-center gap-1.5 shadow-lg shadow-[#32befa]/20"
+                  >
+                    <Download size={12} />
+                    View & Download PDF
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPdfModal(false);
+                    if (previewPdfUrl) {
+                      URL.revokeObjectURL(previewPdfUrl);
+                      setPreviewPdfUrl(null);
+                    }
+                  }}
+                  className="bg-white/10 hover:bg-white/20 text-white text-xs px-5 py-2.5 rounded-xl border border-white/15 font-black uppercase tracking-wider transition-all active:scale-95 flex items-center gap-1.5"
+                >
+                  <X size={12} />
+                  Close View
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

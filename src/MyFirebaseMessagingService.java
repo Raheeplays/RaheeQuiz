@@ -194,6 +194,16 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
                 String title = data.containsKey("title") ? data.get("title") : "Interactive Poll";
                 String body = data.containsKey("body") ? data.get("body") : "Type your feedback below";
                 sendTextboxReplyNotification(title, body);
+            } else if ("exam_registration".equals(actionType) || "exam_register".equals(actionType)) {
+                String examId = data.containsKey("examId") ? data.get("examId") : "test_exam_event";
+                String title = data.containsKey("title") ? data.get("title") : "Exam Registration Open";
+                String body = data.containsKey("body") ? data.get("body") : "Register now for the geology exam!";
+                sendExamRegistrationNotification(title, body, examId);
+            } else if ("exam_started".equals(actionType)) {
+                String examId = data.containsKey("examId") ? data.get("examId") : "test_exam_event";
+                String title = data.containsKey("title") ? data.get("title") : "Exam Started Now!";
+                String body = data.containsKey("body") ? data.get("body") : "The exam has started. Click Start!";
+                sendExamStartedNotification(title, body, examId);
             } else {
                 // Attempt to read from notification block first
                 String title = remoteMessage.getNotification() != null ? remoteMessage.getNotification().getTitle() : null;
@@ -258,6 +268,137 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
             iconId = android.R.drawable.ic_dialog_info;
         }
         return iconId;
+    }
+
+    private void sendExamRegistrationNotification(String title, String body, String examId) {
+        NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        int notificationId = (int) System.currentTimeMillis();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    CHANNEL_NAME,
+                    NotificationManager.IMPORTANCE_HIGH
+            );
+            channel.setDescription("Incoming exam registration requirements");
+            channel.enableLights(true);
+            channel.enableVibration(true);
+            notificationManager.createNotificationChannel(channel);
+        }
+
+        Intent registerIntent = new Intent(this, ChallengeActionReceiver.class);
+        registerIntent.setAction("RaheeQuiz.in.ACTION_REGISTER_NOW");
+        registerIntent.putExtra("examId", examId);
+        registerIntent.putExtra("notificationId", notificationId);
+
+        PendingIntent registerPendingIntent = PendingIntent.getBroadcast(
+                this,
+                notificationId + 30,
+                registerIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+
+        Intent notInterestedIntent = new Intent(this, ChallengeActionReceiver.class);
+        notInterestedIntent.setAction("RaheeQuiz.in.ACTION_NOT_INTERESTED");
+        notInterestedIntent.putExtra("examId", examId);
+        notInterestedIntent.putExtra("notificationId", notificationId);
+
+        PendingIntent notInterestedPendingIntent = PendingIntent.getBroadcast(
+                this,
+                notificationId + 31,
+                notInterestedIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+
+        Uri defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+
+        NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(getAppIconResourceId())
+                .setContentTitle(title)
+                .setContentText(body)
+                .setAutoCancel(true)
+                .setSound(defaultSoundUri)
+                .setPriority(NotificationCompat.PRIORITY_MAX);
+
+        notificationBuilder.addAction(android.R.drawable.ic_menu_add, "REGISTER NOW", registerPendingIntent);
+        notificationBuilder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "NOT INTERESTED", notInterestedPendingIntent);
+
+        notificationManager.notify(notificationId, notificationBuilder.build());
+    }
+
+    private void sendExamStartedNotification(String title, String body, String examId) {
+        NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        int notificationId = (int) System.currentTimeMillis();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    CHANNEL_NAME,
+                    NotificationManager.IMPORTANCE_HIGH
+            );
+            channel.setDescription("Incoming exam starts");
+            channel.enableLights(true);
+            channel.enableVibration(true);
+            notificationManager.createNotificationChannel(channel);
+        }
+
+        Intent startIntent = null;
+        try {
+            startIntent = new Intent(this, Class.forName("RaheeQuiz.in.MainActivity"));
+            startIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startIntent.setAction("RaheeQuiz.in.ACTION_START_EXAM");
+            startIntent.putExtra("action_type", "start_exam");
+            startIntent.putExtra("roomId", examId);
+            startIntent.putExtra("notificationId", notificationId);
+        } catch (ClassNotFoundException e) {
+            startIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
+            if (startIntent != null) {
+                startIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                startIntent.setAction("RaheeQuiz.in.ACTION_START_EXAM");
+                startIntent.putExtra("action_type", "start_exam");
+                startIntent.putExtra("roomId", examId);
+                startIntent.putExtra("notificationId", notificationId);
+            }
+        }
+
+        PendingIntent startPendingIntent = null;
+        if (startIntent != null) {
+            startPendingIntent = PendingIntent.getActivity(
+                    this,
+                    notificationId + 40,
+                    startIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            );
+        }
+
+        Intent skipIntent = new Intent(this, ChallengeActionReceiver.class);
+        skipIntent.setAction("RaheeQuiz.in.ACTION_SKIP_EXAM");
+        skipIntent.putExtra("examId", examId);
+        skipIntent.putExtra("notificationId", notificationId);
+
+        PendingIntent skipPendingIntent = PendingIntent.getBroadcast(
+                this,
+                notificationId + 41,
+                skipIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            );
+
+        Uri defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+
+        NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(getAppIconResourceId())
+                .setContentTitle(title)
+                .setContentText(body)
+                .setAutoCancel(true)
+                .setSound(defaultSoundUri)
+                .setPriority(NotificationCompat.PRIORITY_MAX);
+
+        if (startPendingIntent != null) {
+            notificationBuilder.addAction(android.R.drawable.ic_media_play, "START EXAM", startPendingIntent);
+        }
+        notificationBuilder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "SKIP EXAM", skipPendingIntent);
+
+        notificationManager.notify(notificationId, notificationBuilder.build());
     }
 
     private void sendFriendRequestNotification(String senderName, String senderId, String targetUserId, String targetUserName) {
@@ -395,21 +536,41 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
             );
         }
 
-        // 2. Intent for clicking the "ACCEPT" button - goes to Broadcaster Receiver
-        Intent acceptIntent = new Intent(this, ChallengeActionReceiver.class);
-        acceptIntent.setAction("RaheeQuiz.in.ACTION_ACCEPT");
-        acceptIntent.putExtra("roomId", roomId);
-        acceptIntent.putExtra("hostId", hostId);
-        acceptIntent.putExtra("targetUserId", targetUserId);
-        acceptIntent.putExtra("targetUserName", targetUserName);
-        acceptIntent.putExtra("notificationId", notificationId);
-        
-        PendingIntent acceptPendingIntent = PendingIntent.getBroadcast(
-                this, 
-                notificationId + 1, 
-                acceptIntent, 
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
+        // 2. Intent for clicking the "ACCEPT" button - launches MainActivity directly to open/run the app instantly!
+        Intent acceptIntent = null;
+        try {
+            acceptIntent = new Intent(this, Class.forName("RaheeQuiz.in.MainActivity"));
+            acceptIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            acceptIntent.setAction("RaheeQuiz.in.ACTION_ACCEPT");
+            acceptIntent.putExtra("roomId", roomId);
+            acceptIntent.putExtra("hostId", hostId);
+            acceptIntent.putExtra("targetUserId", targetUserId);
+            acceptIntent.putExtra("targetUserName", targetUserName);
+            acceptIntent.putExtra("action_type", "accept");
+            acceptIntent.putExtra("notificationId", notificationId);
+        } catch (ClassNotFoundException e) {
+            acceptIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
+            if (acceptIntent != null) {
+                acceptIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                acceptIntent.setAction("RaheeQuiz.in.ACTION_ACCEPT");
+                acceptIntent.putExtra("roomId", roomId);
+                acceptIntent.putExtra("hostId", hostId);
+                acceptIntent.putExtra("targetUserId", targetUserId);
+                acceptIntent.putExtra("targetUserName", targetUserName);
+                acceptIntent.putExtra("action_type", "accept");
+                acceptIntent.putExtra("notificationId", notificationId);
+            }
+        }
+
+        PendingIntent acceptPendingIntent = null;
+        if (acceptIntent != null) {
+            acceptPendingIntent = PendingIntent.getActivity(
+                    this, 
+                    notificationId + 1, 
+                    acceptIntent, 
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            );
+        }
 
         // 3. Intent for clicking the "REJECT" button - goes to Broadcaster Receiver
         Intent rejectIntent = new Intent(this, ChallengeActionReceiver.class);

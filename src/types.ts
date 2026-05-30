@@ -203,6 +203,7 @@ export interface Event {
   startTime: number;
   endTime: number;
   type: 'test' | 'exam' | 'contest';
+  isImmediate?: boolean;
   participants?: { [userId: string]: boolean };
   hasTimer?: boolean;
   timerDuration?: number;
@@ -231,6 +232,8 @@ export interface Event {
       completedAt: number;
     }
   };
+  isTesting?: boolean;
+  selectedPlayers?: string[];
   createdAt: number;
 }
 

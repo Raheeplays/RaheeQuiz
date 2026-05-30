@@ -96,6 +96,54 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribe();
   }, []);
 
+  // Dynamic Bot points & ranks simulator
+  useEffect(() => {
+    if (!activeUserId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const usersSnap = await get(ref(db, 'users'));
+        if (usersSnap.exists()) {
+          const rawUsers = usersSnap.val();
+          const usersList = Object.entries(rawUsers).map(([id, val]: [string, any]) => ({
+            ...val,
+            id
+          })).filter(u => u.isBot);
+
+          if (usersList.length > 0) {
+            // Select 1 to 3 bots randomly
+            const numBotsToUpdate = Math.min(usersList.length, Math.floor(Math.random() * 3) + 1);
+            const shuffled = [...usersList].sort(() => Math.random() - 0.5);
+            const selectedBots = shuffled.slice(0, numBotsToUpdate);
+
+            for (const bot of selectedBots) {
+              const currentXp = Number(bot.xp || bot.score || 0);
+              const currentCoins = Number(bot.raheeCoins || 0);
+              
+              const xpGain = Math.floor(Math.random() * 36) + 10;
+              const coinGain = Math.floor(Math.random() * 9) + 2;
+
+              const updates: any = {};
+              updates[`users/${bot.id}/xp`] = currentXp + xpGain;
+              updates[`users/${bot.id}/score`] = currentXp + xpGain;
+              updates[`users/${bot.id}/raheeCoins`] = currentCoins + coinGain;
+              updates[`users/${bot.id}/lastPlayedTime`] = new Date().toLocaleString('en-US', {
+                dateStyle: 'medium',
+                timeStyle: 'medium'
+              });
+
+              await update(ref(db), updates);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Failed to run dynamic bots simulator:", err);
+      }
+    }, 45000); // Trigger every 45 seconds
+
+    return () => clearInterval(interval);
+  }, [activeUserId]);
+
   useEffect(() => {
     let unsubscribeDb: (() => void) | null = null;
 

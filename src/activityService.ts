@@ -1,5 +1,5 @@
 import { ref, push, set } from 'firebase/database';
-import { db } from '../firebase/config';
+import { db } from './firebase/config';
 
 export interface ActivityLog {
   id?: string;

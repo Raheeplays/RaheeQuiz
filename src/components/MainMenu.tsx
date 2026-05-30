@@ -30,7 +30,7 @@ import { User, Topic } from '../types';
 import { CLASSES, SUBJECTS, CURRENT_VERSION_CODE } from '../constants';
 import { translations } from '../translations';
 import { cn } from '../lib/utils';
-import { logActivity } from '../services/activityService';
+import { logActivity } from '../activityService';
 
 const DEFAULT_AVATARS = [
   'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix',
@@ -49,6 +49,7 @@ export default function MainMenu() {
   const { alert } = useDialog();
   const [activeTab, setActiveTab] = useState<'home' | 'leaderboard' | 'shop' | 'friends' | 'admin' | 'event'>('home');
   const [showQuiz, setShowQuiz] = useState(false);
+  const [activeExamId, setActiveExamId] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -301,9 +302,19 @@ export default function MainMenu() {
     };
     window.addEventListener('start-match', handleStartMatch);
 
+    const handleStartExam = (e: any) => {
+      console.log("handleStartExam event caught inside MainMenu, examId:", e.detail?.examId);
+      if (e.detail?.examId) {
+        setActiveExamId(e.detail.examId);
+        setShowQuiz(true);
+      }
+    };
+    window.addEventListener('start-exam', handleStartExam);
+
     return () => {
       unsubscribe();
       window.removeEventListener('start-match', handleStartMatch);
+      window.removeEventListener('start-exam', handleStartExam);
     };
   }, []);
 
@@ -2093,7 +2104,15 @@ export default function MainMenu() {
            </div>
         )}
 
-        {showQuiz && <QuizScreen onClose={() => setShowQuiz(false)} language={lang} topicIds={currentUser?.selectedTopicIds} />}
+        {showQuiz && <QuizScreen 
+            onClose={() => {
+              setShowQuiz(false);
+              setActiveExamId(null);
+            }} 
+            language={lang} 
+            eventId={activeExamId || undefined}
+            topicIds={activeExamId ? undefined : currentUser?.selectedTopicIds} 
+          />}
         {showSettings && (
           <Settings 
             onClose={() => setShowSettings(false)} 
