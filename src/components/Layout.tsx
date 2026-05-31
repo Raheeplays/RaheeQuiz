@@ -10,10 +10,10 @@ interface LayoutProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   setShowSettings: (show: boolean) => void;
-  setShowChat: (show: boolean) => void;
+  setShowFeedback: (show: boolean) => void;
 }
 
-export default function Layout({ children, activeTab, setActiveTab, setShowSettings, setShowChat }: LayoutProps) {
+export default function Layout({ children, activeTab, setActiveTab, setShowSettings, setShowFeedback }: LayoutProps) {
   const { currentUser } = useUser();
   const lang = currentUser?.language || 'en';
   const t = translations[lang] || translations.en;
@@ -38,7 +38,7 @@ export default function Layout({ children, activeTab, setActiveTab, setShowSetti
         <div className="lg:max-w-4xl lg:mx-auto relative w-full">
           <div className="fixed bottom-24 left-4 lg:left-auto lg:ml-4 z-50">
             <button
-              onClick={() => setShowChat(true)}
+               onClick={() => setShowFeedback(true)}
               className="w-12 h-12 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 rounded-2xl flex items-center justify-center text-primary shadow-lg active:scale-90 transition-all backdrop-blur-md"
             >
               <MessageSquare size={24} />

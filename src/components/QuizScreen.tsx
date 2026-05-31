@@ -81,10 +81,42 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
         update(ref(db, `users/${currentUser.id}`), {
           lastPlayedTime: nowTimeStr,
           lastPlayedDate: new Date().toISOString().split('T')[0]
-        }).catch((e) => console.error("Failed to update lastPlayedTime on quiz exit:", e));
+         }).catch((e) => console.error("Failed to update lastPlayedTime on quiz exit:", e));
       }
     };
   }, [currentUser?.id]);
+
+  // Quiz activity real-time simulation sync
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    const actQuizState = {
+      activeTab: 'quiz',
+      showQuiz: true,
+      activeExamId: eventId || "",
+      quizIndexVal: currentIndex,
+      selectedOptionVal: selectedOption,
+      isAnsweredVal: isAnswered,
+      quizTimeLeftVal: quizTimeLeft,
+      activeQuestionText: quizzes[currentIndex]?.question || '',
+      activeQuestionOptions: quizzes[currentIndex]?.options || [],
+      correctOptionIndex: quizzes[currentIndex]?.answer !== undefined ? quizzes[currentIndex]?.answer : null,
+      isDarkObj: isDark,
+      lastUpdated: Date.now()
+    };
+
+    const activeStateRef = ref(db, `users/${currentUser.id}/activeState`);
+    set(activeStateRef, actQuizState).catch(err => console.error("Active state quiz sync failed:", err));
+  }, [
+    currentUser?.id,
+    eventId,
+    quizzes,
+    currentIndex,
+    selectedOption,
+    isAnswered,
+    quizTimeLeft,
+    isDark
+  ]);
   
   const targetTopicIdsRaw = eventId ? (propTopicIds || []) : (propTopicIds || (currentUser?.selectedTopicIds || (currentUser?.selectedNicheId ? [currentUser.selectedNicheId] : (currentUser?.selectedTopicId ? [currentUser.selectedTopicId] : []))));
   const targetTopicIdsStr = JSON.stringify(targetTopicIdsRaw);

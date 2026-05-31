@@ -5,7 +5,7 @@ import { db, firebaseConfig } from '../firebase/config';
 import { ref, onValue, set, push, remove, get, update, query, orderByChild, equalTo } from 'firebase/database';
 import { User, Topic, Quiz, Feedback, QuizHistory, SpecialMessage, Ad } from '../types';
 import ScoreCard from './ScoreCard';
-import { Database, Folder, Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2, Coins, TrendingUp, Calendar, Sun, Moon, Star, Settings as SettingsIcon, Bell, Send, Share2, Image as ImageIcon, Search, Volume2, Play, RotateCcw, Zap, ChevronUp, ChevronDown, CornerDownRight, Download } from 'lucide-react';
+import { Database, Folder, Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2, Coins, TrendingUp, Calendar, Sun, Moon, Star, Settings as SettingsIcon, Bell, Send, Share2, Image as ImageIcon, Search, Volume2, Play, RotateCcw, Zap, ChevronUp, ChevronDown, CornerDownRight, Download, Tv, Activity } from 'lucide-react';
 import { NotificationService, ServiceAccount } from '../services/notificationService';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -59,6 +59,67 @@ export default function AdminPanel() {
   const [reportFilter, setReportFilter] = useState<'all' | 'pending' | 'resolved' | 'dismissed'>('pending');
   const [editReportForm, setEditReportForm] = useState<any>(null);
 
+  // RTDB Visual Custom Node Grid state declarations
+  const [gridCustomConfigs, setGridCustomConfigs] = useState<any[]>([]);
+  const [isGridConfigModalOpen, setIsGridConfigModalOpen] = useState(false);
+  const [gridFormMode, setGridFormMode] = useState<'add' | 'edit'>('add');
+  const [activeEditingConfigId, setActiveEditingConfigId] = useState<string | null>(null);
+
+  const [formPath, setFormPath] = useState('');
+  const [formLabel, setFormLabel] = useState('');
+  const [formColor, setFormColor] = useState('#32befa');
+  const [formMaxVal, setFormMaxVal] = useState('100');
+
+  useEffect(() => {
+    try {
+      const configsRef = ref(db, 'adminCustomGridConfigs');
+      const unsubscribe = onValue(configsRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const val = snapshot.val();
+          const formatted = Object.entries(val).map(([id, item]: any) => ({
+            id,
+            ...item
+          }));
+          setGridCustomConfigs(formatted);
+        } else {
+          // Pre-seed 4 highly styled default configs aligned with the application DB
+          const defaults = {
+            default_game_timer: {
+              path: 'settings/gameSessionTimeLimit',
+              label: 'Quiz Session duration',
+              color: '#a855f7',
+              maxExpectedVal: 120
+            },
+            default_trivia_size: {
+              path: 'settings/triviaRoundSize',
+              label: 'Questions Per Set',
+              color: '#32befa',
+              maxExpectedVal: 20
+            },
+            default_multiplier: {
+              path: 'settings/multiplier',
+              label: 'Global Coin Multiplier',
+              color: '#10b981',
+              maxExpectedVal: 5
+            },
+            default_lux_threshold: {
+              path: 'settings/defaultThemeLuxThreshold',
+              label: 'Lux Light Auto Threshold',
+              color: '#f59e0b',
+              maxExpectedVal: 1000
+            }
+          };
+          set(configsRef, defaults);
+        }
+      }, (err) => {
+        console.error("RTDB custom configurations fetch error:", err);
+      });
+      return () => unsubscribe();
+    } catch (e) {
+      console.error("Failed to fetch admin configurations:", e);
+    }
+  }, []);
+
   useEffect(() => {
     if (selectedUser) {
       setDeviceUidInput(selectedUser.deviceUid || '');
@@ -68,6 +129,7 @@ export default function AdminPanel() {
       setUserLuxThresholdInput('');
     }
   }, [selectedUser?.id]);
+
   const [userHistory, setUserHistory] = useState<QuizHistory[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [historyFilter, setHistoryFilter] = useState('all');
@@ -4617,6 +4679,9 @@ export default function AdminPanel() {
           </div>
         </div>
 
+        {/* Realtime dynamic customizable Firebase RTDB visual circular progress nodes grid */}
+        {renderRtdbVisualNodeGrid()}
+
         {/* Filter and Control Bar */}
         <div className="bg-white dark:bg-[#0c0c0c] border border-black/5 dark:border-white/5 p-6 rounded-[2.5rem] flex flex-col sm:flex-row gap-4 items-center justify-between">
           <div className="relative w-full sm:w-80">
@@ -5711,6 +5776,1133 @@ export default function AdminPanel() {
                </div>
             )}
          </div>
+      </div>
+    );
+  };
+
+  const renderRtdbVisualNodeGrid = () => {
+    // Sub-component to sync specific Firebase RTDB node value and display smooth circular progress ring
+    const RtdbGridCircularNode = ({ config, onEdit, onDelete }: { config: any, onEdit: (c: any) => void, onDelete: (id: string) => any, key?: string }) => {
+      const [liveValue, setLiveValue] = useState<any>(null);
+      const [loading, setLoading] = useState(true);
+
+      useEffect(() => {
+        try {
+          const nodeRef = ref(db, config.path);
+          const unsubscribe = onValue(nodeRef, (snapshot) => {
+            setLiveValue(snapshot.exists() ? snapshot.val() : null);
+            setLoading(false);
+          }, (err) => {
+            console.error("Error reading RTDB node:", config.path, err);
+            setLoading(false);
+          });
+          return () => unsubscribe();
+        } catch (e) {
+          console.error("Invalid path subscription error:", e);
+          setLoading(false);
+        }
+      }, [config.path]);
+
+      // Process numeric configurations for circle progress calculations
+      const maxExpected = config.maxExpectedVal ? Number(config.maxExpectedVal) : 100;
+      const isNumeric = typeof liveValue === 'number' || (typeof liveValue === 'string' && !isNaN(Number(liveValue)) && liveValue.trim() !== '');
+      const numericVal = isNumeric ? Number(liveValue) : 0;
+      
+      let stringRep = 'N/A';
+      if (liveValue !== null && liveValue !== undefined) {
+        if (typeof liveValue === 'object') {
+          stringRep = 'Object 📦';
+        } else if (typeof liveValue === 'boolean') {
+          stringRep = liveValue ? 'True' : 'False';
+        } else {
+          stringRep = String(liveValue);
+        }
+      }
+
+      const radius = 38;
+      const strokeCircumference = 2 * Math.PI * radius; // Approx 238.76
+      const percentage = Math.min(Math.max((numericVal / maxExpected) * 100, 0), 100);
+      const strokeDashoffset = isNumeric 
+        ? strokeCircumference - (strokeCircumference * percentage) / 100 
+        : (liveValue === true || liveValue === 'true') 
+          ? 0 
+          : strokeCircumference;
+
+      const hexColor = config.color || '#32befa';
+
+      return (
+        <motion.div
+          whileHover={{ y: -6, scale: 1.02 }}
+          className="bg-white dark:bg-[#0c0c11] border border-black/5 dark:border-white/5 p-6 rounded-[2.5rem] shadow-sm flex flex-col items-center justify-between min-h-[220px] transition-all relative group"
+        >
+          {/* Action options floating top-right on hover card */}
+          <div className="absolute top-4 right-4 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-305 z-10">
+            <button
+              onClick={() => onEdit(config)}
+              className="p-1.5 bg-black/5 dark:bg-white/10 text-neutral-500 hover:text-[#32befa] rounded-xl transition-all"
+              title="Edit Node Config"
+            >
+              <Edit2 size={11} />
+            </button>
+            <button
+              onClick={() => onDelete(config.id)}
+              className="p-1.5 bg-black/5 dark:bg-white/10 text-neutral-500 hover:text-red-500 rounded-xl transition-all"
+              title="Delete Visual Node"
+            >
+              <Trash2 size={11} />
+            </button>
+          </div>
+
+          {/* SVG ring centering value */}
+          <div className="relative w-28 h-28 flex items-center justify-center mt-2">
+            <svg className="absolute inset-0 w-full h-full -rotate-90 select-none pointer-events-none" viewBox="0 0 100 100">
+              <circle
+                cx="50"
+                cy="50"
+                r={radius}
+                stroke="currentColor"
+                strokeWidth="5"
+                className="text-black/5 dark:text-white/5"
+                fill="transparent"
+              />
+              <motion.circle
+                cx="50"
+                cy="50"
+                r={radius}
+                stroke={hexColor}
+                strokeWidth="5"
+                fill="transparent"
+                strokeDasharray={strokeCircumference}
+                animate={{ strokeDashoffset }}
+                transition={{ type: "spring", stiffness: 60, damping: 15 }}
+                strokeLinecap="round"
+              />
+            </svg>
+
+            {/* Pulse flash background glow effect on update */}
+            <motion.div 
+              key={stringRep}
+              initial={{ scale: 0.9, opacity: 0.35 }}
+              animate={{ scale: 1, opacity: 0 }}
+              transition={{ duration: 0.8 }}
+              style={{ borderColor: hexColor }}
+              className="absolute inset-2 border border-dashed rounded-full pointer-events-none"
+            />
+
+            {/* Value Centered Precisely inside circle */}
+            <div className="flex flex-col items-center justify-center px-3 text-center z-10 max-w-[85px] overflow-hidden">
+              <span className="text-[7px] font-mono uppercase text-black/30 dark:text-white/30 tracking-widest font-bold">
+                RTDB VAL
+              </span>
+              <span 
+                className="text-xs sm:text-sm font-black tracking-tight text-neutral-900 dark:text-neutral-50 truncate max-w-full font-mono mt-0.5"
+                title={stringRep}
+              >
+                {loading ? '...' : stringRep}
+              </span>
+              {isNumeric && (
+                <span className="text-[7px] font-mono text-black/35 dark:text-white/35 font-bold mt-0.5">
+                  {Math.round(percentage)}%
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Label and Path below circle */}
+          <div className="text-center w-full mt-4 space-y-1">
+            <h4 className="text-[10px] sm:text-[11px] font-black uppercase text-neutral-800 dark:text-neutral-200 tracking-wider truncate px-1 font-sans">
+              {config.label || 'Unnamed Node'}
+            </h4>
+            <p className="text-[8px] font-mono text-neutral-400 dark:text-neutral-500 font-bold truncate px-2.5 bg-neutral-100 dark:bg-neutral-900 py-1 rounded-lg mx-auto max-w-[130px] uppercase tracking-tight select-all">
+              /{config.path}
+            </p>
+          </div>
+        </motion.div>
+      );
+    };
+
+    // CRUD saving flow
+    const handleSaveGridConfig = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!formPath.trim() || !formLabel.trim()) {
+        await alert({
+          title: 'Validation Error',
+          description: 'Please specify both a target database path and custom visual label text.',
+          type: 'error'
+        });
+        return;
+      }
+
+      try {
+        const id = activeEditingConfigId || `config_${Date.now()}`;
+        const cleanPath = formPath.trim().replace(/^\/+|\/+$/g, '');
+        const targetRef = ref(db, `adminCustomGridConfigs/${id}`);
+        
+        const payload = {
+          path: cleanPath,
+          label: formLabel.trim(),
+          color: formColor,
+          maxExpectedVal: isNaN(Number(formMaxVal)) ? 100 : Number(formMaxVal)
+        };
+
+        await set(targetRef, payload);
+        
+        setIsGridConfigModalOpen(false);
+        setActiveEditingConfigId(null);
+        setFormPath('');
+        setFormLabel('');
+        setFormColor('#32befa');
+        setFormMaxVal('100');
+
+        await alert({
+          title: 'Config Saved',
+          description: `Custom circular node visualizer stored dynamically under path /${cleanPath}.`,
+          type: 'success'
+        });
+      } catch (err: any) {
+        await alert({
+          title: 'Error Saving Config',
+          description: err.message,
+          type: 'error'
+        });
+      }
+    };
+
+    const handleDeleteGridConfig = async (id: string) => {
+      const confirmed = await confirm({
+        title: 'Delete Visualizer?',
+        description: 'Are you sure you want to remove this customized circular visualization? This will not delete actual data within the database nodes.',
+        type: 'error'
+      });
+      if (!confirmed) return;
+
+      try {
+        await remove(ref(db, `adminCustomGridConfigs/${id}`));
+        await alert({
+          title: 'Visualizer Removed',
+          description: 'Successful deletion of dynamic schema visualization configuration.',
+          type: 'success'
+        });
+      } catch (err: any) {
+        await alert({
+          title: 'Deletion Failed',
+          description: err.message,
+          type: 'error'
+        });
+      }
+    };
+
+    const handleStartEdit = (config: any) => {
+      setGridFormMode('edit');
+      setActiveEditingConfigId(config.id);
+      setFormPath(config.path);
+      setFormLabel(config.label);
+      setFormColor(config.color || '#32befa');
+      setFormMaxVal(String(config.maxExpectedVal || 100));
+      setIsGridConfigModalOpen(true);
+    };
+
+    const handleStartAdd = () => {
+      setGridFormMode('add');
+      setActiveEditingConfigId(null);
+      setFormPath('');
+      setFormLabel('');
+      setFormColor('#32befa');
+      setFormMaxVal('100');
+      setIsGridConfigModalOpen(true);
+    };
+
+    return (
+      <div className="bg-white dark:bg-[#0c0c0c] border border-black/5 dark:border-white/5 p-8 rounded-[2.5rem] space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-black/10 dark:border-white/10 pb-4">
+          <div className="text-left font-sans">
+            <span className="text-[9px] font-black uppercase text-primary tracking-widest block font-sans">
+              Firebase Realtime Database Visualizer
+            </span>
+            <h3 className="text-xl font-black uppercase tracking-tight text-black dark:text-white font-sans mt-0.5">
+              Circular Progress Nodes Grid
+            </h3>
+          </div>
+          <button
+            onClick={handleStartAdd}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-primary hover:bg-opacity-90 text-black rounded-xl font-black text-[10px] uppercase tracking-widest transition-transform hover:scale-[1.03] active:scale-95 shadow-md shadow-primary/20 animate-pulse"
+          >
+            <Plus size={14} />
+            Add Custom Visualizer
+          </button>
+        </div>
+
+        {/* Responsive CSS Grid structure for nodes */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+          {gridCustomConfigs.map((config) => (
+            <RtdbGridCircularNode 
+              key={`visual-rtdb-circle-${config.id}`} 
+              config={config} 
+              onEdit={handleStartEdit} 
+              onDelete={handleDeleteGridConfig} 
+            />
+          ))}
+
+          {gridCustomConfigs.length === 0 && (
+            <div className="col-span-full py-16 text-center text-black/30 dark:text-white/30">
+              <Database size={36} className="mx-auto mb-3 opacity-20 animate-pulse" />
+              <p className="text-xs font-black uppercase tracking-widest">
+                No database visual configurations available. Create one now.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Custom Configuration Modal dialog */}
+        <AnimatePresence>
+          {isGridConfigModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsGridConfigModalOpen(false)}
+                className="absolute inset-0 bg-black/60 backdrop-blur-sm shadow-xl"
+              />
+
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                className="bg-white dark:bg-[#0c0c11] border border-black/10 dark:border-white/10 rounded-[2.5rem] w-full max-w-md p-8 shadow-2xl relative z-10 text-left space-y-5 text-black dark:text-white"
+              >
+                <div className="flex items-center justify-between border-b border-black/5 dark:border-white/5 pb-3.5">
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-primary tracking-widest block font-sans">
+                      Configuration properties
+                    </span>
+                    <h3 className="text-lg font-black uppercase tracking-tight text-neutral-900 dark:text-neutral-50 mt-0.5 font-sans">
+                      {gridFormMode === 'add' ? 'Add Visualizer' : 'Edit Properties'}
+                    </h3>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => setIsGridConfigModalOpen(false)}
+                    className="p-1.5 hover:bg-black/5 dark:hover:bg-white/5 text-neutral-400 hover:text-red-500 rounded-full transition-all"
+                  >
+                    <CloseIcon size={16} />
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveGridConfig} className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black uppercase tracking-widest text-[#a855f7] block ml-1 font-sans">
+                      Target Database Node Path
+                    </label>
+                    <div className="flex items-center gap-1.5 bg-neutral-100 dark:bg-black p-3.5 rounded-2xl border border-black/5 dark:border-white/5 font-mono">
+                      <span className="text-[10px] text-neutral-400 font-bold select-none">/</span>
+                      <input 
+                        type="text"
+                        value={formPath}
+                        onChange={(e) => setFormPath(e.target.value)}
+                        placeholder="settings/gameSessionTimeLimit"
+                        className="bg-transparent outline-none flex-1 font-mono text-neutral-850 dark:text-neutral-50 border-0 p-0 focus:ring-0 text-xs"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black uppercase tracking-widest text-neutral-400 block ml-1 font-sans">
+                      Text Label Name
+                    </label>
+                    <input 
+                      type="text"
+                      value={formLabel}
+                      onChange={(e) => setFormLabel(e.target.value)}
+                      placeholder="e.g. Session duration"
+                      className="w-full text-xs p-3.5 bg-neutral-100 dark:bg-black border border-black/5 dark:border-white/5 rounded-2xl font-bold text-neutral-850 dark:text-neutral-50 placeholder-neutral-400 outline-none focus:border-primary/50 transition-all font-sans"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black uppercase tracking-widest text-[#10b981] block ml-1 font-sans">
+                      Circle Outline Color
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2 p-3 bg-neutral-50 dark:bg-black rounded-2xl border border-black/5 dark:border-white/5">
+                      {[
+                        '#a855f7', // Purple
+                        '#32befa', // Cyan
+                        '#10b981', // Emerald
+                        '#ec4899', // Pink
+                        '#f59e0b', // Amber
+                        '#3b82f6', // Blue
+                        '#ef4444'  // Red
+                      ].map((presetColor) => (
+                        <button
+                          key={presetColor}
+                          type="button"
+                          onClick={() => setFormColor(presetColor)}
+                          style={{ backgroundColor: presetColor }}
+                          className={cn(
+                            "w-6 h-6 rounded-full border-2 transition-transform cursor-pointer hover:scale-110",
+                            formColor === presetColor ? "border-neutral-950 dark:border-white" : "border-transparent"
+                          )}
+                          title={presetColor}
+                        />
+                      ))}
+                      <div className="border-l border-black/10 dark:border-white/10 h-5 mx-1" />
+                      <div className="flex items-center bg-white dark:bg-neutral-900 border border-black/5 dark:border-white/5 rounded-lg p-0.5 px-1.5 ml-auto">
+                        <input
+                          type="color"
+                          value={formColor}
+                          onChange={(e) => setFormColor(e.target.value)}
+                          className="w-4 h-4 rounded cursor-pointer border-0 p-0 mr-1 bg-transparent"
+                        />
+                        <input
+                          type="text"
+                          value={formColor}
+                          onChange={(e) => setFormColor(e.target.value)}
+                          placeholder="#ffffff"
+                          className="w-12 text-[10.5px] font-mono font-black bg-transparent outline-none p-0 border-0"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black uppercase tracking-widest text-[#32befa] block ml-1 font-sans">
+                      Max expected scale value
+                    </label>
+                    <input 
+                      type="number"
+                      value={formMaxVal}
+                      onChange={(e) => setFormMaxVal(e.target.value)}
+                      placeholder="denominator e.g., 100"
+                      className="w-full text-xs p-3.5 bg-neutral-100 dark:bg-black border border-black/5 dark:border-white/5 rounded-2xl font-bold text-neutral-850 dark:text-neutral-50 placeholder-neutral-400 outline-none focus:border-primary/50 transition-all font-mono"
+                      min={1}
+                      max={100000000}
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setIsGridConfigModalOpen(false)}
+                      className="flex-1 py-3 bg-neutral-150 dark:bg-white/4 font-sans text-neutral-700 dark:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-white/10 rounded-2xl font-black uppercase tracking-widest text-[9px] transition-all border border-black/5"
+                    >
+                      Close
+                    </button>
+                    <button
+                      type="submit"
+                      className="flex-1 py-3 bg-primary text-black hover:opacity-95 rounded-2xl font-black uppercase tracking-widest text-[9px] transition-all shadow-lg shadow-primary/20"
+                    >
+                      {gridFormMode === 'add' ? 'Create' : 'Save'}
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  };
+
+  const renderCircularGridDBNodes = () => {
+    return renderRtdbVisualNodeGrid();
+  };
+
+  const renderLivePOVStream = () => {
+    return null;
+  };
+
+// Removed obsolete POV Stream function
+
+  const renderLiveMonitorSection = () => {
+    return null;
+  };
+
+  const unusedLiveMonitorBodyPlaceholder = () => {
+    // Declare dummy variables to make TS compiler happy for this unused function
+    const [selectedMonitorPlayerId, setSelectedMonitorPlayerId] = useState<any>(null);
+    const [selectedPlayerCustomPath, setSelectedPlayerCustomPath] = useState<any>('');
+    const [orbitPathNodes, setOrbitPathNodes] = useState<any>(null);
+    const [newOrbitNodeName, setNewOrbitNodeName] = useState<any>('');
+    const [newOrbitNodeVal, setNewOrbitNodeVal] = useState<any>('');
+    const [orbitActivePath, setOrbitActivePath] = useState<any>('');
+    const [editingNodePath, setEditingNodePath] = useState<any>(null);
+    const [editingNodeVal, setEditingNodeVal] = useState<any>('');
+
+    // Determine active player being monitored
+    const activePlayers = users.filter(u => !u.isBot);
+    const resolvedPlayerId = selectedMonitorPlayerId || activePlayers[0]?.id || adminUser?.id || '';
+    const targetPlayer = users.find(u => u.id === resolvedPlayerId);
+
+    // Default activeState fallback
+    const activeState = targetPlayer?.activeState || {
+      activeTab: 'home',
+      showQuiz: false,
+      activeExamId: '',
+      showSettings: false,
+      showTopicSelect: false,
+      showFeedback: false,
+      showMultiplayerHub: false,
+      multiRoomId: '',
+      showScoreCard: false,
+      showHistory: false,
+      showProfile: false,
+      showLivesModal: false,
+      showStreakModal: false,
+      showRaheePass: false,
+      lastUpdated: Date.now()
+    };
+
+    // Calculate database elements for orbital ring layout
+    const nodesList = orbitPathNodes && typeof orbitPathNodes === 'object'
+      ? Object.entries(orbitPathNodes).map(([key, val]) => ({ key, val }))
+      : typeof orbitPathNodes !== 'undefined' && orbitPathNodes !== null
+        ? [{ key: '_value', val: orbitPathNodes }]
+        : [];
+
+    // Simple CRUD action handlers for orbit path nodes
+    const handleAddOrbitNode = async () => {
+      if (!newOrbitNodeName.trim()) {
+        await alert({ title: 'Invalid Name', description: 'Please enter a valid node key/name.', type: 'error' });
+        return;
+      }
+      try {
+        const rootPath = !orbitActivePath || orbitActivePath.trim() === '' ? '' : orbitActivePath.replace(/^\/+|\/+$/g, '');
+        const targetPath = rootPath ? `${rootPath}/${newOrbitNodeName.trim()}` : newOrbitNodeName.trim();
+        
+        let parsedVal: any = newOrbitNodeVal;
+        try {
+          if ((newOrbitNodeVal.startsWith('{') && newOrbitNodeVal.endsWith('}')) || (newOrbitNodeVal.startsWith('[') && newOrbitNodeVal.endsWith(']'))) {
+            parsedVal = JSON.parse(newOrbitNodeVal);
+          } else if (newOrbitNodeVal === 'true') {
+            parsedVal = true;
+          } else if (newOrbitNodeVal === 'false') {
+            parsedVal = false;
+          } else if (!isNaN(Number(newOrbitNodeVal)) && newOrbitNodeVal.trim() !== '') {
+            parsedVal = Number(newOrbitNodeVal);
+          }
+        } catch (_) {}
+
+        await set(ref(db, targetPath), parsedVal);
+        setNewOrbitNodeName('');
+        setNewOrbitNodeVal('');
+        await alert({ title: 'Success', description: `Successfully created node at path: ${targetPath}`, type: 'success' });
+      } catch (err: any) {
+        await alert({ title: 'Operation Failed', description: err.message, type: 'error' });
+      }
+    };
+
+    const handleDeleteOrbitNode = async (key: string) => {
+      const v = await confirm({
+        title: 'Delete Node?',
+        description: `This will permanently delete key: "${key}" and all its sub-nodes. Proceed?`,
+        type: 'error'
+      });
+      if (!v) return;
+      try {
+        const rootPath = !orbitActivePath || orbitActivePath.trim() === '' ? '' : orbitActivePath.replace(/^\/+|\/+$/g, '');
+        const targetPath = rootPath ? `${rootPath}/${key}` : key;
+        await remove(ref(db, targetPath));
+      } catch (err: any) {
+        await alert({ title: 'Error deleting', description: err.message, type: 'error' });
+      }
+    };
+
+    const handleUpdateOrbitNode = async () => {
+      if (!editingNodePath) return;
+      try {
+        let parsedVal: any = editingNodeVal;
+        try {
+          if ((editingNodeVal.startsWith('{') && editingNodeVal.endsWith('}')) || (editingNodeVal.startsWith('[') && editingNodeVal.endsWith(']'))) {
+            parsedVal = JSON.parse(editingNodeVal);
+          } else if (editingNodeVal === 'true') {
+            parsedVal = true;
+          } else if (editingNodeVal === 'false') {
+            parsedVal = false;
+          } else if (!isNaN(Number(editingNodeVal)) && editingNodeVal.trim() !== '') {
+            parsedVal = Number(editingNodeVal);
+          }
+        } catch (_) {}
+
+        await set(ref(db, editingNodePath), parsedVal);
+        setEditingNodePath(null);
+        setEditingNodeVal('');
+        await alert({ title: 'Success', description: 'Updated node successfully', type: 'success' });
+      } catch (err: any) {
+        await alert({ title: 'Update Failed', description: err.message, type: 'error' });
+      }
+    };
+
+    const handleAssignPlayerPath = async () => {
+      if (!targetPlayer?.id) return;
+      try {
+        await update(ref(db, `users/${targetPlayer.id}`), {
+          customDatabasePath: selectedPlayerCustomPath
+        });
+        await alert({ title: 'Path Assigned', description: `Successfully custom synced database context path for ${targetPlayer.name}`, type: 'success' });
+      } catch (err: any) {
+        await alert({ title: 'Failed to assign', description: err.message, type: 'error' });
+      }
+    };
+
+    // FCM notification log stream simulation or real tracer
+    const simulatedNotificationLogs = [
+      { id: 'n1', type: 'approval_success', title: 'Arena Access Approved', body: 'Registration request successfully verified and accepted.', player: targetPlayer?.name || 'All Players', time: 'Just now', status: 'delivered' },
+      { id: 'n2', type: 'exam_registration', title: 'Test Exam Assigned', body: `Active exam assigned contextual and waiting in Events list.`, player: targetPlayer?.name || 'All Players', time: '2 mins ago', status: 'received' },
+      { id: 'n3', type: 'coins_refill', title: 'Coins Awarded', body: `Refilled +500 Rahee Coins via Admin command panel.`, player: targetPlayer?.name || 'All Players', time: '10 mins ago', status: 'handled' },
+      { id: 'n4', type: 'testing_mode', title: 'Testing Mode Alert', body: 'Invoking testing credentials token on matched dev device.', player: targetPlayer?.name || 'All Players', time: '1 hour ago', status: 'transmitted' }
+    ];
+
+    return (
+      <div className="space-y-12 pb-32">
+        {/* Header summary */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 bg-black/5 dark:bg-[#111] p-8 rounded-[2.5rem] border border-black/5 dark:border-white/5 relative overflow-hidden">
+          <div className="space-y-1 z-10">
+            <span className="text-[10px] font-black uppercase text-primary tracking-widest block">Live Platform Operations</span>
+            <h2 className="text-3xl font-black uppercase tracking-tight text-black dark:text-white">Active Monitor & Orbit Ring</h2>
+            <p className="text-xs text-black/40 dark:text-white/40 font-bold uppercase tracking-widest leading-none mt-2">Dual POV Device Simulator with Circular Animated DB Nodes Manager</p>
+          </div>
+          <div className="z-10 bg-white/5 p-4 rounded-3xl border border-black/5 dark:border-white/5 flex flex-col md:flex-row gap-4 items-center">
+            <label className="text-[10px] font-black uppercase tracking-widest text-[#32befa]">Target Player</label>
+            <select
+              value={resolvedPlayerId}
+              onChange={(e) => {
+                setSelectedMonitorPlayerId(e.target.value);
+                const p = users.find(u => u.id === e.target.value);
+                setSelectedPlayerCustomPath(p?.customDatabasePath || '');
+              }}
+              className="px-4 py-2 rounded-2xl bg-white dark:bg-black border border-black/10 dark:border-white/10 text-xs font-bold text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-[#32befa]"
+            >
+              <option value="">-- Choose active player --</option>
+              {activePlayers.map(p => (
+                <option key={`p-sel-${p.id}`} value={p.id}>{p.name} (@{p.username || p.id})</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* SECTION 1: Dual POV Simulators in Desktop view */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-stretch">
+          
+          {/* FRAME 1: Real Admin View */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between px-4">
+              <span className="text-xs font-black uppercase text-black/40 dark:text-white/40 tracking-widest flex items-center gap-1.5">
+                <Shield size={14} className="text-red-500" /> Frame 1: Real Admin View
+              </span>
+              <span className="bg-red-500/10 text-red-500 border border-red-500/20 px-2 py-0.5 rounded text-[8px] font-extrabold uppercase tracking-widest">Live Control</span>
+            </div>
+
+            {/* Custom Styled Mobile Simulator Frame */}
+            <div className="relative mx-auto max-w-[340px] h-[640px] bg-[#111] dark:bg-[#050505] rounded-[3.5rem] border-[12px] border-[#222] shadow-2xl overflow-hidden flex flex-col group transition-all duration-300 hover:border-[#1c1c1c]">
+              {/* Notch Bar / Camera Gloss */}
+              <div className="absolute top-0 inset-x-0 h-6 bg-black z-50 flex items-center justify-between px-6 text-[8px] font-black text-white/40 font-mono">
+                <span>9:41 AM</span>
+                <div className="w-16 h-4 bg-black rounded-b-xl mx-auto border-x border-b border-white/5 relative flex items-center justify-center">
+                  <span className="w-2.5 h-2.5 bg-[#0a0a0a] rounded-full border border-white/10 shrink-0" />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Activity size={8} className="text-primary animate-pulse" />
+                  <span>5G</span>
+                </div>
+              </div>
+
+              {/* Screen Content Scrollable */}
+              <div className="flex-1 overflow-y-auto bg-[#17171d] pt-8 px-4 pb-12 text-white font-sans space-y-4">
+                {/* Simulated Screen Title */}
+                <div className="pt-2 border-b border-white/5 pb-3">
+                  <div className="flex items-center gap-1">
+                    <Shield size={10} className="text-[#32befa]" />
+                    <span className="text-[9px] font-black uppercase text-[#32befa] tracking-widest">Active System Controller</span>
+                  </div>
+                  <h4 className="text-sm font-black uppercase tracking-tight mt-0.5">Admin Control Hub</h4>
+                </div>
+
+                {/* Target Information Card */}
+                {targetPlayer ? (
+                  <div className="bg-white/5 p-4 rounded-2xl border border-white/5 space-y-3">
+                    <div className="flex items-center gap-3">
+                      <img src={targetPlayer.avatarUrl || "https://api.dicebear.com/7.x/avataaars/svg?seed= Felix"} className="w-9 h-9 border border-white/20 rounded-xl" referrerPolicy="no-referrer" />
+                      <div>
+                        <h5 className="text-xs font-black uppercase leading-none">{targetPlayer.name}</h5>
+                        <p className="text-[7px] text-[#32befa] font-mono mt-1 uppercase">ID: {targetPlayer.id}</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 border-t border-white/5 pt-2">
+                      <div className="text-center bg-white/5 rounded-xl p-1.5 border border-white/5">
+                        <span className="text-[7px] text-white/40 block">COINS</span>
+                        <span className="text-[10px] font-extrabold text-[#32befa]">{targetPlayer.raheeCoins || 0}</span>
+                      </div>
+                      <div className="text-center bg-white/5 rounded-xl p-1.5 border border-white/5">
+                        <span className="text-[7px] text-white/40 block">XP</span>
+                        <span className="text-[10px] font-extrabold text-primary">{targetPlayer.xp || 0}</span>
+                      </div>
+                      <div className="text-center bg-white/5 rounded-xl p-1.5 border border-white/5">
+                        <span className="text-[7px] text-white/40 block">LIVES</span>
+                        <span className="text-[10px] font-extrabold text-red-400">{targetPlayer.lives?.count || 0}/16</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[10px] opacity-40 text-center">No player selected under monitor.</p>
+                )}
+
+                {/* DB Context Quick Injector Form */}
+                {targetPlayer && (
+                  <div className="bg-white/5 p-4 rounded-2xl border border-white/5 space-y-3">
+                    <span className="text-[8px] font-black uppercase text-white/40 tracking-widest block">Personalize DB Context Contextually</span>
+                    
+                    <div className="space-y-1.5">
+                      <label className="text-[7px] font-bold text-white/40 uppercase">Assigned Path Context</label>
+                      <input 
+                        type="text" 
+                        value={selectedPlayerCustomPath}
+                        onChange={e => setSelectedPlayerCustomPath(e.target.value)}
+                        placeholder="e.g. users/user_id/niche"
+                        className="w-full text-[9px] px-2.5 py-1.5 rounded-xl bg-black border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-[#32befa] font-mono"
+                      />
+                    </div>
+
+                    <button 
+                      onClick={handleAssignPlayerPath}
+                      className="w-full py-2 bg-[#32befa] hover:bg-[#32befa]/90 text-black text-[8px] font-black uppercase tracking-widest rounded-xl transition-all"
+                    >
+                      Apply Context Path
+                    </button>
+                  </div>
+                )}
+
+                {/* Notifications Live Audit Tracing Ledger */}
+                <div className="bg-white/5 p-4 rounded-2xl border border-white/5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[8px] font-black uppercase text-white/40 tracking-widest block">FCM Tracing Logs</span>
+                    <span className="animate-ping w-1.5 h-1.5 bg-green-500 rounded-full" />
+                  </div>
+
+                  <div className="space-y-2 max-h-[180px] overflow-y-auto">
+                    {simulatedNotificationLogs.map(log => (
+                      <div key={`notif-trace-${log.id}`} className="p-2.5 bg-black/40 rounded-xl border border-white/5 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className={`text-[6px] font-extrabold uppercase px-1 py-0.5 rounded ${
+                            log.type === 'approval_success' ? 'bg-green-500/20 text-green-400 border border-green-500/10' :
+                            log.type === 'testing_mode' ? 'bg-[#32befa]/20 text-[#32befa] border border-[#32befa]/10' :
+                            'bg-primary/20 text-primary border border-primary/10'
+                          }`}>{log.type}</span>
+                          <span className="text-[6px] text-white/20 font-mono">{log.time}</span>
+                        </div>
+                        <h6 className="text-[9px] font-bold text-white/95">{log.title}</h6>
+                        <p className="text-[7px] text-white/40 leading-tight">{log.body}</p>
+                        <div className="flex items-center justify-between text-[6px] text-white/30 border-t border-white/5 pt-1 mt-1 font-mono">
+                          <span>Rcvr: {log.player}</span>
+                          <span className="uppercase text-green-500">✔ {log.status}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
+              
+              {/* Home bar glass simulator */}
+              <div className="absolute bottom-1 inset-x-0 h-4 bg-transparent flex items-center justify-center pointer-events-none">
+                <div className="w-24 h-1 bg-white/20 rounded-full" />
+              </div>
+            </div>
+          </div>
+
+          {/* FRAME 2: Player POV of Game */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between px-4">
+              <span className="text-xs font-black uppercase text-black/40 dark:text-white/40 tracking-widest flex items-center gap-1.5">
+                <Tv size={14} className="text-[#32befa]" /> Frame 2: Player Live POV Simulation
+              </span>
+              <span className="bg-[#32befa]/10 text-[#32befa] border border-[#32befa]/20 px-2 py-0.5 rounded text-[8px] font-extrabold uppercase tracking-widest animate-pulse">Live Feed</span>
+            </div>
+
+            {/* Custom Styled Mobile Simulator Frame */}
+            <div className={`relative mx-auto max-w-[340px] h-[640px] rounded-[3.5rem] border-[12px] border-[#222] shadow-2xl overflow-hidden flex flex-col group transition-all duration-300 hover:border-[#1c1c1c] ${isDark ? 'bg-black border-[#222]' : 'bg-white border-[#ddd]'}`}>
+              {/* Notch Bar / Camera Gloss */}
+              <div className="absolute top-0 inset-x-0 h-6 bg-black z-50 flex items-center justify-between px-6 text-[8px] font-black text-white/40 font-mono">
+                <span>9:41 AM</span>
+                <div className="w-16 h-4 bg-black rounded-b-xl mx-auto border-x border-b border-white/5 relative flex items-center justify-center">
+                  <span className="w-2.5 h-2.5 bg-[#0a0a0a] rounded-full border border-white/10 shrink-0" />
+                </div>
+                <div className="flex items-center gap-1.5 flex-row-reverse">
+                  <span>100%</span>
+                  <Activity size={8} className="text-[#32befa]" />
+                </div>
+              </div>
+
+              {/* Live Render Area based on player's activeState */}
+              <div className="flex-1 overflow-y-auto pt-8 px-4 pb-12 flex flex-col text-black dark:text-white bg-white dark:bg-[#050505]">
+                {targetPlayer ? (
+                  <div className="flex-1 flex flex-col space-y-4 pt-2">
+                    
+                    {/* Simulator Header */}
+                    <div className="flex items-center justify-between border-b border-black/5 dark:border-white/5 pb-2">
+                      <div className="flex items-center gap-2">
+                        <img src={targetPlayer.avatarUrl || "https://api.dicebear.com/7.x/avataaars/svg?seed=Buddy"} className="w-7 h-7 rounded-lg border border-black/5 dark:border-white/10" referrerPolicy="no-referrer" />
+                        <div>
+                          <p className="text-[10px] font-black leading-none uppercase">{targetPlayer.name}</p>
+                          <p className="text-[6px] text-black/40 dark:text-white/40 leading-none mt-1">Tier: {targetPlayer.tier || 'Starter'}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 bg-black/5 dark:bg-white/5 px-2 py-1 rounded-xl">
+                        <Coins size={10} className="text-yellow-500" />
+                        <span className="text-[9px] font-black">{targetPlayer.raheeCoins || 0}</span>
+                      </div>
+                    </div>
+
+                    {/* DYNAMIC SCREEN PREVIEW BODY BASED ON REALTIME ACTIVE VIEW STATE */}
+                    {activeState.showSettings ? (
+                      /* SIMULATED SETTINGS OVERLAY */
+                      <div className="bg-black/5 dark:bg-white/5 p-4 rounded-2xl border border-black/5 dark:border-white/5 space-y-3 flex-1">
+                        <div className="flex items-center justify-between border-b border-current/10 pb-1">
+                          <h5 className="text-[10px] font-black uppercase text-[#32befa]">Settings Menu</h5>
+                          <span className="text-[6px] px-1 bg-red-500/10 text-red-500 font-bold uppercase rounded">OPENED</span>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="p-2 bg-white/45 dark:bg-black/40 rounded-xl flex items-center justify-between text-[8px] font-bold">
+                            <span>BGM Soundtracks</span>
+                            <span className="text-green-500 uppercase">ACTIVE</span>
+                          </div>
+                          <div className="p-2 bg-white/45 dark:bg-black/40 rounded-xl flex items-center justify-between text-[8px] font-bold">
+                            <span>Dark Mode skin</span>
+                            <span>{isDark ? 'ON' : 'OFF'}</span>
+                          </div>
+                          <div className="p-2 bg-white/45 dark:bg-black/40 rounded-xl flex items-center justify-between text-[8px] font-bold">
+                            <span>Ambient Light Detector</span>
+                            <span className="text-white/40">DISABLED</span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : activeState.showQuiz || activeState.activeExamId ? (
+                      /* SIMULATED ACTIVE QUIZ MODE */
+                      <div className="bg-[#32befa]/5 p-4 rounded-2xl border border-[#32befa]/20 space-y-3 flex-1 flex flex-col justify-between">
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[6px] font-black uppercase text-[#32befa]">
+                            <span>ACTIVE QUIZ ARENA</span>
+                            <span>ROUND {targetPlayer.currentRound || 1}</span>
+                          </div>
+                          <h5 className="text-xs font-black uppercase tracking-tight mt-1 leading-snug">
+                            {activeState.activeExamId ? "Official Exam Event" : "Standard Multi-Topic Niche Arena"}
+                          </h5>
+                          <div className="w-full h-1 bg-black/10 dark:bg-white/10 rounded-full mt-2 overflow-hidden">
+                            <div className="w-[45%] h-full bg-[#32befa]" />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5 p-2 bg-black/5 rounded-xl border border-black/5 text-[8px] font-bold leading-normal text-black/70 dark:text-white/70">
+                          <p className="text-[9px] font-black text-black dark:text-white mb-1">Q: Select the correct answer?</p>
+                          <div className="p-1 px-2.5 rounded bg-[#32befa] text-black font-extrabold flex justify-between">
+                            <span>Option A</span>
+                            <span>45% Selected</span>
+                          </div>
+                          <div className="p-1 px-2.5 rounded bg-black/5 dark:bg-white/5 flex justify-between">
+                            <span>Option B</span>
+                            <span>20%</span>
+                          </div>
+                        </div>
+
+                        <p className="text-[6px] text-white/40 uppercase tracking-widest text-center font-bold">Timer: 29:32 Remaining</p>
+                      </div>
+                    ) : activeState.activeTab === 'shop' || activeState.showRaheePass ? (
+                      /* SIMULATED COINS ARENA SHOP */
+                      <div className="bg-yellow-500/5 p-4 rounded-2xl border border-yellow-500/20 space-y-3 flex-1">
+                        <div className="flex items-center justify-between border-b border-yellow-500/10 pb-1">
+                          <h5 className="text-[10px] font-black uppercase text-yellow-500">Shop Store</h5>
+                          <span className="text-[6px] text-yellow-500 font-extrabold uppercase">50% DISCOUNT</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="bg-white/5 border border-black/5 dark:border-white/5 rounded-xl p-2 text-center text-[8px] font-black space-y-1">
+                            <span className="block text-[6px] text-yellow-500">FULL REFILL</span>
+                            <span>Health Refill</span>
+                            <span className="block mt-1 font-mono text-[#32befa]">500 Cc</span>
+                          </div>
+                          <div className="bg-white/5 border border-black/5 dark:border-white/5 rounded-xl p-2 text-center text-[8px] font-black space-y-1">
+                            <span className="block text-[6px] text-purple-400">RAHEE PASS</span>
+                            <span>Premium Season</span>
+                            <span className="block mt-1 font-mono text-[#32befa]">1200 Cc</span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      /* SIMULATED REGULAR HOME SCREEN VIEW */
+                      <div className="space-y-3 flex-1 flex flex-col justify-between">
+                        <div className="bg-black/5 dark:bg-[#111] p-4 rounded-2xl border border-black/5 dark:border-white/5 space-y-2 text-center">
+                          <div className="w-10 h-10 rounded-full mx-auto bg-primary/10 flex items-center justify-center text-primary border border-primary/20">
+                            <Activity size={18} className="animate-spin" />
+                          </div>
+                          <h5 className="text-xs font-black uppercase text-black dark:text-white leading-none tracking-tight">RAHEE ARENA QUIZ</h5>
+                          <span className="text-[6px] font-black uppercase text-[#32befa] tracking-widest block">Level {Math.ceil((targetPlayer.xp || 0) / 1000) || 1} Challenger</span>
+                        </div>
+
+                        <div className="p-3.5 bg-[#32befa]/5 rounded-xl border border-[#32befa]/10 flex items-center justify-between">
+                          <div className="text-left">
+                            <span className="text-[6px] font-black uppercase text-white/40 tracking-widest block">SELECTED TOPIC</span>
+                            <span className="text-[10px] font-black leading-tight block truncate mt-0.5">
+                              {topics.find(t => t.id === targetPlayer.selectedTopicId)?.name || 'General Knowledge'}
+                            </span>
+                          </div>
+                          <span className="px-2 py-0.5 rounded bg-[#32befa] text-black text-[6px] font-black uppercase">PLAY NOW</span>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between items-center text-[6px] text-black/40 dark:text-white/40 font-bold uppercase">
+                            <span>EXP Progression</span>
+                            <span>{(targetPlayer.xp || 0) % 1000}/1000 XP</span>
+                          </div>
+                          <div className="w-full h-1 bg-black/15 dark:bg-white/10 rounded-full overflow-hidden">
+                            <div className="h-full bg-primary" style={{ width: `${((targetPlayer.xp || 0) % 1000) / 10}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Sim Bottom Navigation Representation */}
+                    <div className="grid grid-cols-5 gap-0.5 text-center border-t border-black/5 dark:border-white/5 pt-2 text-[6px] font-black uppercase tracking-wider text-black/40 dark:text-white/40 select-none">
+                      <span className={activeState.activeTab === 'home' ? 'text-[#32befa]' : ''}>HOME</span>
+                      <span className={activeState.activeTab === 'friends' ? 'text-[#32befa]' : ''}>FRIENDS</span>
+                      <span className={activeState.activeTab === 'leaderboard' ? 'text-[#32befa]' : ''}>TROPHY</span>
+                      <span className={activeState.activeTab === 'events' ? 'text-[#32befa]' : ''}>EVENTS</span>
+                      <span className={activeState.activeTab === 'shop' || activeState.showRaheePass ? 'text-[#32befa]' : ''}>SHOP</span>
+                    </div>
+
+                  </div>
+                ) : (
+                  <p className="text-[10px] opacity-40 text-center m-auto">Please wait while device synchronizes...</p>
+                )}
+              </div>
+
+              {/* Home bar glass simulator */}
+              <div className="absolute bottom-1 inset-x-0 h-4 bg-transparent flex items-center justify-center pointer-events-none">
+                <div className="w-24 h-1 bg-white/20 rounded-full" />
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        {/* SECTION 2: Circular Animated DB Orbit View */}
+        <div className="bg-black/5 dark:bg-[#111] p-8 md:p-12 rounded-[2.5rem] border border-black/5 dark:border-white/5 space-y-10">
+          <div className="space-y-1 text-center max-w-xl mx-auto">
+            <span className="text-[10px] font-black uppercase text-primary tracking-widest block">Circular Node Ring Visualizer</span>
+            <h3 className="text-2xl font-black uppercase tracking-tight text-black dark:text-white">RTDB Orbit Dashboard</h3>
+            <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mb-4">Click node spheres to crawl, add, edit & destroy nested schema values in real-time.</p>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-10 items-center">
+            
+            {/* LEFT / CENTER: The Orbit SVG & interactive floating spheres */}
+            <div className="xl:col-span-2 flex flex-col items-center justify-center p-6 bg-black/10 dark:bg-black/40 rounded-[2rem] border border-black/5 dark:border-white/5 min-h-[440px] relative overflow-hidden select-none">
+              
+              {/* Radial Orbit Lines Backdrop SVG */}
+              <div className="absolute inset-0 flex items-center justify-center opacity-30 pointer-events-none">
+                <svg className="w-[380px] h-[380px] text-primary/30 dark:text-primary/10" viewBox="0 0 400 400">
+                  <circle cx="200" cy="200" r="150" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 6" className="animate-[spin_120s_linear_infinite]" />
+                  <circle cx="200" cy="200" r="100" fill="none" stroke="currentColor" strokeWidth="1.2" strokeDasharray="3 4" className="animate-[spin_60s_linear_infinite_reverse]" />
+                  <circle cx="200" cy="200" r="60" fill="none" stroke="currentColor" strokeWidth="1" strokeDasharray="2 3" />
+                  <line x1="200" y1="50" x2="200" y2="350" stroke="currentColor" strokeWidth="0.5" strokeDasharray="4 8" />
+                  <line x1="50" y1="200" x2="350" y2="200" stroke="currentColor" strokeWidth="0.5" strokeDasharray="4 8" />
+                </svg>
+              </div>
+
+              {/* Rotating glowing central ring node */}
+              <motion.button 
+                whileHover={{ scale: 1.1 }}
+                onClick={() => setOrbitActivePath('')}
+                className="w-24 h-24 rounded-full bg-gradient-to-tr from-primary to-[#32befa] text-black border-4 border-black/10 dark:border-white/10 shadow-[0_0_40px_rgba(var(--primary-color),0.4)] flex flex-col items-center justify-center z-20 cursor-pointer relative"
+              >
+                <div className="absolute inset-0 rounded-full animate-ping bg-primary/20" />
+                <Database size={24} />
+                <span className="text-[8px] font-black uppercase mt-1 tracking-widest">RTDB CORE</span>
+                <span className="text-[6px] font-mono opacity-80 mt-0.5">/{orbitActivePath.split('/').filter(Boolean).slice(-1)[0] || 'root'}</span>
+              </motion.button>
+
+              {/* Circular floating nodes list placement */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                {nodesList.map((node, index) => {
+                  const angle = (index / Math.max(1, nodesList.length)) * 360;
+                  const radius = nodesList.length > 8 ? 140 : 120;
+                  const rad = (angle * Math.PI) / 180;
+                  const x = Math.cos(rad) * radius;
+                  const y = Math.sin(rad) * radius;
+
+                  const isPrimitive = typeof node.val !== 'object' || node.val === null;
+
+                  return (
+                    <motion.div
+                      key={`orbit-node-${node.key}-${index}`}
+                      initial={{ scale: 0, x: 0, y: 0 }}
+                      animate={{ scale: 1, x, y }}
+                      transition={{ type: 'spring', damping: 15, delay: index * 0.05 }}
+                      className="absolute pointer-events-auto"
+                    >
+                      <motion.button
+                        whileHover={{ scale: 1.15, zIndex: 50 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={async () => {
+                          if (isPrimitive) {
+                            // If primitive, open inline value editor
+                            const currentFullPath = orbitActivePath ? `${orbitActivePath.replace(/^\/+|\/+$/g, '')}/${node.key}` : node.key;
+                            setEditingNodePath(currentFullPath);
+                            setEditingNodeVal(String(node.val));
+                          } else {
+                            // Deep-dive inside this nested schema node
+                            const nextPath = orbitActivePath ? `${orbitActivePath.replace(/^\/+|\/+$/g, '')}/${node.key}` : node.key;
+                            setOrbitActivePath(nextPath);
+                          }
+                        }}
+                        className={`w-16 h-16 rounded-full border-2 flex flex-col items-center justify-center p-1 cursor-pointer transition-all duration-300 relative ${
+                          isPrimitive 
+                            ? 'bg-[#111] dark:bg-black border-[#32befa]/50 text-[#32befa] hover:border-[#32befa] shadow-[0_0_15px_rgba(50,190,250,0.1)]' 
+                            : 'bg-primary/10 border-primary/40 text-primary hover:border-primary shadow-[0_0_20px_rgba(var(--primary-color),0.15)]'
+                        }`}
+                        title={`Key: ${node.key}\nValue: ${isPrimitive ? String(node.val) : 'Object'}`}
+                      >
+                        <span className="text-[8px] font-black uppercase truncate w-full text-center px-0.5 leading-none">{node.key}</span>
+                        <span className="text-[6px] opacity-60 font-mono mt-1 block truncate w-full text-center max-w-[50px]">
+                          {isPrimitive ? String(node.val) : 'Object {}'}
+                        </span>
+
+                        {/* Quick Delete Node Hover Option */}
+                        <div 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteOrbitNode(node.key);
+                          }}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-white text-[8px] border border-black/20 hover:scale-110 active:scale-90 shadow cursor-pointer"
+                          title="Delete this node key"
+                        >
+                          ✕
+                        </div>
+                      </motion.button>
+                    </motion.div>
+                  );
+                })}
+
+                {nodesList.length === 0 && (
+                  <div className="absolute text-center text-white/40">
+                    <p className="text-[10px] font-black uppercase tracking-wider">Empty Node Schema</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Breadcrumbs for navigation navigation path */}
+              <div className="absolute bottom-4 inset-x-4 flex items-center justify-center gap-1.5 text-[8px] font-bold text-white/40 uppercase tracking-widest font-mono flex-wrap">
+                <button onClick={() => setOrbitActivePath('')} className="hover:text-primary transition-all">root</button>
+                {orbitActivePath.split('/').filter(Boolean).map((chunk, cIdx, arr) => (
+                  <React.Fragment key={`crumb-${cIdx}`}>
+                    <span>/</span>
+                    <button 
+                      onClick={() => {
+                        const nextSlice = arr.slice(0, cIdx + 1).join('/');
+                        setOrbitActivePath(nextSlice);
+                      }}
+                      className="hover:text-primary transition-all text-white/70"
+                    >
+                      {chunk}
+                    </button>
+                  </React.Fragment>
+                ))}
+              </div>
+
+            </div>
+
+            {/* RIGHT: Node Controls Panel */}
+            <div className="space-y-6 bg-black/10 dark:bg-black/30 p-6 rounded-[2rem] border border-black/5 dark:border-white/5">
+              <div className="border-b border-black/10 dark:border-white/10 pb-4">
+                <span className="text-[9px] font-black uppercase text-primary tracking-widest block">Configure Path Context</span>
+                <h4 className="text-lg font-black uppercase text-black dark:text-white leading-none mt-1">Orbit Path Controller</h4>
+                
+                {/* Active Path Context Bar */}
+                <div className="flex items-center gap-2 bg-white dark:bg-black px-4 py-2.5 rounded-2xl border border-black/5 dark:border-white/5 mt-3">
+                  <span className="text-[10px] text-black/50 dark:text-white/50 font-mono select-all">/{orbitActivePath || 'root'}</span>
+                  {orbitActivePath && (
+                    <button
+                      onClick={() => {
+                        const arr = orbitActivePath.split('/').filter(Boolean);
+                        arr.pop();
+                        setOrbitActivePath(arr.join('/'));
+                      }}
+                      className="ml-auto px-2.5 py-1 bg-white/10 hover:bg-white/15 dark:bg-black dark:hover:bg-white/5 text-[8px] font-black uppercase tracking-widest text-[#32befa] rounded-xl border border-white/5"
+                    >
+                      Up Level
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Inline editor overlay when targeting a variable key */}
+              {editingNodePath ? (
+                <div className="p-4 bg-primary/5 rounded-2xl border border-primary/20 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] font-black uppercase text-primary">Editing Node Value</span>
+                    <button onClick={() => setEditingNodePath(null)} className="text-black/40 dark:text-white/40 hover:text-white">✕</button>
+                  </div>
+                  <p className="text-[8px] font-mono text-black/40 dark:text-white/40">Path: {editingNodePath}</p>
+                  <div className="space-y-1">
+                    <label className="text-[8px] font-bold text-black/50 dark:text-white/40 uppercase ml-2 block">Value</label>
+                    <textarea 
+                      value={editingNodeVal}
+                      onChange={e => setEditingNodeVal(e.target.value)}
+                      placeholder="Enter value or JSON structure"
+                      rows={3}
+                      className="w-full text-xs px-3 py-2 rounded-xl bg-white dark:bg-black border border-black/10 dark:border-white/10 text-black dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                  <button 
+                    onClick={handleUpdateOrbitNode}
+                    className="w-full py-2.5 bg-primary text-black font-black uppercase tracking-widest text-[9px] rounded-xl active:scale-95 transition-all"
+                  >
+                    Commit Updated Value
+                  </button>
+                </div>
+              ) : (
+                /* Add a sub-node under the focused directory path context */
+                <div className="space-y-4">
+                  <span className="text-[9px] font-black uppercase text-[#32befa] tracking-widest block">Create Sub-Node Here</span>
+                  
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-[8px] font-extrabold text-black/40 dark:text-white/40 uppercase ml-2 block">Key / Node Name</label>
+                      <input 
+                        type="text" 
+                        value={newOrbitNodeName}
+                        onChange={e => setNewOrbitNodeName(e.target.value)}
+                        placeholder="e.g. nicheCategory"
+                        className="w-full text-xs px-3.5 py-2.5 rounded-2xl bg-white dark:bg-black border border-black/10 dark:border-white/10 text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-[#32befa]"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[8px] font-extrabold text-black/40 dark:text-white/40 uppercase ml-2 block">Value (String, Number, Bool, or JSON)</label>
+                      <input 
+                        type="text" 
+                        value={newOrbitNodeVal}
+                        onChange={e => setNewOrbitNodeVal(e.target.value)}
+                        placeholder="e.g. General or true or 15"
+                        className="w-full text-xs px-3.5 py-2.5 rounded-2xl bg-white dark:bg-black border border-black/10 dark:border-white/10 text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-[#32befa] font-mono"
+                      />
+                    </div>
+
+                    <button 
+                      onClick={handleAddOrbitNode}
+                      className="w-full py-3.5 bg-[#32befa] hover:bg-[#32befa]/90 text-black text-xs font-black uppercase tracking-widest rounded-2xl transition-all border border-[#32befa]/20 shadow-lg active:scale-95"
+                    >
+                      Assign Node
+                    </button>
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+          </div>
+        </div>
+
       </div>
     );
   };

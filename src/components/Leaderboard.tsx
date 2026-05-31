@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { ref, onValue } from 'firebase/database';
+import { ref, onValue, remove, update } from 'firebase/database';
 import { User } from '../types';
-import { Trophy, Medal, Crown, TrendingUp, Bot, Clock } from 'lucide-react';
+import { Trophy, Medal, Crown, TrendingUp, Bot, Clock, Trash2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion } from 'motion/react';
 
@@ -15,6 +15,7 @@ export default function Leaderboard() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'daily' | 'friends' | 'all'>('all');
   const { currentUser } = useUser();
+  const [deletingPlayerId, setDeletingPlayerId] = useState<string | null>(null);
 
   const [dailyCountdown, setDailyCountdown] = useState('');
   const [weeklyCountdown, setWeeklyCountdown] = useState('');
@@ -26,13 +27,92 @@ export default function Leaderboard() {
       if (data) {
         const list = Object.entries(data)
           .filter(([_, val]) => val !== null)
-          .map(([key, val]: [string, any]) => ({ ...val, id: key })) as User[];
+          .map(([key, val]: [string, any]) => {
+            const u = { ...val, id: key } as User;
+            const isAdmin = currentUser?.role === 'admin';
+            if (!u.name || u.name.trim() === '' || (u.isBot && u.name.toLowerCase().includes('bot') && !isAdmin)) {
+              if (u.isBot) {
+                const firstNames = ["Rohan", "Amit", "Priya", "Rahul", "Sneha", "Vikram", "Anjali", "Aditya", "Neha", "Sanjay", "Karan", "Riya", "Aarav", "Meera", "Kabir", "Deepak", "Tanvi", "Arjun", "Kiran", "Yash"];
+                const lastNames = ["Sharma", "Verma", "Gupta", "Singh", "Kumar", "Mehta", "Patel", "Joshi", "Das", "Roy", "Bose", "Choudhury", "Malhotra", "Kapoor", "Sen", "Reddy", "Nair", "Iyer", "Rao", "Mishra"];
+                const charSum = key.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+                const f = firstNames[charSum % firstNames.length];
+                const l = lastNames[(charSum + 7) % lastNames.length];
+                u.name = `${f} ${l}`;
+              } else {
+                u.name = "Unnamed Player";
+              }
+            }
+            return u;
+          });
         setPlayers(list);
       }
       setLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, [currentUser]);
+
+  // Dynamically update bot points when a real player checks the leaderboard
+  useEffect(() => {
+    if (loading || players.length === 0 || !currentUser || currentUser.isBot) {
+      return;
+    }
+
+    const checkAndProgressBots = async () => {
+      const bots = players.filter(p => p.isBot);
+      if (bots.length === 0) return;
+
+      const now = Date.now();
+      // Set update interval to 3 minutes (180,000 ms)
+      const UPDATE_INTERVAL = 180000;
+
+      for (const bot of bots) {
+        const lastUpdated = (bot as any).lastPointsUpdateTime || 0;
+        
+        // If never updated, initialize with a randomized past offset so they stagger naturally
+        if (!lastUpdated) {
+          const randomPast = now - Math.floor(Math.random() * UPDATE_INTERVAL);
+          try {
+            await update(ref(db, `users/${bot.id}`), {
+              lastPointsUpdateTime: randomPast
+            });
+          } catch (e) {
+            console.error("Failed to initialize bot points timer", e);
+          }
+          continue;
+        }
+
+        if (now - lastUpdated > UPDATE_INTERVAL) {
+          // Increase points by a random amount between 15 and 85 points (strictly less than 100 counts)
+          const amount = Math.floor(Math.random() * 70) + 15;
+          const currentXp = bot.xp || 0;
+          const currentDaily = bot.dailyXP !== undefined && bot.dailyXP !== null ? bot.dailyXP : currentXp;
+          const currentWeekly = bot.weeklyXP !== undefined && bot.weeklyXP !== null ? bot.weeklyXP : currentXp;
+
+          const nextXp = currentXp + amount;
+          const nextDaily = currentDaily + amount;
+          const nextWeekly = currentWeekly + amount;
+
+          try {
+            await update(ref(db, `users/${bot.id}`), {
+              xp: nextXp,
+              dailyXP: nextDaily,
+              weeklyXP: nextWeekly,
+              lastPointsUpdateTime: now
+            });
+            console.log(`Successfully elevated bot ${bot.name} XP by +${amount}`);
+          } catch (err) {
+            console.error("Failed to dynamically progress bot points", err);
+          }
+        }
+      }
+    };
+
+    // Run dynamic sweep check immediately and recurringly every 30 seconds
+    const intervalId = setInterval(checkAndProgressBots, 30000);
+    checkAndProgressBots();
+
+    return () => clearInterval(intervalId);
+  }, [players, loading, currentUser]);
 
   // Timers
   useEffect(() => {
@@ -80,9 +160,17 @@ export default function Leaderboard() {
 
     // Sort based on tab
     if (activeTab === 'daily') {
-      list.sort((a, b) => (b.dailyXP || 0) - (a.dailyXP || 0));
+      list.sort((a, b) => {
+        const valA = a.dailyXP !== undefined && a.dailyXP !== null ? a.dailyXP : (a.isBot ? a.xp || 0 : 0);
+        const valB = b.dailyXP !== undefined && b.dailyXP !== null ? b.dailyXP : (b.isBot ? b.xp || 0 : 0);
+        return valB - valA;
+      });
     } else if (activeTab === 'friends' || activeTab === 'all') {
-      list.sort((a, b) => (b.weeklyXP || 0) - (a.weeklyXP || 0));
+      list.sort((a, b) => {
+        const valA = a.weeklyXP !== undefined && a.weeklyXP !== null ? a.weeklyXP : (a.isBot ? a.xp || 0 : 0);
+        const valB = b.weeklyXP !== undefined && b.weeklyXP !== null ? b.weeklyXP : (b.isBot ? b.xp || 0 : 0);
+        return valB - valA;
+      });
     }
 
     return list;
@@ -214,46 +302,97 @@ export default function Leaderboard() {
              ))}
            </>
          ) : (
-           filteredPlayers.map((player, idx) => (
-             <motion.div
-               key={`leaderboard-row-${player.id || idx}-${idx}`}
-               initial={{ x: -20, opacity: 0 }}
-               animate={{ x: 0, opacity: 1 }}
-               transition={{ delay: idx * 0.05 }}
-               className={cn(
-                 "p-4 rounded-2xl flex items-center justify-between border transition-all",
-                 player.id === currentUser?.id ? "ring-2 ring-primary bg-primary/5 border-primary/20 shadow-lg shadow-primary/10" : 
-                 "bg-white dark:bg-[#111] border-black/10 dark:border-white/10 shadow-sm dark:shadow-md"
-               )}
-             >
-                <div className="flex items-center gap-4">
-                   <div className="w-8 flex justify-center">
-                      {getRankBadge(idx)}
-                   </div>
-                   <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary font-black overflow-hidden border border-primary/20">
-                      {player.avatarUrl ? (
-                        <img src={player.avatarUrl} alt={player.name} className="w-full h-full object-cover" />
-                      ) : (
-                        (player.name || 'P')[0].toUpperCase()
-                      )}
-                   </div>
-                   <div className="space-y-0.5 text-left">
-                      <p className="font-bold flex items-center gap-2 text-black dark:text-white">
-                        {player.name}
-                        {player.id === currentUser?.id && <span className="bg-primary text-black text-[8px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest">You</span>}
-                      </p>
-                      <p className="text-[10px] text-black/40 dark:text-white/40 font-bold uppercase tracking-widest leading-none">Rank #{idx + 1}</p>
-                   </div>
-                </div>
-                <div className="text-right shrink-0">
-                   <p className="text-lg font-black text-primary leading-none">
-                     {activeTab === 'daily' ? (player.dailyXP || 0) : (player.weeklyXP || 0)}
-                   </p>
-                   <p className="text-[8px] font-bold text-black/20 dark:text-white/20 uppercase tracking-widest">Points</p>
-                </div>
-             </motion.div>
-           ))
-         )}
+            filteredPlayers.map((player, idx) => (
+              <motion.div
+                key={`leaderboard-row-${player.id || idx}-${idx}`}
+                initial={{ x: -20, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                transition={{ delay: idx * 0.05 }}
+                className={cn(
+                  "p-4 rounded-2xl flex items-center justify-between border transition-all",
+                  player.id === currentUser?.id ? "ring-2 ring-primary bg-primary/5 border-primary/20 shadow-lg shadow-primary/10" : 
+                  "bg-white dark:bg-[#111] border-black/10 dark:border-white/10 shadow-sm dark:shadow-md"
+                )}
+              >
+                 <div className="flex items-center gap-4 min-w-0">
+                    <div className="w-8 flex justify-center shrink-0">
+                       {getRankBadge(idx)}
+                    </div>
+                    <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary font-black overflow-hidden border border-primary/20 shrink-0">
+                       {player.avatarUrl ? (
+                         <img src={player.avatarUrl} alt={player.name} className="w-full h-full object-cover" />
+                       ) : (
+                         (player.name || 'P')[0].toUpperCase()
+                       )}
+                    </div>
+                    <div className="space-y-0.5 text-left min-w-0">
+                       <p className="font-bold flex items-center gap-2 text-black dark:text-white truncate">
+                         <span className="truncate">{player.name}</span>
+                         {player.isBot && currentUser?.role === 'admin' && (
+                            <span className="bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/10 text-[8px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest flex items-center gap-1 shrink-0 font-sans">
+                              <Bot size={8} /> Bot (Admin)
+                            </span>
+                          )}
+                         {player.id === currentUser?.id && <span className="bg-primary text-black text-[8px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest shrink-0 font-sans">You</span>}
+                       </p>
+                       <p className="text-[10px] text-black/40 dark:text-white/40 font-bold uppercase tracking-widest leading-none">Rank #{idx + 1}</p>
+                    </div>
+                 </div>
+                 <div className="flex items-center gap-3 shrink-0">
+                    <div className="text-right">
+                       <p className="text-lg font-black text-primary leading-none">
+                         {activeTab === 'daily' 
+                           ? (player.dailyXP !== undefined && player.dailyXP !== null ? player.dailyXP : (player.xp || 0)) 
+                           : (player.weeklyXP !== undefined && player.weeklyXP !== null ? player.weeklyXP : (player.xp || 0))}
+                       </p>
+                       <p className="text-[8px] font-bold text-black/20 dark:text-white/20 uppercase tracking-widest mt-0.5">Points</p>
+                    </div>
+
+                    {deletingPlayerId === player.id ? (
+                      <div className="flex items-center gap-1 bg-red-500/5 p-1 rounded-xl border border-red-500/10">
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              await remove(ref(db, `users/${player.id}`));
+                              setDeletingPlayerId(null);
+                            } catch (err) {
+                              console.error(err);
+                            }
+                          }}
+                          className="px-2 py-1 text-[8px] font-black uppercase tracking-wider bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all font-sans"
+                        >
+                          Del
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeletingPlayerId(null);
+                          }}
+                          className="px-2 py-1 text-[8px] font-black uppercase tracking-wider bg-gray-100 hover:bg-gray-200 dark:bg-white/10 dark:hover:bg-white/20 text-black dark:text-white rounded-lg transition-all font-sans"
+                        >
+                          No
+                        </button>
+                      </div>
+                    ) : (
+                      currentUser?.role === 'admin' && (player.isBot || !player.name || player.name.includes('Bot') || player.name.includes('Player')) && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeletingPlayerId(player.id);
+                          }}
+                          className="p-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/25 text-red-500 border border-red-500/15 transition-all active:scale-95 shrink-0"
+                          title="Delete Bot/Unnamed Player"
+                          id={`delete-btn-${player.id}`}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )
+                    )}
+                 </div>
+              </motion.div>
+            ))
+          )}
       </div>
     </div>
   );

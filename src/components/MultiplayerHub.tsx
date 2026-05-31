@@ -384,7 +384,7 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
                                     <p className="font-bold text-xs uppercase truncate text-white">{p.userName}</p>
                                     <div className="flex flex-wrap gap-1 mt-0.5">
                                       {p.userId === lobbyRoom.hostId && <span className="text-[6px] bg-blue-500 text-black px-1 rounded-sm font-black tracking-widest uppercase">Host</span>}
-                                      {p.isBot && <span className="text-[6px] bg-amber-400 text-black px-1 rounded-sm font-black tracking-widest uppercase">BOT</span>}
+                                      {p.isBot && currentUser?.role === 'admin' && <span className="text-[6px] bg-amber-400 text-black px-1 rounded-sm font-black tracking-widest uppercase">BOT</span>}
                                     </div>
                                  </div>
                                  {p.userId === currentUser.id && (
@@ -413,7 +413,7 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
                                     <p className="font-bold text-xs uppercase truncate text-white">{p.userName}</p>
                                     <div className="flex flex-wrap gap-1 mt-0.5">
                                       {p.userId === lobbyRoom.hostId && <span className="text-[6px] bg-red-500 text-black px-1 rounded-sm font-black tracking-widest uppercase">Host</span>}
-                                      {p.isBot && <span className="text-[6px] bg-amber-400 text-black px-1 rounded-sm font-black tracking-widest uppercase">BOT</span>}
+                                      {p.isBot && currentUser?.role === 'admin' && <span className="text-[6px] bg-amber-400 text-black px-1 rounded-sm font-black tracking-widest uppercase">BOT</span>}
                                     </div>
                                  </div>
                                  {p.userId === currentUser.id && (
@@ -456,7 +456,7 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
                               {((Object.values(lobbyRoom.participants) as MatchProgress[]).find((p) => p.userId !== currentUser?.id))?.userName || 'Player 2'}
                             </p>
                             <span className="text-[8px] font-black text-white/40 uppercase tracking-widest">
-                              {((Object.values(lobbyRoom.participants) as MatchProgress[]).find((p) => p.userId !== currentUser?.id))?.isBot ? 'BOT' : 'Joined'}
+                              {((Object.values(lobbyRoom.participants) as MatchProgress[]).find((p) => p.userId !== currentUser?.id))?.isBot && currentUser?.role === 'admin' ? 'BOT' : 'Joined'}
                             </span>
                           </>
                         ) : (

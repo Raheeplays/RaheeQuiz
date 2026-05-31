@@ -142,6 +142,51 @@ export default function MainMenu() {
     return () => clearInterval(interval);
   }, [currentUser?.id, currentUser?.lastLoginDate, currentUser?.lives?.lastRefill]);
 
+  // Real-time Active View State Sync for Admin Monitor
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    
+    // Set active values or standard blank values
+    const actState = {
+      activeTab: activeTab || 'home',
+      showQuiz: showQuiz || false,
+      activeExamId: activeExamId || "",
+      showSettings: showSettings || false,
+      showTopicSelect: showTopicSelect || false,
+      showFeedback: showFeedback || false,
+      showMultiplayerHub: showMultiplayerHub || false,
+      multiRoomId: multiRoomId || "",
+      showScoreCard: showScoreCard || false,
+      showHistory: showHistory || false,
+      showProfile: showProfile || false,
+      showLivesModal: showLivesModal || false,
+      showStreakModal: showStreakModal || false,
+      showRaheePass: showRaheePass || false,
+      isDarkObj: isDark, // sync dark mode theme
+      lastUpdated: Date.now()
+    };
+    
+    const activeStateRef = ref(db, `users/${currentUser.id}/activeState`);
+    set(activeStateRef, actState).catch(err => console.error("Active state sync failed:", err));
+  }, [
+    currentUser?.id,
+    activeTab,
+    showQuiz,
+    activeExamId,
+    showSettings,
+    showTopicSelect,
+    showFeedback,
+    showMultiplayerHub,
+    multiRoomId,
+    showScoreCard,
+    showHistory,
+    showProfile,
+    showLivesModal,
+    showStreakModal,
+    showRaheePass,
+    isDark
+  ]);
+
   // Auto-show daily rewards on load/open if unclaimed today
   useEffect(() => {
     if (!currentUser) return;
@@ -1577,8 +1622,14 @@ export default function MainMenu() {
                   <Clock size={28} />
                </div>
                <div className="text-left overflow-hidden">
-                  <h3 className="font-black text-xl uppercase tracking-tighter text-black dark:text-white leading-none mb-0.5 truncate">
-                    {topics.find(t => t.id === currentUser?.selectedTopicId)?.name || 'Unknown Topic'}
+                  <h3 className="font-black text-xl uppercase tracking-tighter text-black dark:text-white leading-none mb-0.5 truncate" title={
+                    currentUser?.selectedTopicIds && currentUser.selectedTopicIds.length > 0
+                      ? topics.filter(t => currentUser.selectedTopicIds?.includes(t.id)).map(t => t.name).join(', ')
+                      : (topics.find(t => t.id === currentUser?.selectedTopicId)?.name || 'General Knowledge')
+                  }>
+                    {currentUser?.selectedTopicIds && currentUser.selectedTopicIds.length > 0
+                      ? topics.filter(t => currentUser.selectedTopicIds?.includes(t.id)).map(t => t.name).join(', ')
+                      : (topics.find(t => t.id === currentUser?.selectedTopicId)?.name || 'General Knowledge')}
                   </h3>
                   <p className="text-black/30 dark:text-white/30 text-[9px] font-black uppercase tracking-widest leading-none">
                     Round {currentUser?.currentRound || 1} • {currentUser?.currentQuizIndex || 0} Solved
@@ -1625,7 +1676,7 @@ export default function MainMenu() {
       activeTab={activeTab} 
       setActiveTab={setActiveTab} 
       setShowSettings={setShowSettings} 
-      setShowChat={setShowChat}
+      setShowFeedback={setShowFeedback}
     >
       {isImpersonating && currentUser && (
         <div className="bg-red-500 text-white px-4 py-2.5 flex items-center justify-between font-black text-xs uppercase tracking-wider relative z-[150] shadow-md border-b border-red-600">
