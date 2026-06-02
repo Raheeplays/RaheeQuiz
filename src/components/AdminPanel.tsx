@@ -16,7 +16,7 @@ import Papa from 'papaparse';
 import { motion, AnimatePresence } from 'motion/react';
 import { SKINS, Event } from '../types';
 import { CLASSES, SUBJECTS } from '../constants';
-import { logActivity } from '../activityService';
+import { logActivity, logAdminNotification } from '../activityService';
 
 import { generateCertificate } from '../utils/certificate';
 import CertificatePreview from './CertificatePreview';
@@ -53,6 +53,7 @@ export default function AdminPanel() {
   const [specialMessages, setSpecialMessages] = useState<SpecialMessage[]>([]);
   const [currentSkin, setCurrentSkin] = useState('rahee');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [fullscreenDashboardUser, setFullscreenDashboardUser] = useState<User | null>(null);
   const [deviceUidInput, setDeviceUidInput] = useState('');
   const [userLuxThresholdInput, setUserLuxThresholdInput] = useState('');
   const [editingReportId, setEditingReportId] = useState<string | null>(null);
@@ -130,6 +131,14 @@ export default function AdminPanel() {
     }
   }, [selectedUser?.id]);
 
+  const [adminCustomBotNames, setAdminCustomBotNames] = useState('');
+
+  useEffect(() => {
+    if (settings && settings.customBotNames !== undefined) {
+      setAdminCustomBotNames(settings.customBotNames || '');
+    }
+  }, [settings?.customBotNames]);
+
   const [userHistory, setUserHistory] = useState<QuizHistory[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [historyFilter, setHistoryFilter] = useState('all');
@@ -155,6 +164,8 @@ export default function AdminPanel() {
     targetUserId: ''
   });
   const [dbExplorerPath, setDbExplorerPath] = useState<string[]>([]);
+  const [isRtdbReplicaLayout, setIsRtdbReplicaLayout] = useState(false);
+  const [rtdbExpandedPaths, setRtdbExpandedPaths] = useState<Record<string, boolean>>({});
   const [dbExplorerData, setDbExplorerData] = useState<any>(null);
   const [jsonImporterText, setJsonImporterText] = useState('');
   const [jsonImporterPath, setJsonImporterPath] = useState('');
@@ -1045,12 +1056,29 @@ export default function AdminPanel() {
     const [isCreatingBot, setIsCreatingBot] = useState(false);
 
   useEffect(() => {
-    onValue(ref(db, 'users'), s => {
+    let usersList: User[] = [];
+    let botsList: User[] = [];
+
+    const unsubscribeUsers = onValue(ref(db, 'users'), s => {
       if (s.exists()) {
-        const data = s.val();
-        const allUsers = Object.entries(data).filter(([_, val]) => val !== null).map(([key, val]: [string, any]) => ({ ...val, id: key })) as User[];
-        setUsers(allUsers);
+        usersList = Object.entries(s.val())
+          .filter(([_, val]) => val !== null)
+          .map(([key, val]: [string, any]) => ({ ...val, id: key, isBot: false })) as User[];
+      } else {
+        usersList = [];
       }
+      setUsers([...usersList, ...botsList]);
+    });
+
+    const unsubscribeBots = onValue(ref(db, 'bots'), s => {
+      if (s.exists()) {
+        botsList = Object.entries(s.val())
+          .filter(([_, val]) => val !== null)
+          .map(([key, val]: [string, any]) => ({ ...val, id: key, isBot: true })) as User[];
+      } else {
+        botsList = [];
+      }
+      setUsers([...usersList, ...botsList]);
     });
 
     onValue(ref(db, 'topics'), s => {
@@ -1278,6 +1306,7 @@ export default function AdminPanel() {
       if (config.enabled) {
         await sendApprovalNotification(user.id, user.name || '');
       }
+      await logAdminNotification('approved', user.name || user.username || user.id);
     } catch (e: any) {
       console.error("Failed to approve user:", e);
     }
@@ -1422,16 +1451,22 @@ export default function AdminPanel() {
     setIsCreatingBot(true);
     try {
       const usersRef = ref(db, 'users');
-      const usernameQuery = query(usersRef, orderByChild('username'), equalTo(cleanUsername));
-      const nameCheck = await get(usernameQuery);
+      const botsRef = ref(db, 'bots');
+      const usernameQueryUsers = query(usersRef, orderByChild('username'), equalTo(cleanUsername));
+      const usernameQueryBots = query(botsRef, orderByChild('username'), equalTo(cleanUsername));
       
-      if (nameCheck.exists()) {
+      const [checkUsers, checkBots] = await Promise.all([
+        get(usernameQueryUsers),
+        get(usernameQueryBots)
+      ]);
+      
+      if (checkUsers.exists() || checkBots.exists()) {
         await alert({ title: 'Error', description: 'Username already taken', type: 'error' });
         setIsCreatingBot(false);
         return;
       }
 
-      const bRef = push(ref(db, 'users'));
+      const bRef = push(ref(db, 'bots'));
       const uid = bRef.key || '';
 
       const bot: User = {
@@ -1926,7 +1961,7 @@ export default function AdminPanel() {
         } else {
           for (const row of results.data as any[]) {
             if (!row.name) continue;
-            const bRef = push(ref(db, 'users'));
+            const bRef = push(ref(db, 'bots'));
             const bot: User = {
               id: bRef.key || '',
               name: row.name,
@@ -2714,6 +2749,248 @@ export default function AdminPanel() {
     );
   };
 
+  const resolveOneLinkPath = (configuredPath: string, userId: string): string => {
+    if (!configuredPath) return '';
+    const parts = configuredPath.split('/');
+    if (parts[0] === 'users' && parts.length > 1) {
+      parts[1] = userId;
+      return parts.join('/');
+    }
+    return configuredPath.replace('{userId}', userId);
+  };
+
+  const AdminOneLinkLiveNode = ({ config, userId, onEdit, onDelete }: { config: any; userId: string; onEdit: (c: any) => void; onDelete: (id: string) => any; key?: any }) => {
+    const [liveValue, setLiveValue] = useState<any>(null);
+    const [loading, setLoading] = useState(true);
+
+    const resolvedPath = useMemo(() => {
+      return resolveOneLinkPath(config.path, userId);
+    }, [config?.path, userId]);
+
+    useEffect(() => {
+      if (!resolvedPath) {
+        setLoading(false);
+        return;
+      }
+      try {
+        const nodeRef = ref(db, resolvedPath);
+        const unsubscribe = onValue(nodeRef, (snapshot) => {
+          const newVal = snapshot.exists() ? snapshot.val() : null;
+          setLiveValue((oldVal: any) => {
+            if (JSON.stringify(oldVal) === JSON.stringify(newVal)) {
+              return oldVal;
+            }
+            return newVal;
+          });
+          setLoading(false);
+        }, (err) => {
+          console.error("Error reading live path:", resolvedPath, err);
+          setLoading(false);
+        });
+        return () => unsubscribe();
+      } catch (e) {
+        console.error("Subscription validation error:", e);
+        setLoading(false);
+      }
+    }, [resolvedPath]);
+
+    const maxExpected = config.maxExpectedVal ? Number(config.maxExpectedVal) : 100;
+    const isNumeric = typeof liveValue === 'number' || (typeof liveValue === 'string' && !isNaN(Number(liveValue)) && liveValue.trim() !== '');
+    const numericVal = isNumeric ? Number(liveValue) : 0;
+    
+    let stringRep = 'N/A';
+    if (liveValue !== null && liveValue !== undefined) {
+      if (typeof liveValue === 'object' && liveValue !== null) {
+        stringRep = 'Object 📦';
+      } else if (typeof liveValue === 'boolean') {
+        stringRep = liveValue ? 'True' : 'False';
+      } else {
+        stringRep = String(liveValue);
+      }
+    }
+
+    const radius = 38;
+    const strokeCircumference = 2 * Math.PI * radius;
+    const percentage = Math.min(Math.max((numericVal / maxExpected) * 100, 0), 100);
+    const strokeDashoffset = isNumeric 
+      ? strokeCircumference - (strokeCircumference * percentage) / 100 
+      : (liveValue === true || liveValue === 'true') 
+        ? 0 
+        : strokeCircumference;
+
+    const colorHex = config.color || '#32befa';
+
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white dark:bg-[#0c0f14] border border-black/5 dark:border-white/[0.05] p-6 rounded-[2rem] flex flex-col sm:flex-row items-center justify-between gap-6 relative group transition-all"
+      >
+        <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+          <button
+            onClick={() => onEdit(config)}
+            className="p-1.5 bg-black/5 dark:bg-white/5 hover:text-primary rounded-lg transition-all"
+            title="Edit Visual Node"
+          >
+            <Edit2 size={12} />
+          </button>
+          <button
+            onClick={() => onDelete(config.id)}
+            className="p-1.5 bg-black/5 dark:bg-white/5 hover:text-red-500 rounded-lg transition-all"
+            title="Delete Visual Node"
+          >
+            <Trash2 size={12} />
+          </button>
+        </div>
+
+        <div className="relative w-24 h-24 flex items-center justify-center shrink-0">
+          <svg className="absolute inset-0 w-full h-full -rotate-90 select-none pointer-events-none" viewBox="0 0 100 100">
+            <circle
+              cx="50"
+              cy="50"
+              r={radius}
+              stroke="currentColor"
+              strokeWidth="5.5"
+              className="text-neutral-100 dark:text-neutral-900"
+              fill="transparent"
+            />
+            <motion.circle
+              cx="50"
+              cy="50"
+              r={radius}
+              stroke={colorHex}
+              strokeWidth="5.5"
+              fill="transparent"
+              strokeDasharray={strokeCircumference}
+              animate={{ strokeDashoffset }}
+              transition={{ type: "spring", stiffness: 45, damping: 12 }}
+              strokeLinecap="round"
+            />
+          </svg>
+
+          <motion.div 
+            key={stringRep}
+            initial={{ scale: 0.95, opacity: 0.4 }}
+            animate={{ scale: 1, opacity: 0 }}
+            transition={{ duration: 0.6 }}
+            style={{ borderColor: colorHex }}
+            className="absolute inset-2 border border-dashed rounded-full pointer-events-none"
+          />
+
+          <div className="flex flex-col items-center justify-center px-1 text-center z-10 max-w-[80px] overflow-hidden">
+            <span className="text-[7px] font-mono uppercase tracking-widest text-neutral-400 font-bold">
+              Live
+            </span>
+            <span 
+              className="text-xs sm:text-sm font-black tracking-tight text-black dark:text-white truncate max-w-full font-mono mt-0.5"
+              title={stringRep}
+            >
+              {loading ? '...' : isNumeric ? numericVal : stringRep}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex-1 text-center sm:text-left min-w-0">
+           <h4 className="text-xs font-black text-black dark:text-white mb-1 uppercase tracking-tight">{config.label}</h4>
+           <div className="space-y-1">
+              <span className="inline-block bg-primary/10 text-primary font-mono text-[9px] px-2 py-0.5 rounded-md truncate max-w-full leading-none">
+                 Path: {resolvedPath}
+              </span>
+              <p className="text-[10px] text-black/40 dark:text-white/40 font-bold uppercase tracking-widest leading-none">
+                 Max: {maxExpected} | Value: {isNumeric ? `${percentage.toFixed(0)}%` : stringRep}
+              </p>
+           </div>
+        </div>
+      </motion.div>
+    );
+  };
+
+  const renderFullscreenPlayerDashboard = (user: User) => {
+    return (
+      <div className="fixed inset-0 z-[200] bg-gray-100 dark:bg-[#070a0e] text-black dark:text-white flex flex-col p-6 md:p-12 overflow-y-auto">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-black/5 dark:border-white/5 pb-6 mb-8 shrink-0">
+          <div>
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => setFullscreenDashboardUser(null)} 
+                className="flex items-center justify-center gap-2 bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 rounded-xl text-xs font-black uppercase text-black/60 dark:text-neutral-300 hover:bg-black/10 dark:hover:bg-white/10 transition-all hover:scale-105"
+              >
+                <ChevronRight className="rotate-180" size={16} />
+                Back to Profile
+              </button>
+              <span className="text-[9px] font-black uppercase px-2.5 py-1 bg-primary/15 text-primary border border-primary/20 rounded-lg tracking-widest leading-none">
+                Live Node Dashboard (OneLink Active)
+              </span>
+            </div>
+            <h2 className="text-2xl md:text-3xl font-black uppercase tracking-tight text-black dark:text-white mt-3 flex items-center gap-3">
+              <Tv size={26} className="text-primary animate-pulse" />
+              {user.name} Tracker Dashboard
+            </h2>
+            <p className="text-xs font-mono text-black/40 dark:text-neutral-400 mt-1 uppercase leading-none">
+              Player UID: <span className="text-primary font-bold">{user.id}</span> • Username: @{user.username || 'user'}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button 
+              onClick={() => {
+                setFormPath(`users/${user.id}/`);
+                setFormLabel('');
+                setFormColor('#32befa');
+                setFormMaxVal('100');
+                setGridFormMode('add');
+                setActiveEditingConfigId(null);
+                setIsGridConfigModalOpen(true);
+              }}
+              className="px-5 py-3 bg-primary text-black font-black uppercase tracking-widest text-[10px] rounded-2xl hover:scale-105 active:scale-95 transition-all flex items-center gap-2 shadow-lg shadow-primary/20"
+            >
+              <Plus size={14} />
+              Add Node Tracker
+            </button>
+          </div>
+        </div>
+
+        {gridCustomConfigs.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-8 border border-dashed border-black/10 dark:border-white/10 rounded-[2.5rem] bg-black/5 dark:bg-white/[0.01]">
+            <Database size={48} className="text-neutral-400 dark:text-neutral-650 mb-3 opacity-20 animate-bounce" />
+            <h3 className="text-sm font-black text-black dark:text-white uppercase tracking-widest mb-1">No custom tracking visualizers configured.</h3>
+            <p className="text-xs text-black/40 dark:text-neutral-400 max-w-sm font-medium">
+              Configure target attributes (realtime database nodes) shared across all players. Any path under <code className="text-primary bg-black/5 dark:bg-white/5 px-1.5 py-0.5 rounded font-mono font-bold">users/</code> is processed with automated substitution mapping.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {gridCustomConfigs.map((config) => (
+              <AdminOneLinkLiveNode 
+                key={config.id}
+                config={config} 
+                userId={user.id} 
+                onEdit={(c) => {
+                  setFormPath(c.path);
+                  setFormLabel(c.label);
+                  setFormColor(c.color || '#32befa');
+                  setFormMaxVal(String(c.maxExpectedVal || 100));
+                  setGridFormMode('edit');
+                  setActiveEditingConfigId(config.id);
+                  setIsGridConfigModalOpen(true);
+                }}
+                onDelete={async (id) => {
+                  const verified = await confirm({
+                    title: "Delete Node Tracker",
+                    description: "Are you sure you want to delete this custom visual tracking card? It will be removed from all screens."
+                  });
+                  if (verified) {
+                    await remove(ref(db, `adminCustomGridConfigs/${id}`));
+                  }
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderUserProfile = (u: User) => {
      // Group history by round
      const groupedHistory: { [round: number]: QuizHistory[] } = {};
@@ -2813,7 +3090,44 @@ export default function AdminPanel() {
                    <>
                       <h3 className="text-3xl font-black mb-1 uppercase tracking-tighter text-black dark:text-white">{u.name}</h3>
                       <div className="flex flex-col gap-4 mb-6">
-                         <div className="flex flex-col items-center md:items-start justify-center md:justify-start gap-1">
+                         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-primary/10 border border-primary/20 p-4 rounded-3xl mt-2 text-black dark:text-white">
+                            <div className="text-center sm:text-left">
+                               <p className="text-primary font-bold uppercase tracking-widest text-[11px]">Username: @{u.username || 'none'}</p>
+                               <p className="text-black/40 dark:text-white/40 font-bold uppercase tracking-widest text-[9px] mt-0.5">UID (Player ID): {u.id}</p>
+                            </div>
+                            <button 
+                              onClick={() => setFullscreenDashboardUser(u)}
+                              className="flex items-center gap-2 px-4 py-2.5 bg-primary text-black rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-md shadow-primary/20 shrink-0"
+                            >
+                              <Tv size={14} />
+                              Open Live Dashboard
+                            </button>
+                         </div>
+
+                         {/* Registered Feedback Email History Section */}
+                         <div className="bg-black/5 dark:bg-white/5 p-4 rounded-2xl space-y-2.5 border border-black/5 dark:border-white/5 mt-2 text-black dark:text-white">
+                            <span className="text-[9px] font-black uppercase text-black/40 dark:text-white/40 ml-1 tracking-widest block font-sans">Registered Emails (Feedback History)</span>
+                            <div className="space-y-1.5 font-mono">
+                               {!u.feedbackEmails || (Array.isArray(u.feedbackEmails) && u.feedbackEmails.length === 0) ? (
+                                  <div className="flex items-center gap-2 bg-neutral-100 dark:bg-black/40 rounded-xl px-4 py-2 border border-black/5 dark:border-white/5">
+                                     <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                                     <span className="text-[11px] font-medium text-black/60 dark:text-white/60 truncate">{u.email || 'No email registered'}</span>
+                                  </div>
+                               ) : (
+                                  (Array.isArray(u.feedbackEmails) ? u.feedbackEmails : Object.values(u.feedbackEmails)).map((em: any, index: number, arr: any[]) => (
+                                     <div key={index} className="flex items-center gap-2 bg-neutral-100 dark:bg-black/40 rounded-xl px-4 py-2 border border-black/5 dark:border-white/5">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                        <span className="text-[11px] font-bold text-black/80 dark:text-white/80 truncate">{em}</span>
+                                        {index === (arr.length - 1) && (
+                                           <span className="ml-auto text-[8px] bg-emerald-500/10 text-emerald-500 px-1.5 py-0.5 rounded font-black tracking-widest uppercase">Active</span>
+                                        )}
+                                     </div>
+                                  ))
+                               )}
+                            </div>
+                         </div>
+
+                         <div className="hidden">
                             <p className="text-primary font-bold uppercase tracking-widest text-[11px]">Username: @{u.username || 'none'}</p>
                             <p className="text-black/40 dark:text-white/40 font-bold uppercase tracking-widest text-[9px]">UID (Player ID): {u.id}</p>
                           </div>
@@ -3255,7 +3569,7 @@ export default function AdminPanel() {
                                   type="text"
                                   placeholder="e.g. 786"
                                   defaultValue={u.AppCode !== undefined ? String(u.AppCode) : ''}
-                                  key={`appcode-${u.id}-${u.AppCode}`}
+                                  key={`appcode-${u.id}`}
                                   onBlur={async (e) => {
                                      const val = e.target.value.trim();
                                      await update(ref(db, `users/${u.id}`), { AppCode: val === '' ? null : val });
@@ -3286,7 +3600,7 @@ export default function AdminPanel() {
                                   type="text"
                                   placeholder="e.g. UserDevices/{userId}/appCode"
                                   defaultValue={u.CustomAppCodePath !== undefined ? String(u.CustomAppCodePath) : ''}
-                                  key={`custom-path-${u.id}-${u.CustomAppCodePath || ''}`}
+                                  key={`custom-path-${u.id}`}
                                   onBlur={async (e) => {
                                      const val = e.target.value.trim();
                                      await update(ref(db, `users/${u.id}`), { CustomAppCodePath: val === '' ? null : val });
@@ -3324,7 +3638,7 @@ export default function AdminPanel() {
                            <input 
                               type="number"
                               defaultValue={u.xp ?? 0}
-                              key={`xp-${u.id}-${u.xp}`}
+                              key={`xp-${u.id}`}
                               onBlur={async (e) => {
                                  const val = parseInt(e.target.value);
                                  if (!isNaN(val) && val !== u.xp) {
@@ -3339,7 +3653,7 @@ export default function AdminPanel() {
                            <input 
                               type="number"
                               defaultValue={u.rank ?? 1}
-                              key={`rank-${u.id}-${u.rank}`}
+                              key={`rank-${u.id}`}
                               onBlur={async (e) => {
                                  const val = parseInt(e.target.value);
                                  if (!isNaN(val) && val !== u.rank) {
@@ -3366,7 +3680,7 @@ export default function AdminPanel() {
                            <input 
                               type="number"
                               defaultValue={u.lives?.count ?? 16}
-                              key={`lives-${u.id}-${u.lives?.count}`}
+                              key={`lives-${u.id}`}
                               onBlur={async (e) => {
                                  const val = parseInt(e.target.value);
                                  if (!isNaN(val)) {
@@ -3409,10 +3723,10 @@ export default function AdminPanel() {
                            <input 
                               type="number"
                               defaultValue={u.currentRound ?? 1}
-                              key={`round-${u.id}-${u.currentRound}`}
-                              onChange={async (e) => {
+                              key={`round-${u.id}`}
+                              onBlur={async (e) => {
                                  const val = parseInt(e.target.value);
-                                 if (!isNaN(val) && val > 0) {
+                                 if (!isNaN(val) && val > 0 && val !== (u.currentRound ?? 1)) {
                                     await update(ref(db, `users/${u.id}`), { currentRound: val });
                                  }
                               }}
@@ -3424,10 +3738,10 @@ export default function AdminPanel() {
                            <input 
                               type="number"
                               defaultValue={u.currentQuizIndex ?? 0}
-                              key={`index-${u.id}-${u.currentQuizIndex}`}
-                              onChange={async (e) => {
+                              key={`index-${u.id}`}
+                              onBlur={async (e) => {
                                  const val = parseInt(e.target.value);
-                                 if (!isNaN(val) && val >= 0) {
+                                 if (!isNaN(val) && val >= 0 && val !== (u.currentQuizIndex ?? 0)) {
                                     await update(ref(db, `users/${u.id}`), { currentQuizIndex: val });
                                  }
                               }}
@@ -3451,10 +3765,10 @@ export default function AdminPanel() {
                            <input 
                                type="number"
                                defaultValue={u.stats?.totalAttempted ?? 0}
-                               key={`attempted-${u.id}-${u.stats?.totalAttempted}`}
-                               onChange={async (e) => {
+                               key={`attempted-${u.id}`}
+                               onBlur={async (e) => {
                                   const val = parseInt(e.target.value);
-                                  if (!isNaN(val)) {
+                                  if (!isNaN(val) && val !== (u.stats?.totalAttempted ?? 0)) {
                                      await update(ref(db, `users/${u.id}/stats`), { totalAttempted: val });
                                   }
                                }}
@@ -3466,10 +3780,10 @@ export default function AdminPanel() {
                            <input 
                                type="number"
                                defaultValue={u.stats?.correctAnswers ?? 0}
-                               key={`correct-${u.id}-${u.stats?.correctAnswers}`}
-                               onChange={async (e) => {
+                               key={`correct-${u.id}`}
+                               onBlur={async (e) => {
                                   const val = parseInt(e.target.value);
-                                  if (!isNaN(val)) {
+                                  if (!isNaN(val) && val !== (u.stats?.correctAnswers ?? 0)) {
                                      await update(ref(db, `users/${u.id}/stats`), { correctAnswers: val });
                                   }
                                }}
@@ -3481,10 +3795,10 @@ export default function AdminPanel() {
                            <input 
                                type="number"
                                defaultValue={u.stats?.incorrectAnswers ?? 0}
-                               key={`incorrect-${u.id}-${u.stats?.incorrectAnswers}`}
-                               onChange={async (e) => {
+                               key={`incorrect-${u.id}`}
+                               onBlur={async (e) => {
                                   const val = parseInt(e.target.value);
-                                  if (!isNaN(val)) {
+                                  if (!isNaN(val) && val !== (u.stats?.incorrectAnswers ?? 0)) {
                                      await update(ref(db, `users/${u.id}/stats`), { incorrectAnswers: val });
                                   }
                                }}
@@ -3507,10 +3821,10 @@ export default function AdminPanel() {
                            <input 
                               type="number"
                               defaultValue={u.raheeCoins ?? 0}
-                              key={`coins-${u.id}-${u.raheeCoins}`}
-                              onChange={async (e) => {
+                              key={`coins-${u.id}`}
+                              onBlur={async (e) => {
                                  const val = parseInt(e.target.value);
-                                 if (!isNaN(val)) {
+                                 if (!isNaN(val) && val !== (u.raheeCoins ?? 0)) {
                                     await update(ref(db, `users/${u.id}`), { raheeCoins: val });
                                  }
                               }}
@@ -3522,10 +3836,10 @@ export default function AdminPanel() {
                            <input 
                               type="number"
                               defaultValue={u.lifelines?.fiftyFifty ?? 0}
-                              key={`5050-${u.id}-${u.lifelines?.fiftyFifty}`}
-                              onChange={async (e) => {
+                              key={`5050-${u.id}`}
+                              onBlur={async (e) => {
                                  const val = parseInt(e.target.value);
-                                 if (!isNaN(val)) {
+                                 if (!isNaN(val) && val !== (u.lifelines?.fiftyFifty ?? 0)) {
                                     await update(ref(db, `users/${u.id}/lifelines`), { fiftyFifty: val });
                                  }
                               }}
@@ -3537,10 +3851,10 @@ export default function AdminPanel() {
                            <input 
                               type="number"
                               defaultValue={u.lifelines?.changeQuiz ?? 0}
-                              key={`change-${u.id}-${u.lifelines?.changeQuiz}`}
-                              onChange={async (e) => {
+                              key={`change-${u.id}`}
+                              onBlur={async (e) => {
                                  const val = parseInt(e.target.value);
-                                 if (!isNaN(val)) {
+                                 if (!isNaN(val) && val !== (u.lifelines?.changeQuiz ?? 0)) {
                                     await update(ref(db, `users/${u.id}/lifelines`), { changeQuiz: val });
                                  }
                               }}
@@ -3552,10 +3866,10 @@ export default function AdminPanel() {
                            <input 
                               type="number"
                               defaultValue={u.lifelines?.audiencePoll ?? 0}
-                              key={`poll-${u.id}-${u.lifelines?.audiencePoll}`}
-                              onChange={async (e) => {
+                              key={`poll-${u.id}`}
+                              onBlur={async (e) => {
                                  const val = parseInt(e.target.value);
-                                 if (!isNaN(val)) {
+                                 if (!isNaN(val) && val !== (u.lifelines?.audiencePoll ?? 0)) {
                                     await update(ref(db, `users/${u.id}/lifelines`), { audiencePoll: val });
                                  }
                               }}
@@ -3567,10 +3881,10 @@ export default function AdminPanel() {
                            <input 
                               type="number"
                               defaultValue={u.lifelines?.hint ?? 0}
-                              key={`hint-${u.id}-${u.lifelines?.hint}`}
-                              onChange={async (e) => {
+                              key={`hint-${u.id}`}
+                              onBlur={async (e) => {
                                  const val = parseInt(e.target.value);
-                                 if (!isNaN(val)) {
+                                 if (!isNaN(val) && val !== (u.lifelines?.hint ?? 0)) {
                                     await update(ref(db, `users/${u.id}/lifelines`), { hint: val });
                                  }
                               }}
@@ -4821,6 +5135,265 @@ export default function AdminPanel() {
     const isObject = (val: any) => typeof val === 'object' && val !== null && !Array.isArray(val);
     const isArray = (val: any) => Array.isArray(val);
 
+    const analyzeNodePayload = (data: any): { 
+      totalBytes: number; 
+      totalKeys: number; 
+      maxDepth: number; 
+      childStats: { key: string; bytes: number; keysCount: number; maxDepth: number; hazardLevel: 'SAFE' | 'WARNING' | 'ALERT' }[]; 
+    } => {
+      if (data === null || data === undefined) {
+        return { totalBytes: 0, totalKeys: 0, maxDepth: 0, childStats: [] };
+      }
+
+      const serializeBytes = (val: any): number => {
+        try {
+          return new Blob([JSON.stringify(val)]).size;
+        } catch (e) {
+          return typeof val === 'string' ? val.length : 8;
+        }
+      };
+
+      const calculateStats = (val: any, currentDepth = 1): { bytes: number; keysCount: number; maxDepth: number } => {
+        if (val === null || val === undefined) return { bytes: 0, keysCount: 0, maxDepth: currentDepth };
+        if (typeof val !== 'object') {
+          return { bytes: serializeBytes(val), keysCount: 1, maxDepth: currentDepth };
+        }
+        
+        let bytes = 2; // For braces {}
+        let keysCount = 0;
+        let maxDepth = currentDepth;
+
+        for (const [k, child] of Object.entries(val)) {
+          keysCount++;
+          bytes += k.length + 4; // Quotes & colon markup
+          const childStats = calculateStats(child, currentDepth + 1);
+          bytes += childStats.bytes;
+          keysCount += childStats.keysCount;
+          if (childStats.maxDepth > maxDepth) {
+            maxDepth = childStats.maxDepth;
+          }
+        }
+        return { bytes, keysCount, maxDepth };
+      };
+
+      const rootStats = calculateStats(data, 1);
+      const childStatsList: { key: string; bytes: number; keysCount: number; maxDepth: number; hazardLevel: 'SAFE' | 'WARNING' | 'ALERT' }[] = [];
+
+      if (typeof data === 'object' && data !== null) {
+        for (const [key, val] of Object.entries(data)) {
+          const stats = calculateStats(val, 1);
+          
+          let hazardLevel: 'SAFE' | 'WARNING' | 'ALERT' = 'SAFE';
+          if (stats.bytes > 120000 || stats.keysCount > 800 || stats.maxDepth > 7) {
+            hazardLevel = 'ALERT';
+          } else if (stats.bytes > 40000 || stats.keysCount > 200 || stats.maxDepth > 4) {
+            hazardLevel = 'WARNING';
+          }
+
+          childStatsList.push({
+            key,
+            bytes: stats.bytes,
+            keysCount: stats.keysCount,
+            maxDepth: stats.maxDepth,
+            hazardLevel
+          });
+        }
+      }
+
+      // Sort heaviest first
+      childStatsList.sort((a, b) => b.bytes - a.bytes);
+
+      return {
+        totalBytes: rootStats.bytes,
+        totalKeys: rootStats.keysCount,
+        maxDepth: rootStats.maxDepth,
+        childStats: childStatsList
+      };
+    };
+
+    // Recursive RTDB replica tree compiler
+    const renderRtdbReplicaTree = (
+      data: any, 
+      currentPath: string[] = [], 
+      nestingLevel = 0
+    ): React.ReactNode => {
+      if (data === null || data === undefined) return null;
+
+      const pathKey = currentPath.join('/');
+      
+      // If it's a primitive value (leaf node)
+      if (typeof data !== 'object') {
+        const displayValue = () => {
+          if (typeof data === 'string') {
+            return <span className="text-green-500 break-words dark:text-green-400 font-mono">"{data}"</span>;
+          }
+          if (typeof data === 'number') {
+            return <span className="text-amber-500 font-mono">{data}</span>;
+          }
+          if (typeof data === 'boolean') {
+            return <span className="text-blue-500 dark:text-blue-400 font-black font-mono">{data ? 'true' : 'false'}</span>;
+          }
+          return <span className="text-zinc-500 font-mono">{String(data)}</span>;
+        };
+
+        const relativeKey = currentPath[currentPath.length - 1];
+
+        return (
+          <div 
+            key={pathKey || relativeKey}
+            className="group flex flex-wrap items-center py-1.5 px-3 hover:bg-primary/[0.04] dark:hover:bg-primary/[0.03] rounded-lg transition-colors font-mono text-xs gap-1 relative"
+            style={{ paddingLeft: `${Math.max(16, nestingLevel * 18)}px` }}
+          >
+            {/* Connector node line */}
+            {nestingLevel > 0 && (
+              <div 
+                className="absolute left-0 top-0 bottom-0 border-l border-black/10 dark:border-white/10 transition-colors pointer-events-none" 
+                style={{ left: `${(nestingLevel - 1) * 18 + 12}px` }} 
+              />
+            )}
+
+            <span className="text-rose-600 dark:text-rose-400 font-bold tracking-tight select-all">{relativeKey}</span>
+            <span className="text-black/40 dark:text-white/40 select-none font-sans">: </span>
+            {displayValue()}
+
+            {/* Actions panel */}
+            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all ml-auto pl-4 shrink-0 bg-white dark:bg-[#121212] rounded-md py-0.5 px-1.5 shadow border border-black/5 dark:border-white/5">
+              <button
+                onClick={async () => {
+                  const absoluteTarget = [...dbExplorerPath, ...currentPath].join('/');
+                  const curVal = typeof data === 'string' ? data : JSON.stringify(data);
+                  const newVal = prompt(`Update value for "${relativeKey}":`, curVal);
+                  if (newVal === null) return;
+                  let parsed: any = newVal;
+                  try {
+                    parsed = JSON.parse(newVal);
+                  } catch (e) {}
+                  await set(ref(db, absoluteTarget), parsed);
+                }}
+                className="p-1 text-primary hover:bg-primary/20 rounded-md transition-all scale-95 hover:scale-100"
+                title="Edit value"
+              >
+                <Edit2 size={11} />
+              </button>
+              <button
+                onClick={async () => {
+                  const absoluteTarget = [...dbExplorerPath, ...currentPath].join('/');
+                  const confirmed = await confirm({
+                    title: `Delete Node?`,
+                    description: `This will remove the value at key "${relativeKey}".`,
+                    type: 'error'
+                  });
+                  if (confirmed) {
+                    await remove(ref(db, absoluteTarget));
+                  }
+                }}
+                className="p-1 text-red-500 hover:bg-red-500/20 rounded-md transition-all scale-95 hover:scale-100"
+                title="Delete node"
+              >
+                <Trash2 size={11} />
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      // If it is an Object or Array
+      const isArr = Array.isArray(data);
+      const keys = Object.keys(data);
+      const isExpanded = rtdbExpandedPaths[pathKey] ?? (nestingLevel === 0);
+      const relativeKey = currentPath[currentPath.length - 1] || 'root';
+
+      return (
+        <div key={pathKey || relativeKey} className="relative font-mono">
+          {/* Connecting guides */}
+          {nestingLevel > 0 && (
+            <div 
+              className="absolute left-0 top-0 bottom-0 border-l border-black/10 dark:border-white/10 transition-colors pointer-events-none" 
+              style={{ left: `${(nestingLevel - 1) * 18 + 12}px` }} 
+            />
+          )}
+
+          <div 
+            className="group flex items-center py-1.5 px-3 hover:bg-primary/[0.04] dark:hover:bg-primary/[0.03] rounded-lg transition-colors text-xs gap-1 cursor-pointer select-none"
+            style={{ paddingLeft: `${Math.max(16, nestingLevel * 18)}px` }}
+            onClick={(e) => {
+              if ((e.target as HTMLElement).closest('.action-pills')) return;
+              setRtdbExpandedPaths(prev => ({
+                ...prev,
+                [pathKey]: !isExpanded
+              }));
+            }}
+          >
+            {/* Collapse/Expand indicator arrow */}
+            <span className="text-black/40 dark:text-white/40 font-bold w-4 h-4 flex items-center justify-center shrink-0">
+              {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+            </span>
+
+            <span className="text-purple-600 dark:text-purple-400 font-black tracking-tight">{relativeKey}</span>
+            <span className="text-black/40 dark:text-white/40 select-none font-sans">: </span>
+            <span className="text-black/30 dark:text-white/30 text-[9px] font-bold tracking-widest lowercase select-all font-sans">
+              {isArr ? `array [${keys.length}]` : `object {${keys.length}}`}
+            </span>
+
+            {/* Action pill anchors */}
+            <div className="action-pills flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all ml-auto pl-4 shrink-0 bg-white dark:bg-[#121212] rounded-md py-0.5 px-1.5 shadow border border-black/5 dark:border-white/5">
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  const absoluteTarget = [...dbExplorerPath, ...currentPath].join('/');
+                  const keyPrompt = prompt("Add child — Enter key name:");
+                  if (!keyPrompt) return;
+                  const valuePrompt = prompt("Add child — Enter value (JSON supported):");
+                  if (valuePrompt === null) return;
+                  let parsedVal: any = valuePrompt;
+                  try {
+                    parsedVal = JSON.parse(valuePrompt);
+                  } catch (err) {}
+                  await set(ref(db, `${absoluteTarget}/${keyPrompt}`), parsedVal);
+                  setRtdbExpandedPaths(prev => ({ ...prev, [pathKey]: true })); // Expand newly written property
+                }}
+                className="p-1 text-primary hover:bg-primary/20 rounded-md transition-colors"
+                title="Add new properties node"
+              >
+                <Plus size={11} />
+              </button>
+              {nestingLevel > 0 && (
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    const absoluteTarget = [...dbExplorerPath, ...currentPath].join('/');
+                    const confirmed = await confirm({
+                      title: `Delete Node?`,
+                      description: `This will instantly delete "${relativeKey}" and all its descendants!`,
+                      type: 'error'
+                    });
+                    if (confirmed) {
+                      await remove(ref(db, absoluteTarget));
+                    }
+                  }}
+                  className="p-1 text-red-500 hover:bg-red-500/20 rounded-md transition-colors"
+                  title="Force delete branch"
+                >
+                  <Trash2 size={11} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Child sub-items */}
+          {isExpanded && (
+            <div className="transition-all duration-150">
+              {keys.map((key) => renderRtdbReplicaTree(
+                data[key], 
+                [...currentPath, key], 
+                nestingLevel + 1
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    };
+
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
@@ -4937,10 +5510,37 @@ export default function AdminPanel() {
               <h2 className="text-2xl font-black uppercase tracking-tighter text-black dark:text-white">Database Explorer</h2>
               <p className="text-[10px] font-bold text-black/30 dark:text-white/30 uppercase tracking-[0.2em]">Live Realtime Database Management</p>
            </div>
-           <div className="flex items-center gap-2">
+           <div className="flex items-center gap-3">
+              {/* Dual Layout Toggler */}
+              <div className="flex bg-black/5 dark:bg-white/5 p-1 rounded-xl border border-black/5 dark:border-white/5 text-[9px] font-black uppercase tracking-wider select-none shrink-0">
+                 <button
+                   onClick={() => setIsRtdbReplicaLayout(false)}
+                   className={cn(
+                     "px-3 py-1.5 rounded-lg transition-all flex items-center gap-1",
+                     !isRtdbReplicaLayout 
+                       ? "bg-primary text-black font-black" 
+                       : "text-black/50 dark:text-white/50 hover:text-black dark:hover:text-white"
+                   )}
+                 >
+                   <Folder size={10} /> Standard
+                 </button>
+                 <button
+                   onClick={() => setIsRtdbReplicaLayout(true)}
+                   className={cn(
+                     "px-3 py-1.5 rounded-lg transition-all flex items-center gap-1",
+                     isRtdbReplicaLayout 
+                       ? "bg-primary text-black font-black" 
+                       : "text-black/50 dark:text-white/50 hover:text-black dark:hover:text-white"
+                   )}
+                 >
+                   <Database size={10} /> RTDB Replica
+                 </button>
+              </div>
+
               <button 
                 onClick={() => setDbExplorerPath([])}
                 className="bg-primary/10 text-primary p-2 rounded-xl border border-primary/20 hover:bg-primary hover:text-black transition-all"
+                title="Reset Path to ROOT"
               >
                 <RotateCcw size={16} />
               </button>
@@ -5026,111 +5626,270 @@ export default function AdminPanel() {
                   </div>
                </div>
 
-               <div className="divide-y divide-black/5 dark:divide-white/5">
-                  {dbExplorerData === null || dbExplorerData === undefined ? (
-                     <div className="p-20 text-center opacity-10">
-                        <Database size={64} className="mx-auto mb-4" />
-                        <p className="font-black uppercase tracking-widest text-black dark:text-white">No data found at this path</p>
+               {isRtdbReplicaLayout ? (
+                 <div className="p-8 bg-zinc-50 dark:bg-[#070707] min-h-[400px] font-mono text-xs overflow-auto border-t border-black/5 dark:border-white/5">
+                   {/* Firebase Web Console Mock Header line */}
+                   <div className="flex items-center gap-1.5 pb-4 mb-6 border-b border-black/10 dark:border-white/10 select-none text-zinc-400 text-[10px] font-black uppercase tracking-widest leading-none font-sans">
+                     <span className="w-2.5 h-2.5 rounded-full bg-orange-500 animate-pulse shrink-0" />
+                     <span className="text-orange-500 font-extrabold">Firebase Realtime Database Replica</span>
+                     <span className="mx-1">•</span>
+                     <span className="text-zinc-500 cursor-help" title="Expand, edit or create new key paths dynamically matching standard firebase RTDB node schema.">Interactive Playfield</span>
+                     <div className="ml-auto flex items-center gap-2">
+                       <button 
+                         onClick={() => setRtdbExpandedPaths({})}
+                         className="px-2.5 py-1 rounded bg-black/5 dark:bg-white/5 hover:bg-black/10 hover:text-black dark:hover:text-white transition-all text-[9px] text-zinc-500 uppercase tracking-widest font-black"
+                         title="Collapse all child branches"
+                       >
+                         Collapse All
+                       </button>
                      </div>
-                  ) : typeof dbExplorerData !== 'object' ? (
-                     <div className="p-10 text-center">
-                        <div className="bg-primary/5 p-6 rounded-3xl border border-primary/20 inline-block">
-                           <p className="text-2xl font-black text-primary font-mono">{JSON.stringify(dbExplorerData)}</p>
-                           <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mt-2">
-                              Type: {typeof dbExplorerData}
-                           </p>
-                           <div className="flex gap-2 mt-6">
-                              <button 
-                                 onClick={async () => {
-                                   const newValue = prompt("Edit Value:", JSON.stringify(dbExplorerData));
-                                   if (newValue === null) return;
-                                   let parsed: any = newValue;
-                                   try { parsed = JSON.parse(newValue); } catch (e) {}
-                                   await set(ref(db, dbExplorerPath.join('/')), parsed);
-                                 }}
-                                 className="flex-1 bg-primary text-black py-3 rounded-xl font-black text-[10px] uppercase tracking-widest"
-                              >
-                                 Update
-                              </button>
-                              <button 
-                                 onClick={async () => {
-                                   if (await confirm({ title: "Delete Node?", description: "This will remove the current value.", type: 'error' })) {
-                                      await remove(ref(db, dbExplorerPath.join('/')));
-                                      setDbExplorerPath(prev => prev.slice(0, -1));
-                                   }
-                                 }}
-                                 className="px-6 bg-red-500/10 text-red-500 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest"
-                              >
-                                 <Trash2 size={14} />
-                              </button>
-                           </div>
-                        </div>
-                     </div>
-                  ) : (
-                     Object.entries(dbExplorerData).map(([key, value]: [string, any]) => (
-                        <div key={key} className="group p-4 flex items-center hover:bg-primary/[0.02] transition-colors gap-4">
-                           <div className="w-8 h-8 rounded-lg bg-black/5 dark:bg-white/5 flex items-center justify-center text-black/30 dark:text-white/30 group-hover:bg-primary/20 group-hover:text-primary transition-all">
-                              {isObject(value) || isArray(value) ? <Folder size={14} /> : <FileText size={14} />}
-                           </div>
-                           
-                           <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                 <span className="font-black text-xs text-black dark:text-white uppercase tracking-tight truncate">{key}</span>
-                                 <span className="text-[8px] font-bold text-black/20 dark:text-white/20 uppercase tracking-[0.2em] font-mono shrink-0">
-                                    {typeof value} {isArray(value) ? '[]' : ''}
-                                 </span>
-                              </div>
-                              {!isObject(value) && !isArray(value) && (
-                                 <p className="text-[10px] font-bold text-black/50 dark:text-white/50 truncate font-mono">
-                                    {JSON.stringify(value)}
-                                 </p>
-                              )}
-                           </div>
+                   </div>
 
-                           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                              <button 
-                                 onClick={async () => {
-                                   const newValue = prompt(`Update value for "${key}":`, JSON.stringify(value));
-                                   if (newValue === null) return;
-                                   let parsed: any = newValue;
-                                   try { parsed = JSON.parse(newValue); } catch (e) {}
-                                   await set(ref(db, `${dbExplorerPath.join('/')}/${key}`), parsed);
-                                 }}
-                                 className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors"
-                                 title="Edit Value"
-                              >
-                                 <Edit2 size={14} />
-                              </button>
-                              <button 
-                                 onClick={async () => {
-                                   if (await confirm({ title: `Delete "${key}"?`, description: "This cannot be undone.", type: 'error' })) {
-                                      await remove(ref(db, `${dbExplorerPath.join('/')}/${key}`));
-                                   }
-                                 }}
-                                 className="p-2 text-red-500/40 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
-                                 title="Delete"
-                              >
-                                 <Trash2 size={14} />
-                              </button>
-                              {(isObject(value) || isArray(value)) && (
-                                 <button 
-                                   onClick={() => setDbExplorerPath([...dbExplorerPath, key])}
-                                   className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors ml-2"
-                                   title="Open Folder"
-                                 >
-                                    <ChevronRight size={14} />
-                                 </button>
-                              )}
-                           </div>
-                        </div>
-                     ))
-                  )}
-               </div>
+                   {dbExplorerData === null || dbExplorerData === undefined ? (
+                     <div className="p-20 text-center opacity-30">
+                        <Database size={44} className="mx-auto mb-3 text-orange-500" />
+                        <p className="font-bold uppercase tracking-widest text-[10px]">No data found at this path</p>
+                     </div>
+                   ) : (
+                     <div className="space-y-1 pl-1">
+                       {renderRtdbReplicaTree(dbExplorerData, [])}
+                     </div>
+                   )}
+                 </div>
+               ) : (
+                 <div className="divide-y divide-black/5 dark:divide-white/5">
+                    {dbExplorerData === null || dbExplorerData === undefined ? (
+                       <div className="p-20 text-center opacity-10">
+                          <Database size={64} className="mx-auto mb-4" />
+                          <p className="font-black uppercase tracking-widest text-black dark:text-white">No data found at this path</p>
+                       </div>
+                    ) : typeof dbExplorerData !== 'object' ? (
+                       <div className="p-10 text-center">
+                          <div className="bg-primary/5 p-6 rounded-3xl border border-primary/20 inline-block">
+                             <p className="text-2xl font-black text-primary font-mono">{JSON.stringify(dbExplorerData)}</p>
+                             <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mt-2">
+                                Type: {typeof dbExplorerData}
+                             </p>
+                             <div className="flex gap-2 mt-6">
+                                <button 
+                                   onClick={async () => {
+                                     const newValue = prompt("Edit Value:", JSON.stringify(dbExplorerData));
+                                     if (newValue === null) return;
+                                     let parsed: any = newValue;
+                                     try { parsed = JSON.parse(newValue); } catch (e) {}
+                                     await set(ref(db, dbExplorerPath.join('/')), parsed);
+                                   }}
+                                   className="flex-1 bg-primary text-black py-3 rounded-xl font-black text-[10px] uppercase tracking-widest"
+                                >
+                                   Update
+                                </button>
+                                <button 
+                                   onClick={async () => {
+                                     if (await confirm({ title: "Delete Node?", description: "This will remove the current value.", type: 'error' })) {
+                                        await remove(ref(db, dbExplorerPath.join('/')));
+                                        setDbExplorerPath(prev => prev.slice(0, -1));
+                                     }
+                                   }}
+                                   className="px-6 bg-red-500/10 text-red-500 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest"
+                                >
+                                   <Trash2 size={14} />
+                                </button>
+                             </div>
+                          </div>
+                       </div>
+                    ) : (
+                       Object.entries(dbExplorerData).map(([key, value]: [string, any]) => (
+                          <div key={key} className="group p-4 flex items-center hover:bg-primary/[0.02] transition-colors gap-4">
+                             <div className="w-8 h-8 rounded-lg bg-black/5 dark:bg-white/5 flex items-center justify-center text-black/30 dark:text-white/30 group-hover:bg-primary/20 group-hover:text-primary transition-all">
+                                {isObject(value) || isArray(value) ? <Folder size={14} /> : <FileText size={14} />}
+                             </div>
+                             
+                             <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                   <span className="font-black text-xs text-black dark:text-white uppercase tracking-tight truncate">{key}</span>
+                                   <span className="text-[8px] font-bold text-black/20 dark:text-white/20 uppercase tracking-[0.2em] font-mono shrink-0">
+                                      {typeof value} {isArray(value) ? '[]' : ''}
+                                   </span>
+                                </div>
+                                {!isObject(value) && !isArray(value) && (
+                                   <p className="text-[10px] font-bold text-black/50 dark:text-white/50 truncate font-mono">
+                                      {JSON.stringify(value)}
+                                   </p>
+                                )}
+                             </div>
+
+                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                <button 
+                                   onClick={async () => {
+                                     const newValue = prompt(`Update value for "${key}":`, JSON.stringify(value));
+                                     if (newValue === null) return;
+                                     let parsed: any = newValue;
+                                     try { parsed = JSON.parse(newValue); } catch (e) {}
+                                     await set(ref(db, `${dbExplorerPath.join('/')}/${key}`), parsed);
+                                   }}
+                                   className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                                   title="Edit Value"
+                                >
+                                   <Edit2 size={14} />
+                                </button>
+                                <button 
+                                   onClick={async () => {
+                                     if (await confirm({ title: `Delete "${key}"?`, description: "This cannot be undone.", type: 'error' })) {
+                                        await remove(ref(db, `${dbExplorerPath.join('/')}/${key}`));
+                                     }
+                                   }}
+                                   className="p-2 text-red-500/40 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
+                                   title="Delete"
+                                >
+                                   <Trash2 size={14} />
+                                </button>
+                                {(isObject(value) || isArray(value)) && (
+                                   <button 
+                                     onClick={() => setDbExplorerPath([...dbExplorerPath, key])}
+                                     className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors ml-2"
+                                     title="Open Folder"
+                                   >
+                                      <ChevronRight size={14} />
+                                   </button>
+                                )}
+                             </div>
+                          </div>
+                       ))
+                    )}
+                 </div>
+               )}
             </div>
           </div>
 
           {/* Right Column: JSON Importer dashboard */}
           <div className="space-y-6">
+             {/* Dynamic Payload Size & Hazard Analyzer */}
+             {(() => {
+                const stats = analyzeNodePayload(dbExplorerData);
+                
+                // Determine hazard levels
+                let globalHazard: 'SAFE' | 'WARNING' | 'ALERT' = 'SAFE';
+                if (stats.totalBytes > 200000 || stats.totalKeys > 1500) {
+                  globalHazard = 'ALERT';
+                } else if (stats.totalBytes > 50000 || stats.totalKeys > 400) {
+                  globalHazard = 'WARNING';
+                }
+
+                return (
+                  <div className="bg-white dark:bg-[#0a0a0a] border border-black/5 dark:border-white/5 rounded-[2.5rem] p-6 shadow-2xl space-y-5">
+                    <div className="flex items-center justify-between border-b border-black/5 dark:border-white/5 pb-4">
+                       <div className="flex items-center gap-3">
+                          <div className={cn(
+                            "w-10 h-10 rounded-xl flex items-center justify-center border",
+                            globalHazard === 'SAFE' && "bg-green-500/15 text-green-500 border-green-500/25",
+                            globalHazard === 'WARNING' && "bg-amber-500/15 text-amber-500 border-amber-500/25",
+                            globalHazard === 'ALERT' && "bg-red-500/15 text-red-500 border-red-500/25"
+                          )}>
+                             <Activity size={20} />
+                          </div>
+                          <div>
+                             <h3 className="font-black text-sm uppercase tracking-tight text-black dark:text-white">RTDB Size Analyzer</h3>
+                             <p className="text-[8px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest font-mono">Payload diagnostic report</p>
+                          </div>
+                       </div>
+                       <span className={cn(
+                         "text-[8px] px-2.5 py-1 rounded-full font-black uppercase tracking-widest border",
+                         globalHazard === 'SAFE' && "bg-green-500/10 text-green-500 border-green-500/25",
+                         globalHazard === 'WARNING' && "bg-amber-500/10 text-amber-500 border-amber-500/25",
+                         globalHazard === 'ALERT' && "bg-red-500/10 text-red-500 border-red-500/25"
+                       )}>
+                         {globalHazard === 'SAFE' && "● Real-time Stable"}
+                         {globalHazard === 'WARNING' && "● Heavy Load Alert"}
+                         {globalHazard === 'ALERT' && "● Non-Realtime Risk"}
+                       </span>
+                    </div>
+
+                    {/* Diagnostics Metrics */}
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                       <div className="bg-black/5 dark:bg-white/5 p-3 rounded-2xl border border-black/5 dark:border-white/5">
+                          <p className="text-[8px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 mb-1">Bytes Size</p>
+                          <p className="font-mono text-xs font-black text-black dark:text-white">
+                            {stats.totalBytes < 1024 ? `${stats.totalBytes} B` : `${(stats.totalBytes/1024).toFixed(1)} KB`}
+                          </p>
+                       </div>
+                       <div className="bg-black/5 dark:bg-white/5 p-3 rounded-2xl border border-black/5 dark:border-white/5">
+                          <p className="text-[8px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 mb-1">Total Keys</p>
+                          <p className="font-mono text-xs font-black text-black dark:text-white">{stats.totalKeys}</p>
+                       </div>
+                       <div className="bg-black/5 dark:bg-white/5 p-3 rounded-2xl border border-black/5 dark:border-white/5">
+                          <p className="text-[8px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 mb-1">Max Depth</p>
+                          <p className="font-mono text-xs font-black text-black dark:text-white">{stats.maxDepth} levels</p>
+                       </div>
+                    </div>
+
+                    {/* Hazard summary bar */}
+                    <div className="space-y-1.5 bg-black/[0.02] dark:bg-white/[0.01] border border-black/5 dark:border-white/5 rounded-2xl p-4">
+                       <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-wider">
+                          <span className="text-black/40 dark:text-white/40">Active Stream Health</span>
+                          <span className={cn(
+                            globalHazard === 'SAFE' && "text-green-500",
+                            globalHazard === 'WARNING' && "text-amber-500",
+                            globalHazard === 'ALERT' && "text-red-500"
+                          )}>
+                            {globalHazard === 'SAFE' && "Perfect Stream State"}
+                            {globalHazard === 'WARNING' && "Throttling Latency Risk"}
+                            {globalHazard === 'ALERT' && "Danger: Close to Non-Realtime Mode"}
+                          </span>
+                       </div>
+                       <div className="w-full h-1.5 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
+                          <div 
+                            className={cn(
+                              "h-full rounded-full transition-all duration-300",
+                              globalHazard === 'SAFE' && "bg-green-500",
+                              globalHazard === 'WARNING' && "bg-amber-500",
+                              globalHazard === 'ALERT' && "bg-red-500"
+                            )}
+                            style={{ width: `${Math.min(100, Math.max(12, (stats.totalBytes / (globalHazard === 'ALERT' ? 1000000 : 250000) * 100)))}%` }}
+                          />
+                       </div>
+                       <p className="text-[8px] text-black/45 dark:text-white/45 uppercase tracking-wide leading-relaxed font-semibold">
+                         {globalHazard === 'SAFE' && "Under 40KB of memory. Your firebase RTDB real-time event loops will load with optimal sub-100ms latency."}
+                         {globalHazard === 'WARNING' && "Exceeds 40KB under active nodes. Heavy nesting may limit real-time query bandwidth. Prune inactive fields."}
+                         {globalHazard === 'ALERT' && "Extremely large payloads. Exceeds standard RTDB limits of 120KB. Firebase may strip sync handlers and activate non-realtime static snapshots."}
+                       </p>
+                    </div>
+
+                    {/* Node weights breakdown */}
+                    <div className="space-y-2">
+                       <h4 className="text-[9px] font-black uppercase tracking-widest text-[#32befa] block px-1">Weight Distribution (Heavy First)</h4>
+                       {stats.childStats.length === 0 ? (
+                         <p className="text-[8px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest text-center py-4 bg-black/5 dark:bg-white/5 rounded-2xl">
+                           No child nodes to track at this path level
+                         </p>
+                       ) : (
+                         <div className="space-y-1 max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800 pr-1">
+                           {stats.childStats.map((item) => (
+                             <div 
+                               key={item.key}
+                               className="flex items-center justify-between p-2.5 rounded-xl bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 font-mono text-[10px] hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+                             >
+                                <div className="flex items-center gap-1.5 truncate">
+                                   <span className={cn(
+                                     "w-1.5 h-1.5 rounded-full shrink-0",
+                                     item.hazardLevel === 'SAFE' && "bg-green-500",
+                                     item.hazardLevel === 'WARNING' && "bg-amber-500",
+                                     item.hazardLevel === 'ALERT' && "bg-red-500"
+                                   )} />
+                                   <span className="text-[#32befa] font-bold truncate">{item.key}</span>
+                                   <span className="text-zinc-500 text-[8px] font-sans">({item.keysCount} elements)</span>
+                                </div>
+                                <span className="font-bold text-black dark:text-white shrink-0">
+                                  {item.bytes < 1024 ? `${item.bytes} B` : `${(item.bytes/1024).toFixed(1)} KB`}
+                                </span>
+                             </div>
+                           ))}
+                         </div>
+                       )}
+                    </div>
+                  </div>
+                );
+             })()}
+
             <div className="bg-white dark:bg-[#0a0a0a] border border-black/5 dark:border-white/5 rounded-[2.5rem] p-6 shadow-2xl space-y-6">
                <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-primary/20 rounded-xl flex items-center justify-center text-primary">
@@ -5790,7 +6549,13 @@ export default function AdminPanel() {
         try {
           const nodeRef = ref(db, config.path);
           const unsubscribe = onValue(nodeRef, (snapshot) => {
-            setLiveValue(snapshot.exists() ? snapshot.val() : null);
+            const newVal = snapshot.exists() ? snapshot.val() : null;
+            setLiveValue((oldVal: any) => {
+              if (JSON.stringify(oldVal) === JSON.stringify(newVal)) {
+                return oldVal;
+              }
+              return newVal;
+            });
             setLoading(false);
           }, (err) => {
             console.error("Error reading RTDB node:", config.path, err);
@@ -8733,6 +9498,46 @@ export default function AdminPanel() {
 
              <div className="space-y-4">
                <div className="flex items-center justify-between px-2">
+             {/* Custom Bot Names Configuration Card */}
+             <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5 space-y-4 mb-6">
+                <div className="flex items-center gap-3">
+                   <div className="w-10 h-10 bg-[#32befa]/10 rounded-xl flex items-center justify-center text-[#32befa]">
+                      <SettingsIcon size={20} />
+                   </div>
+                   <div>
+                      <h3 className="text-sm font-black uppercase tracking-tighter text-black dark:text-white leading-none">Custom Bot Names (Multiplayer Matchmaking)</h3>
+                      <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mt-1">Configure user-friendly player names for automated matchmaking bots.</p>
+                   </div>
+                </div>
+                
+                <div className="space-y-3">
+                   <textarea 
+                     value={adminCustomBotNames}
+                     onChange={(e) => setAdminCustomBotNames(e.target.value)}
+                     placeholder="E.g. Aarav Sharma, Priya Patel, Rohan Verma, Sneha Rao"
+                     className="w-full h-28 bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-xs font-mono text-black dark:text-white outline-none focus:border-[#32befa] resize-y"
+                   />
+                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <span className="text-[9px] font-bold text-black/30 dark:text-white/30 uppercase tracking-widest font-mono">
+                         Separate with commas. Empty values will fallback to default database names.
+                      </span>
+                      <button 
+                        onClick={async () => {
+                           try {
+                              await update(ref(db, 'settings'), { customBotNames: adminCustomBotNames });
+                              alert({ title: 'Names Saved', description: 'Custom bot names updated successfully!', type: 'success' });
+                           } catch(err) {
+                              alert({ title: 'Error', description: 'Failed to save bot names configuration.', type: 'error' });
+                           }
+                        }}
+                        className="px-6 py-2.5 bg-[#32befa] text-black text-[10px] font-black uppercase tracking-widest rounded-xl hover:scale-105 active:scale-95 transition-all shadow-lg shadow-[#32befa]/25 self-end"
+                      >
+                         Save Bot Names Settings
+                      </button>
+                   </div>
+                </div>
+             </div>
+
                  <h3 className="text-sm font-black text-black/20 dark:text-white/20 uppercase tracking-widest">Active Simulators ({botPlayers.length})</h3>
                  <span className="text-[10px] font-black text-[#32befa] bg-[#32befa]/10 px-3 py-1 rounded-full uppercase tracking-tighter">Instance List</span>
                </div>
@@ -8969,8 +9774,41 @@ export default function AdminPanel() {
                 </div>
               </div>
 
-              {/* Background Music Global Switch */}
-              <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
+               {/* Admin Activity Alert Toggle */}
+               <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
+                 <div className="flex items-center gap-4 mb-2">
+                   <div className="w-12 h-12 rounded-2xl bg-orange-500/10 flex items-center justify-center text-orange-500">
+                     <Bell size={24} />
+                   </div>
+                   <div>
+                     <h4 className="font-black uppercase tracking-tight">Admin Player Activity Alerts</h4>
+                     <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest font-mono">Login & Play Notify</p>
+                   </div>
+                 </div>
+                 
+                 <div className="space-y-4">
+                    <p className="text-sm font-bold text-black/60 dark:text-white/60 leading-relaxed">
+                      Send a safety alert to the admin dashboard whenever users/players log in or start/complete interactive quiz sessions. This can be configured and toggled on/off.
+                    </p>
+                    <button 
+                      onClick={async () => {
+                        const current = settings?.adminNotifyOnPlay !== false;
+                        await update(ref(db, 'settings'), { adminNotifyOnPlay: !current });
+                      }}
+                      className={cn(
+                        "w-full py-6 rounded-3xl font-black uppercase tracking-widest text-xs transition-all border shadow-lg",
+                        (settings?.adminNotifyOnPlay !== false)
+                          ? "bg-orange-500 text-white border-orange-400 shadow-orange-500/20" 
+                          : "bg-red-500 text-white border-red-400 shadow-red-500/20"
+                      )}
+                    >
+                      {(settings?.adminNotifyOnPlay !== false) ? 'PLAYER TRACKING IS ACTIVE' : 'PLAYER TRACKING IS SILENCED'}
+                    </button>
+                 </div>
+               </div>
+
+               {/* Background Music Global Switch */}
+               <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
                  <div className="flex items-center gap-4 mb-2">
                    <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
                      <Volume2 size={24} />
@@ -10071,6 +10909,9 @@ export default function AdminPanel() {
 
   return (
     <div className="flex min-h-screen bg-white dark:bg-black text-black dark:text-white relative transition-colors duration-300">
+       {/* Fullscreen Player Dashboard Overlay */}
+       {fullscreenDashboardUser && renderFullscreenPlayerDashboard(fullscreenDashboardUser)}
+
        {/* Mobile Menu Toggle */}
        <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-white dark:bg-[#050505] border-b border-black/5 dark:border-white/5 flex items-center justify-between px-6 z-[160] transition-colors duration-300">
           <div className="flex items-center gap-2">

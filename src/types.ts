@@ -64,6 +64,7 @@ export interface User {
   weeklyXP?: number;
   autoCorrectEnabled?: boolean;
   privacyEnabled?: boolean;
+  feedbackEmails?: string[] | { [key: string]: string };
   referralCode?: string;
   referredBy?: string;
   deviceUid?: string;

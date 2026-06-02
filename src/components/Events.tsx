@@ -1299,7 +1299,7 @@ export default function Events() {
                         const optEn = quiz.options?.en || [];
                         const optHi = quiz.options?.hi || [];
                         return (
-                          <div key={quiz.id} className="space-y-3 pb-6 border-b border-zinc-100 last:border-b-0">
+                          <div key={`preview-quiz-exam-${quiz.id || quizIdx}-${quizIdx}`} className="space-y-3 pb-6 border-b border-zinc-100 last:border-b-0">
                             {/* Question Title */}
                             <div>
                               <div className="flex items-start gap-2.5">
@@ -1355,7 +1355,7 @@ export default function Events() {
                         const userLetter = userIndex !== -1 ? String.fromCharCode(65 + userIndex) : 'N/A';
 
                         return (
-                          <div key={quiz.id} className="flex items-center justify-between p-3 rounded-xl border border-zinc-300 bg-white hover:bg-zinc-50 transition-colors font-mono text-xs">
+                          <div key={`preview-quiz-omr-${quiz.id || quizIdx}-${quizIdx}`} className="flex items-center justify-between p-3 rounded-xl border border-zinc-300 bg-white hover:bg-zinc-50 transition-colors font-mono text-xs">
                             <div className="flex items-center gap-2">
                               <span className="w-6 h-6 rounded bg-zinc-950 text-white font-extrabold flex items-center justify-center text-[10px] shrink-0 font-sans">
                                 {quizIdx + 1}
@@ -1425,7 +1425,7 @@ export default function Events() {
                         const correctLetter = String.fromCharCode(65 + correctIndex);
 
                         return (
-                          <div key={quiz.id} className="p-4 rounded-xl border border-zinc-300 bg-white space-y-3 text-xs leading-relaxed text-left">
+                          <div key={`preview-quiz-ans-${quiz.id || quizIdx}-${quizIdx}`} className="p-4 rounded-xl border border-zinc-300 bg-white space-y-3 text-xs leading-relaxed text-left">
                             {/* Question and Q.Number */}
                             <div className="flex items-start gap-2.5">
                               <span className="font-black text-xs bg-emerald-600 text-white rounded px-2 py-0.5 mt-0.5 shrink-0 font-sans">

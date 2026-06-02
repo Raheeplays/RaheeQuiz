@@ -18,6 +18,22 @@ interface MultiplayerGameProps {
 
 export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: MultiplayerGameProps) {
   const { currentUser } = useUser();
+  const [topics, setTopics] = useState<any[]>([]);
+
+  useEffect(() => {
+    get(ref(db, 'topics')).then(snap => {
+      if (snap.exists()) {
+        const val = snap.val();
+        setTopics(Object.entries(val).map(([k, v]: [string, any]) => ({ ...v, id: k })));
+      }
+    });
+  }, []);
+
+  const getTopicName = (tid: string) => {
+    const t = topics.find((topic: any) => topic.id === tid);
+    return t ? t.name : tid;
+  };
+
   const { isDark, soundEnabled, vibrationEnabled, customization } = useTheme();
   const { confirm, alert } = useDialog();
   const [room, setRoom] = useState<MatchRoom | null>(null);
@@ -435,10 +451,17 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
     if (verified) {
       await update(ref(db, `matches/${roomId}/participants/${currentUser.id}`), {
         finished: true,
-        score: myProgress.score,
+        hasQuit: true,
+        score: myProgress?.score || 0,
       });
-      // Force finalize game to show results screen
-      finalizeGame(room);
+      
+      const participants = Object.values(room.participants) as any[];
+      const activeOthers = participants.filter(p => p.userId !== currentUser.id && !p.finished);
+      if (activeOthers.length === 0) {
+        finalizeGame(room);
+      } else {
+        onClose();
+      }
     }
   };
   const formatTime = (seconds: number) => {
@@ -677,14 +700,31 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
                 </div>
              </div>
           ) : (
-             <div className="flex gap-4 w-full max-w-sm mb-10">
-                <div className="flex-1 bg-white/5 p-4 rounded-2xl border border-white/5">
-                    <p className="text-[8px] font-black text-white/20 uppercase tracking-widest mb-1">Your Score</p>
-                    <p className="text-xl font-black text-primary">{myProgress.score}</p>
+             <div className="space-y-4 w-full max-w-sm mb-10">
+                <div className="flex gap-4">
+                   <div className="flex-1 bg-white/5 p-4 rounded-2xl border border-white/5 text-center">
+                       <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mb-1">Your Score</p>
+                       <p className="text-xl font-black text-primary">{myProgress?.score || 0} pts</p>
+                   </div>
+                   <div className="flex-1 bg-white/5 p-4 rounded-2xl border border-white/5 text-center">
+                       <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mb-1">{opponentProgress?.userName || 'Opponent'}</p>
+                       <p className="text-xl font-black text-white">{opponentProgress?.score || 0} pts</p>
+                   </div>
                 </div>
-                <div className="flex-1 bg-white/5 p-4 rounded-2xl border border-white/5">
-                    <p className="text-[8px] font-black text-white/20 uppercase tracking-widest mb-1">Opponent</p>
-                    <p className="text-xl font-black text-white">{opponentProgress.score}</p>
+
+                <div className="bg-white/5 border border-white/5 rounded-3xl p-5 space-y-3.5 text-left">
+                   <p className="text-[9px] font-black uppercase tracking-widest text-primary border-b border-white/5 pb-2">Battle Scoresheet</p>
+                   {Object.values(room?.participants || {}).sort((a: any, b: any) => (b.score || 0) - (a.score || 0)).map((p: any) => (
+                      <div key={p.userId} className="flex items-center justify-between">
+                         <div className="flex items-center gap-2">
+                            <span className={cn("w-1.5 h-1.5 rounded-full", p.userId === currentUser?.id ? "bg-primary" : "bg-white/45")} />
+                            <span className="text-xs font-bold text-white/80">{p.userName}</span>
+                            {p.userId === currentUser?.id && <span className="text-[7px] bg-primary/20 text-primary px-1.5 rounded font-black uppercase font-bold ml-1">You</span>}
+                            {p.hasQuit && <span className="text-[7px] bg-red-500/20 text-red-500 px-1.5 rounded font-black uppercase ml-1">Surrendered</span>}
+                         </div>
+                         <span className="text-xs font-black text-white">{p.score || 0} PTS</span>
+                      </div>
+                   ))}
                 </div>
              </div>
           )}
@@ -803,6 +843,15 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
             </div>
          </div>
       </div>
+
+      {opponentProgress?.hasQuit && (
+         <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-3 text-center flex items-center justify-center gap-2 text-red-500 shrink-0 select-none animate-pulse">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+            <p className="text-[10px] font-black uppercase tracking-widest leading-none">
+               ({opponentProgress?.userName || 'Opponent'}) has surrendered & quit! You can continue playing to complete your match.
+            </p>
+         </div>
+      )}
 
       <div className="flex-1 overflow-y-auto p-6 flex flex-col items-center justify-center">
          <div className="max-w-2xl w-full">
@@ -1012,9 +1061,11 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
                 <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
                 <span className="text-[8px] font-bold text-white/40 uppercase tracking-widest">Server Live</span>
              </div>
-             <p className="text-[8px] font-bold text-white/20 uppercase tracking-widest">Topic: {room.topicId}</p>
+             <p className="text-[8px] font-bold text-white/20 uppercase tracking-widest">Topic: {room ? getTopicName(room.topicId) : ""}</p>
           </div>
        </div>
+
+
 
       <AnimatePresence>
         {showSpecialPin && (

@@ -67,11 +67,12 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!impersonatedUser?.id) return;
 
-    const impUserRef = ref(db, `users/${impersonatedUser.id}`);
+    const path = (impersonatedUser.isBot || impersonatedUser.id.startsWith('bot_')) ? `bots/${impersonatedUser.id}` : `users/${impersonatedUser.id}`;
+    const impUserRef = ref(db, path);
     const unsubscribe = onValue(impUserRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-        setImpersonatedUser({ ...data, id: impersonatedUser.id });
+        setImpersonatedUser({ ...data, id: impersonatedUser.id, isBot: true });
       }
     });
 
@@ -89,59 +90,16 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
           update(settingsRef, { specialPin: '8532' });
         }
       } else {
-        setSettings({ livesEnabledForAll: true, specialPin: '8532' }); // Default
-        update(settingsRef, { livesEnabledForAll: true, specialPin: '8532' });
+        setSettings({ livesEnabledForAll: false, specialPin: '8532' }); // Default
+        update(settingsRef, { livesEnabledForAll: false, specialPin: '8532' });
       }
     });
     return () => unsubscribe();
   }, []);
 
-  // Dynamic Bot points & ranks simulator
+  // Dynamic Bot points & ranks simulator is disabled to check on-demand only (complying with dont update in real-time)
   useEffect(() => {
-    if (!activeUserId) return;
-
-    const interval = setInterval(async () => {
-      try {
-        const usersSnap = await get(ref(db, 'users'));
-        if (usersSnap.exists()) {
-          const rawUsers = usersSnap.val();
-          const usersList = Object.entries(rawUsers).map(([id, val]: [string, any]) => ({
-            ...val,
-            id
-          })).filter(u => u.isBot);
-
-          if (usersList.length > 0) {
-            // Select 1 to 3 bots randomly
-            const numBotsToUpdate = Math.min(usersList.length, Math.floor(Math.random() * 3) + 1);
-            const shuffled = [...usersList].sort(() => Math.random() - 0.5);
-            const selectedBots = shuffled.slice(0, numBotsToUpdate);
-
-            for (const bot of selectedBots) {
-              const currentXp = Number(bot.xp || bot.score || 0);
-              const currentCoins = Number(bot.raheeCoins || 0);
-              
-              const xpGain = Math.floor(Math.random() * 36) + 10;
-              const coinGain = Math.floor(Math.random() * 9) + 2;
-
-              const updates: any = {};
-              updates[`users/${bot.id}/xp`] = currentXp + xpGain;
-              updates[`users/${bot.id}/score`] = currentXp + xpGain;
-              updates[`users/${bot.id}/raheeCoins`] = currentCoins + coinGain;
-              updates[`users/${bot.id}/lastPlayedTime`] = new Date().toLocaleString('en-US', {
-                dateStyle: 'medium',
-                timeStyle: 'medium'
-              });
-
-              await update(ref(db), updates);
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Failed to run dynamic bots simulator:", err);
-      }
-    }, 45000); // Trigger every 45 seconds
-
-    return () => clearInterval(interval);
+    // Disabled in real-time background
   }, [activeUserId]);
 
   useEffect(() => {
@@ -298,7 +256,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         dateStyle: 'medium',
         timeStyle: 'medium'
       });
-      update(ref(db, `users/${activeUserId}`), {
+      const path = (impersonatedUser || currentUser?.isBot || activeUserId.startsWith('bot_')) ? `bots/${activeUserId}` : `users/${activeUserId}`;
+      update(ref(db, path), {
         lastPlayedTime: nowTimeStr
       }).catch((e) => console.error("Error setting exit lastPlayedTime:", e));
     };

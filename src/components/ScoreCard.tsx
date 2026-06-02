@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { User } from '../types';
 import { motion } from 'motion/react';
 import { Trophy, Star, Target, Zap, Award, CheckCircle2, XCircle, HelpCircle, Clock, X } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { db } from '../firebase/config';
+import { ref, get } from 'firebase/database';
 
 interface ScoreCardProps {
   user: User;
@@ -12,6 +14,22 @@ interface ScoreCardProps {
 }
 
 export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCount = 0 }: ScoreCardProps) {
+  const [topics, setTopics] = useState<any[]>([]);
+
+  useEffect(() => {
+    get(ref(db, 'topics')).then(snap => {
+      if (snap.exists()) {
+        const val = snap.val();
+        setTopics(Object.entries(val).map(([k, v]: [string, any]) => ({ ...v, id: k })));
+      }
+    }).catch(e => console.error("Could not fetch topics in ScoreCard", e));
+  }, []);
+
+  const getTopicName = (tid: string) => {
+    const t = topics.find((topic: any) => topic.id === tid);
+    return t ? t.name : tid;
+  };
+
   // Aggregate stats
   const aggregateStats = Object.values(user.scores || {}).reduce(
     (acc, curr) => {
@@ -184,7 +202,7 @@ export default function ScoreCard({ user, onClose, isAdminView, totalQuizzesCoun
             <div className="flex flex-wrap gap-2">
               {Object.entries(user.scores || {}).map(([topicId, score], idx) => (
                 <div key={`scorecard-topic-${topicId || idx}-${idx}`} className="bg-black/5 dark:bg-white/5 px-3 py-2 rounded-full border border-black/5 dark:border-white/10 flex items-center gap-2">
-                  <span className="text-[9px] font-black text-black/80 dark:text-white/80 uppercase">{topicId}</span>
+                  <span className="text-[9px] font-black text-black/80 dark:text-white/80 uppercase">{getTopicName(topicId)}</span>
                   <div className="h-1 w-8 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
                     <div 
                       className="h-full bg-[#32befa]" 

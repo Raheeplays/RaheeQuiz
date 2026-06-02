@@ -19,6 +19,50 @@ import { Skeleton } from './ui/Skeleton';
 
 export default function QuizScreen({ onClose, language: initialLanguage = 'en', eventId, topicIds: propTopicIds }: { onClose: () => void, language?: 'en' | 'hi', eventId?: string, topicIds?: string[] }) {
   const { currentUser, settings } = useUser();
+  const [topics, setTopics] = useState<any[]>([]);
+  const [rawTopicsData, setRawTopicsData] = useState<any>(null);
+
+  useEffect(() => {
+    get(ref(db, 'topics')).then(snap => {
+      if (snap.exists()) {
+        const val = snap.val();
+        setRawTopicsData(val);
+        setTopics(Object.entries(val).map(([k, v]: [string, any]) => ({ ...v, id: k })));
+      }
+    }).catch(e => console.error("Could not load topics in QuizScreen", e));
+  }, []);
+
+  const getTopicName = (tid: string) => {
+    if (!tid) return 'General';
+    if (tid === 'general') return 'General Knowledge';
+    
+    const findInObject = (obj: any, id: string): string | null => {
+      if (!obj) return null;
+      if (obj[id]) return obj[id].name;
+      for (const k in obj) {
+        if (obj[k] && typeof obj[k] === 'object') {
+          if (obj[k].children) {
+            const res = findInObject(obj[k].children, id);
+            if (res) return res;
+          }
+          if (k === id) {
+            return obj[k].name || null;
+          }
+        }
+      }
+      return null;
+    };
+
+    if (rawTopicsData) {
+       const res = findInObject(rawTopicsData, tid);
+       if (res) return res;
+    }
+
+    const t = topics.find((topic: any) => topic.id === tid);
+    if (t) return t.name;
+
+    return tid.charAt(0).toUpperCase() + tid.slice(1);
+  };
   const [quizTimeLeft, setQuizTimeLeft] = useState(16);
   const { isDark, setIsDark, soundEnabled, vibrationEnabled, customization } = useTheme();
 
@@ -210,6 +254,46 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
 
     fetchAllQuizzes();
   }, [targetTopicIdsStr, questionOrder]);
+
+  // Send admin notification that a player is playing a quiz
+  useEffect(() => {
+    if (loading || quizzes.length === 0 || !currentUser) return;
+
+    const notifyAdmin = async () => {
+      try {
+        const settingsSnap = await get(ref(db, 'settings'));
+        const isEnabled = settingsSnap.exists() ? settingsSnap.val().adminNotifyOnPlay !== false : true;
+        if (isEnabled) {
+          const currentTopicId = Array.isArray(targetTopicIds) 
+            ? targetTopicIds[targetTopicIds.length - 1] 
+            : (targetTopicIds || 'general');
+          
+          let topicName = 'General';
+          if (currentTopicId !== 'general') {
+            const topicSnap = await get(ref(db, `topics/${currentTopicId}`));
+            if (topicSnap.exists()) {
+              topicName = topicSnap.val().name || currentTopicId;
+            } else {
+              topicName = currentTopicId;
+            }
+          }
+
+          const alertRef = push(ref(db, 'admin_notifications'));
+          await set(alertRef, {
+            id: alertRef.key,
+            type: 'play',
+            message: `${currentUser.name} (@${currentUser.username}) started playing topic "${topicName}".`,
+            timestamp: Date.now(),
+            read: false
+          });
+        }
+      } catch (err) {
+        console.error("Failed to push play alert:", err);
+      }
+    };
+
+    notifyAdmin();
+  }, [loading, quizzes.length, currentUser?.id]);
 
   const QUESTIONS_PER_ROUND = 10;
   const absoluteIndex = ((currentUser?.currentRound || 1) - 1) * QUESTIONS_PER_ROUND + currentIndex + skippedCount;
@@ -652,7 +736,7 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
           <button onClick={onClose} className="p-2 -ml-2 text-black/40 dark:text-white/40 hover:text-primary transition-colors"><X size={24} /></button>
           <div>
             <h1 className="text-sm font-black text-primary tracking-tighter uppercase mb-0.5">Rahee Quiz</h1>
-            <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">{(targetTopicIds && targetTopicIds.length > 0) ? (targetTopicIds.length === 1 ? targetTopicIds[0] : `${targetTopicIds.length} Topics`) : 'General'} • {eventId ? 'Special Event' : `R${currentUser?.currentRound || 1} • Q${currentIndex}`}</p>
+            <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">{(targetTopicIds && targetTopicIds.length > 0) ? (targetTopicIds.length === 1 ? getTopicName(targetTopicIds[0]) : `${targetTopicIds.length} Topics`) : 'General'} • {eventId ? 'Special Event' : `R${currentUser?.currentRound || 1} • Q${currentIndex}`}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { ref, onValue, remove, update } from 'firebase/database';
+import { ref, onValue, remove, update, get } from 'firebase/database';
 import { User } from '../types';
-import { Trophy, Medal, Crown, TrendingUp, Bot, Clock, Trash2 } from 'lucide-react';
+import { Trophy, Medal, Crown, TrendingUp, Bot, Clock, Trash2, Edit2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion } from 'motion/react';
 
@@ -21,98 +21,95 @@ export default function Leaderboard() {
   const [weeklyCountdown, setWeeklyCountdown] = useState('');
 
   useEffect(() => {
-    const playersRef = ref(db, 'users');
-    const unsubscribe = onValue(playersRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const list = Object.entries(data)
+    const fetchLeaderboardData = async () => {
+      try {
+        setLoading(true);
+        // Fetch users once
+        const usersSnap = await get(ref(db, 'users'));
+        const botsSnap = await get(ref(db, 'bots'));
+        
+        let usersData: any = {};
+        if (usersSnap.exists()) {
+          usersData = usersSnap.val();
+        }
+        
+        let botsData: any = {};
+        if (botsSnap.exists()) {
+          botsData = botsSnap.val();
+        }
+
+        // Parse users list
+        const realPlayersList = Object.entries(usersData)
+          .filter(([_, val]) => val !== null)
+          .map(([key, val]: [string, any]) => ({
+            ...val,
+            id: key,
+            isBot: false
+          }) as User);
+
+        // Parse bots list
+        const botsList = Object.entries(botsData)
           .filter(([_, val]) => val !== null)
           .map(([key, val]: [string, any]) => {
-            const u = { ...val, id: key } as User;
+            const u = { ...val, id: key, isBot: true } as User;
             const isAdmin = currentUser?.role === 'admin';
-            if (!u.name || u.name.trim() === '' || (u.isBot && u.name.toLowerCase().includes('bot') && !isAdmin)) {
-              if (u.isBot) {
-                const firstNames = ["Rohan", "Amit", "Priya", "Rahul", "Sneha", "Vikram", "Anjali", "Aditya", "Neha", "Sanjay", "Karan", "Riya", "Aarav", "Meera", "Kabir", "Deepak", "Tanvi", "Arjun", "Kiran", "Yash"];
-                const lastNames = ["Sharma", "Verma", "Gupta", "Singh", "Kumar", "Mehta", "Patel", "Joshi", "Das", "Roy", "Bose", "Choudhury", "Malhotra", "Kapoor", "Sen", "Reddy", "Nair", "Iyer", "Rao", "Mishra"];
-                const charSum = key.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-                const f = firstNames[charSum % firstNames.length];
-                const l = lastNames[(charSum + 7) % lastNames.length];
-                u.name = `${f} ${l}`;
-              } else {
-                u.name = "Unnamed Player";
-              }
+            if (!u.name || u.name.trim() === '' || (u.name.toLowerCase().includes('bot') && !isAdmin)) {
+              const firstNames = ["Rohan", "Amit", "Priya", "Rahul", "Sneha", "Vikram", "Anjali", "Aditya", "Neha", "Sanjay", "Karan", "Riya", "Aarav", "Meera", "Kabir", "Deepak", "Tanvi", "Arjun", "Kiran", "Yash"];
+              const lastNames = ["Sharma", "Verma", "Gupta", "Singh", "Kumar", "Mehta", "Patel", "Joshi", "Das", "Roy", "Bose", "Choudhury", "Malhotra", "Kapoor", "Sen", "Reddy", "Nair", "Iyer", "Rao", "Mishra"];
+              const charSum = key.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+              const f = firstNames[charSum % firstNames.length];
+              const l = lastNames[(charSum + 7) % lastNames.length];
+              u.name = `${f} ${l}`;
             }
             return u;
           });
-        setPlayers(list);
-      }
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, [currentUser]);
 
-  // Dynamically update bot points when a real player checks the leaderboard
-  useEffect(() => {
-    if (loading || players.length === 0 || !currentUser || currentUser.isBot) {
-      return;
-    }
+        // PROGRESS BOTS ONCE (update once when player tap on leaderboard)
+        if (botsList.length > 0 && currentUser && !currentUser.isBot) {
+          const numBotsToUpdate = Math.min(botsList.length, Math.floor(Math.random() * 3) + 1);
+          const shuffledBots = [...botsList].sort(() => Math.random() - 0.5);
+          const selectedBots = shuffledBots.slice(0, numBotsToUpdate);
 
-    const checkAndProgressBots = async () => {
-      const bots = players.filter(p => p.isBot);
-      if (bots.length === 0) return;
+          for (const bot of selectedBots) {
+            const amount = Math.floor(Math.random() * 70) + 15;
+            const currentXp = Number(bot.xp || (bot as any).score || 0);
+            const currentDaily = Number(bot.dailyXP !== undefined && bot.dailyXP !== null ? bot.dailyXP : currentXp);
+            const currentWeekly = Number(bot.weeklyXP !== undefined && bot.weeklyXP !== null ? bot.weeklyXP : currentXp);
 
-      const now = Date.now();
-      // Set update interval to 3 minutes (180,000 ms)
-      const UPDATE_INTERVAL = 180000;
+            const nextXp = currentXp + amount;
+            const nextDaily = currentDaily + amount;
+            const nextWeekly = currentWeekly + amount;
 
-      for (const bot of bots) {
-        const lastUpdated = (bot as any).lastPointsUpdateTime || 0;
-        
-        // If never updated, initialize with a randomized past offset so they stagger naturally
-        if (!lastUpdated) {
-          const randomPast = now - Math.floor(Math.random() * UPDATE_INTERVAL);
-          try {
-            await update(ref(db, `users/${bot.id}`), {
-              lastPointsUpdateTime: randomPast
-            });
-          } catch (e) {
-            console.error("Failed to initialize bot points timer", e);
-          }
-          continue;
-        }
-
-        if (now - lastUpdated > UPDATE_INTERVAL) {
-          // Increase points by a random amount between 15 and 85 points (strictly less than 100 counts)
-          const amount = Math.floor(Math.random() * 70) + 15;
-          const currentXp = bot.xp || 0;
-          const currentDaily = bot.dailyXP !== undefined && bot.dailyXP !== null ? bot.dailyXP : currentXp;
-          const currentWeekly = bot.weeklyXP !== undefined && bot.weeklyXP !== null ? bot.weeklyXP : currentXp;
-
-          const nextXp = currentXp + amount;
-          const nextDaily = currentDaily + amount;
-          const nextWeekly = currentWeekly + amount;
-
-          try {
-            await update(ref(db, `users/${bot.id}`), {
-              xp: nextXp,
-              dailyXP: nextDaily,
-              weeklyXP: nextWeekly,
-              lastPointsUpdateTime: now
-            });
-            console.log(`Successfully elevated bot ${bot.name} XP by +${amount}`);
-          } catch (err) {
-            console.error("Failed to dynamically progress bot points", err);
+            try {
+              await update(ref(db, `bots/${bot.id}`), {
+                xp: nextXp,
+                score: nextXp,
+                dailyXP: nextDaily,
+                weeklyXP: nextWeekly,
+                lastPointsUpdateTime: Date.now()
+              });
+              
+              bot.xp = nextXp;
+              (bot as any).score = nextXp;
+              bot.dailyXP = nextDaily;
+              bot.weeklyXP = nextWeekly;
+            } catch (err) {
+              console.error("Failed to progress bot inside Leaderboard mount", err);
+            }
           }
         }
+
+        const combined = [...realPlayersList, ...botsList];
+        setPlayers(combined);
+      } catch (err) {
+        console.error("Failed to load static leaderboard snapshot", err);
+      } finally {
+        setLoading(false);
       }
     };
 
-    // Run dynamic sweep check immediately and recurringly every 30 seconds
-    const intervalId = setInterval(checkAndProgressBots, 30000);
-    checkAndProgressBots();
-
-    return () => clearInterval(intervalId);
-  }, [players, loading, currentUser]);
+    fetchLeaderboardData();
+  }, [currentUser]);
 
   // Timers
   useEffect(() => {
@@ -354,7 +351,9 @@ export default function Leaderboard() {
                           onClick={async (e) => {
                             e.stopPropagation();
                             try {
-                              await remove(ref(db, `users/${player.id}`));
+                              const path = player.isBot ? `bots/${player.id}` : `users/${player.id}`;
+                              await remove(ref(db, path));
+                              setPlayers(prev => prev.filter(p => p.id !== player.id));
                               setDeletingPlayerId(null);
                             } catch (err) {
                               console.error(err);
@@ -376,17 +375,58 @@ export default function Leaderboard() {
                       </div>
                     ) : (
                       currentUser?.role === 'admin' && (player.isBot || !player.name || player.name.includes('Bot') || player.name.includes('Player')) && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeletingPlayerId(player.id);
-                          }}
-                          className="p-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/25 text-red-500 border border-red-500/15 transition-all active:scale-95 shrink-0"
-                          title="Delete Bot/Unnamed Player"
-                          id={`delete-btn-${player.id}`}
-                        >
-                          <Trash2 size={13} />
-                        </button>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const currentXP = Number(player.xp || 0);
+                              const inputVal = prompt(`Enter new total points/XP for bot "${player.name}":`, String(currentXP));
+                              if (inputVal === null) return;
+                              const pointsNum = parseInt(inputVal);
+                              if (isNaN(pointsNum)) return;
+
+                              try {
+                                const path = player.isBot ? `bots/${player.id}` : `users/${player.id}`;
+                                await update(ref(db, path), {
+                                  xp: pointsNum,
+                                  score: pointsNum,
+                                  dailyXP: pointsNum,
+                                  weeklyXP: pointsNum
+                                });
+
+                                setPlayers(prev => prev.map(p => {
+                                  if (p.id === player.id) {
+                                    return {
+                                      ...p,
+                                      xp: pointsNum,
+                                      dailyXP: pointsNum,
+                                      weeklyXP: pointsNum,
+                                      score: pointsNum
+                                    } as any;
+                                  }
+                                  return p;
+                                }));
+                              } catch (err) {
+                                console.error("Failed to edit bot points:", err);
+                              }
+                            }}
+                            className="p-1.5 rounded-xl bg-primary/10 hover:bg-primary/25 text-primary border border-primary/15 transition-all active:scale-95 shrink-0"
+                            title="Edit Bot Points"
+                          >
+                            <Edit2 size={13} />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeletingPlayerId(player.id);
+                            }}
+                            className="p-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/25 text-red-500 border border-red-500/15 transition-all active:scale-95 shrink-0"
+                            title="Delete Bot/Unnamed Player"
+                            id={`delete-btn-${player.id}`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       )
                     )}
                  </div>

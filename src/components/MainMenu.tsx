@@ -5,7 +5,7 @@ import {
   Trophy, Grid, Star, LogOut, Shield, Swords, Zap, RefreshCw, 
   MessageSquare, ChevronRight, Moon, Sun, Coins, HelpCircle, Heart,
   History as HistoryIcon, Clock, X, XCircle, Check, Camera, Upload, Image as ImageIcon, ChevronDown, ChevronUp, Loader2,
-  Gift, Calendar, AlertTriangle
+  Gift, Calendar, AlertTriangle, Activity
 } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -23,6 +23,7 @@ import AdminPanel from './AdminPanel';
 import ScoreCard from './ScoreCard';
 import History from './History';
 import Chat from './Chat';
+import TrackingHub from './TrackingHub';
 import Feedback from './Feedback';
 import { db } from '../firebase/config';
 import { ref, onValue, update, query, orderByChild, equalTo, get, push, set } from 'firebase/database';
@@ -30,7 +31,7 @@ import { User, Topic } from '../types';
 import { CLASSES, SUBJECTS, CURRENT_VERSION_CODE } from '../constants';
 import { translations } from '../translations';
 import { cn } from '../lib/utils';
-import { logActivity } from '../activityService';
+import { logActivity, logAdminNotification } from '../activityService';
 
 const DEFAULT_AVATARS = [
   'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix',
@@ -47,7 +48,7 @@ export default function MainMenu() {
   const { currentUser, setCurrentUser, settings, isImpersonating, stopImpersonating } = useUser();
   const { isDark, setIsDark } = useTheme();
   const { alert } = useDialog();
-  const [activeTab, setActiveTab] = useState<'home' | 'leaderboard' | 'shop' | 'friends' | 'admin' | 'event'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'leaderboard' | 'shop' | 'friends' | 'admin' | 'event' | 'tracking'>('home');
   const [showQuiz, setShowQuiz] = useState(false);
   const [activeExamId, setActiveExamId] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
@@ -295,17 +296,40 @@ export default function MainMenu() {
   };
 
   useEffect(() => {
+    let usersList: User[] = [];
+    let botsList: User[] = [];
+
     const usersRef = ref(db, 'users');
-    const unsubscribe = onValue(usersRef, (snapshot) => {
+    const unsubscribeUsers = onValue(usersRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        setAllUsers(Object.entries(data)
+        usersList = Object.entries(data)
           .filter(([_, val]) => val !== null)
           .map(([id, val]: [string, any]) => ({
             id,
             ...val
-          })));
+          }));
+      } else {
+        usersList = [];
       }
+      setAllUsers([...usersList, ...botsList]);
+    });
+
+    const botsRef = ref(db, 'bots');
+    const unsubscribeBots = onValue(botsRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        botsList = Object.entries(data)
+          .filter(([_, val]) => val !== null)
+          .map(([id, val]: [string, any]) => ({
+            id,
+            ...val,
+            isBot: true
+          }));
+      } else {
+        botsList = [];
+      }
+      setAllUsers([...usersList, ...botsList]);
     });
 
     const topicsRef = ref(db, 'topics');
@@ -357,7 +381,8 @@ export default function MainMenu() {
     window.addEventListener('start-exam', handleStartExam);
 
     return () => {
-      unsubscribe();
+      unsubscribeUsers();
+      unsubscribeBots();
       window.removeEventListener('start-match', handleStartMatch);
       window.removeEventListener('start-exam', handleStartExam);
     };
@@ -368,6 +393,12 @@ export default function MainMenu() {
       setActiveTab('home');
     }
   }, [isImpersonating]);
+
+  useEffect(() => {
+    if (showQuiz && currentUser) {
+      logAdminNotification('play', currentUser.name || currentUser.username || 'Player', 'Solo Quiz Game');
+    }
+  }, [showQuiz, currentUser?.id]);
 
   // Automatically redirect to active match if one exists in status 'accepted' or 'playing'
   useEffect(() => {
@@ -1432,7 +1463,7 @@ export default function MainMenu() {
                  <span className="text-sm font-black text-orange-500">{currentUser.streak}</span>
               </button>
             )}
-            {currentUser?.lives?.enabled && (
+            {settings?.livesEnabledForAll && currentUser?.lives?.enabled && (
               <button 
                 onClick={(e) => { e.stopPropagation(); setShowLivesModal(true); }}
                 className="flex items-center gap-2 px-3 h-10 bg-red-500/10 dark:bg-red-500/5 rounded-xl border border-red-500/20 hover:scale-105 active:scale-95 transition-all shrink-0"
@@ -1643,6 +1674,8 @@ export default function MainMenu() {
           </motion.div>
         )}
 
+
+
         {/* Admin Quick Access */}
         {currentUser?.role === 'admin' && (
           <motion.button 
@@ -1706,6 +1739,7 @@ export default function MainMenu() {
         {activeTab === 'friends' && <SocialHub onClose={() => setActiveTab('home')} allUsers={allUsers} totalQuizzesCount={totalQuizzesCount} />}
         {activeTab === 'events' && <Events />}
         {activeTab === 'admin' && currentUser?.role === 'admin' && <AdminPanel />}
+        {activeTab === 'tracking' && <TrackingHub onClose={() => setActiveTab('home')} />}
       </AnimatePresence>
 
       {/* Modals */}
@@ -2434,6 +2468,9 @@ export default function MainMenu() {
                 setMultiRoomId(roomId);
                 setIsBotMatch(isBot);
                 setShowMultiplayerHub(false);
+                if (currentUser) {
+                  logAdminNotification('play', currentUser.name || currentUser.username || 'Player', 'Multiplayer Match');
+                }
               });
             }}
           />

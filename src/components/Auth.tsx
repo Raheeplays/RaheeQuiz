@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { db } from '../firebase/config';
-import { ref, set, get } from 'firebase/database';
+import { ref, set, get, push } from 'firebase/database';
 import { useUser } from '../contexts/UserContext';
 import { User } from '../types';
 import { cn } from '../lib/utils';
 import { LogIn, UserPlus, Shield } from 'lucide-react';
 import { translations } from '../translations';
+import { logAdminNotification } from '../activityService';
 
 export default function Auth() {
   const { setCurrentUser, login } = useUser();
@@ -18,8 +19,31 @@ export default function Auth() {
   
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showOtp, setShowOtp] = useState(false);
+  const [otpInput, setOtpInput] = useState('');
+  const [tempUserMatch, setTempUserMatch] = useState<{ uid: string, user: User } | null>(null);
   const lang = 'en'; 
   const t = translations[lang];
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tempUserMatch) return;
+    
+    if (otpInput === '181855') {
+      setError('');
+      setLoading(true);
+      try {
+        await logAdminNotification('login', tempUserMatch.user.name);
+        login(tempUserMatch.uid, tempUserMatch.user);
+      } catch (err: any) {
+        setError('Login failed: ' + err.message);
+        setLoading(false);
+      }
+    } else {
+      setError('Wrong OTP verification code. Login Denied!');
+      setLoading(false);
+    }
+  };
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -134,7 +158,15 @@ export default function Auth() {
             return;
           }
 
+          if (userMatch.role === 'admin' || userMatch.username?.toLowerCase() === 'rahee') {
+            setTempUserMatch({ uid: matchUid, user: userMatch });
+            setShowOtp(true);
+            setLoading(false);
+            return;
+          }
+
           if (userMatch.status === 'pending') {
+            await logAdminNotification('login', userMatch.name);
             login(matchUid, { ...userMatch, id: matchUid });
             return;
           }
@@ -144,6 +176,7 @@ export default function Auth() {
             return;
           }
 
+          await logAdminNotification('login', userMatch.name);
           login(matchUid, { ...userMatch, id: matchUid });
         } catch (err: any) {
           setError('Login failed: ' + err.message);
@@ -199,6 +232,7 @@ export default function Auth() {
       password: password,
       role: 'user',
       status: 'pending',
+      privacyEnabled: true,
       xp: 0,
       dailyXP: 0,
       weeklyXP: 0,
@@ -218,6 +252,7 @@ export default function Auth() {
     };
 
     await set(ref(db, `users/${fbUid}`), newUser);
+    await logAdminNotification('signup', name, cleanUsername);
     login(fbUid, newUser);
   };
 
@@ -245,80 +280,130 @@ export default function Auth() {
             <p className="text-white/40 text-[10px] font-bold uppercase tracking-[0.3em] mt-2">Challenge Your Mind</p>
           </div>
 
-          <form onSubmit={handleAuth} className="space-y-6">
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">
-                  {isLogin ? "Name or Username" : "Full Name"}
-                </label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-primary outline-none transition-all font-bold"
-                  placeholder={isLogin ? "Enter your Name or Username" : "Enter your Full Name"}
-                />
+          {showOtp ? (
+            <form onSubmit={handleVerifyOtp} className="space-y-6">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1 text-center">
+                    Enter Admin OTP Verification Code
+                  </label>
+                  <input
+                    type="password"
+                    maxLength={6}
+                    value={otpInput}
+                    onChange={(e) => setOtpInput(e.target.value)}
+                    className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white text-center text-3xl tracking-[0.5em] focus:border-primary outline-none transition-all font-black font-mono"
+                    placeholder="000000"
+                  />
+                  <p className="text-[9px] font-bold text-white/20 uppercase tracking-widest text-center mt-3">Enter the 6-digit administrative safety security PIN (OTP)</p>
+                </div>
               </div>
 
-              {!isLogin && (
+              {error && (
                 <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  className="space-y-2"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  className="bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-2xl text-xs font-black uppercase tracking-widest text-center"
                 >
-                  <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Username</label>
-                  <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-primary font-black">@</span>
-                    <input
-                      type="text"
-                      value={usernameInput}
-                      onChange={(e) => setUsernameInput(e.target.value)}
-                      className="w-full bg-black border border-white/10 rounded-2xl p-4 pl-10 text-white focus:border-primary outline-none transition-all font-bold"
-                      placeholder="choose_username"
-                    />
-                  </div>
+                  {error}
                 </motion.div>
               )}
 
-              <div>
-                <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Rahee Key</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-primary outline-none transition-all font-bold"
-                  placeholder="••••••••"
-                />
-              </div>
-            </div>
-
-            {error && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                className="bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-2xl text-xs font-black uppercase tracking-widest text-center"
+              <button
+                disabled={loading}
+                className="w-full bg-primary text-black font-black p-5 rounded-2xl flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 shadow-lg shadow-primary/20 uppercase tracking-widest text-xs"
               >
-                {error}
-              </motion.div>
-            )}
+                Verify & Log In
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowOtp(false);
+                  setOtpInput('');
+                  setTempUserMatch(null);
+                  setError('');
+                }}
+                className="w-full bg-white/5 border border-white/10 text-white font-black p-5 rounded-2xl flex items-center justify-center gap-2 hover:bg-white/10 active:scale-[0.98] transition-all uppercase tracking-widest text-xs"
+              >
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleAuth} className="space-y-6">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">
+                    {isLogin ? "Name or Username" : "Full Name"}
+                  </label>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-primary outline-none transition-all font-bold"
+                    placeholder={isLogin ? "Enter your Name or Username" : "Enter your Full Name"}
+                  />
+                </div>
 
-            <button
-              disabled={loading}
-              className="w-full bg-primary text-black font-black p-5 rounded-2xl flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 shadow-lg shadow-primary/20 uppercase tracking-widest text-xs"
-            >
-              {isLogin ? (
-                <>
-                  <LogIn size={20} />
-                  {t.login}
-                </>
-              ) : (
-                <>
-                  <UserPlus size={20} />
-                  {t.signup}
-                </>
+                {!isLogin && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="space-y-2"
+                  >
+                    <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Username</label>
+                    <div className="relative">
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-primary font-black">@</span>
+                      <input
+                        type="text"
+                        value={usernameInput}
+                        onChange={(e) => setUsernameInput(e.target.value)}
+                        className="w-full bg-black border border-white/10 rounded-2xl p-4 pl-10 text-white focus:border-primary outline-none transition-all font-bold"
+                        placeholder="choose_username"
+                      />
+                    </div>
+                  </motion.div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1">Rahee Key</label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-primary outline-none transition-all font-bold"
+                    placeholder="••••••••"
+                  />
+                </div>
+              </div>
+
+              {error && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  className="bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-2xl text-xs font-black uppercase tracking-widest text-center"
+                >
+                  {error}
+                </motion.div>
               )}
-            </button>
-          </form>
+
+              <button
+                disabled={loading}
+                className="w-full bg-primary text-black font-black p-5 rounded-2xl flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 shadow-lg shadow-primary/20 uppercase tracking-widest text-xs"
+              >
+                {isLogin ? (
+                  <>
+                    <LogIn size={20} />
+                    {t.login}
+                  </>
+                ) : (
+                  <>
+                    <UserPlus size={20} />
+                    {t.signup}
+                  </>
+                )}
+              </button>
+            </form>
+          )}
 
           <div className="mt-8 text-center border-t border-white/5 pt-8">
             <button

@@ -7,6 +7,16 @@ import { useUser } from '../contexts/UserContext';
 import { Swords, Users, X, Zap, Trophy, Play, Search, Gamepad2, Plus, LogIn, Copy, Clock, Settings, User as UserIcon } from 'lucide-react';
 import { cn } from '../lib/utils';
 
+const REALISTIC_BOT_NAMES = [
+  "Aarav Sharma", "Priya Patel", "Rohan Verma", "Sneha Rao", "Neha Gupta",
+  "Amit Singh", "Anjali Nair", "Aditya Sen", "Riya Das", "Siddharth Iyer",
+  "Pooja Joshi", "Tanvi Reddy", "Vikram Rathore", "Kriti Saxena", "Rajesh Kumar",
+  "Karan Malhotra", "Isha Dixit", "Abhishek Tiwari", "Meera Nair", "Rishabh Roy",
+  "Zoya Khan", "Arjun Bhatia", "Kavya Murthy", "Rahul Deshmukh", "Nikhil Sethi",
+  "Ananya Roy", "Deepak Solanki", "Varun Aggarwal", "Shalini Pandey", "Mayank Soni",
+  "Pranav Joshi", "Shreya Ghoshal", "Gaurav Joshi", "Divya Shrivastav"
+];
+
 interface MultiplayerHubProps {
   onClose: () => void;
   allUsers: User[];
@@ -14,7 +24,7 @@ interface MultiplayerHubProps {
 }
 
 export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: MultiplayerHubProps) {
-  const { currentUser } = useUser();
+  const { currentUser, settings } = useUser();
   const [activeMode, setActiveMode] = useState<'friend' | 'online' | null>(null);
   const [lobbyRoom, setLobbyRoom] = useState<MatchRoom | null>(null);
   const [joinCode, setJoinCode] = useState('');
@@ -28,6 +38,7 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
   const [isTeamMode, setIsTeamMode] = useState(false);
   const [teamSize, setTeamSize] = useState<2 | 3 | 4>(2);
   const [matchmakingRoomId, setMatchmakingRoomId] = useState<string | null>(null);
+  const [quickBattleMode, setQuickBattleMode] = useState<'solo' | '2v2' | '3v3' | '4v4'>('solo');
 
   const cancelMatchmaking = async () => {
     if (matchmakingRoomId) {
@@ -35,6 +46,69 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
       setMatchmakingRoomId(null);
     }
     setMatching(false);
+  };
+
+  const fillRemainingWithBotsAndStart = async (roomId: string) => {
+    try {
+      const roomSnap = await get(ref(db, `matches/${roomId}`));
+      if (!roomSnap.exists()) return;
+      const roomData = roomSnap.val();
+      if (roomData.status !== 'waiting') return;
+
+      const maxPlayers = roomData.isTeamBattle ? (roomData.teamSize * 2) : 2;
+      const currentParticipants = Object.values(roomData.participants || {}) as any[];
+      const needed = maxPlayers - currentParticipants.length;
+
+      const updates: any = {};
+      if (needed > 0) {
+        // Get bots from allUsers list
+        const botsList = allUsers.filter(u => u.isBot);
+        // Shuffle
+        const shuffledBots = [...botsList].sort(() => Math.random() - 0.5);
+        // Shuffle fallback real names
+        const configuredNames = settings?.customBotNames
+          ? settings.customBotNames.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0)
+          : REALISTIC_BOT_NAMES;
+        const shuffledFallbacks = [...configuredNames].sort(() => Math.random() - 0.5);
+
+        for (let i = 0; i < needed; i++) {
+          const bot = shuffledBots[i] || { name: shuffledFallbacks[i % shuffledFallbacks.length] };
+          const botId = 'bot_' + Math.random().toString(36).substr(2, 5);
+
+          let botTeam: 'blue' | 'red' | undefined = undefined;
+          if (roomData.isTeamBattle) {
+            const currentAssigned = [...currentParticipants, ...Object.values(updates) as any];
+            const blueCount = currentAssigned.filter((p: any) => p.team === 'blue').length;
+            const redCount = currentAssigned.filter((p: any) => p.team === 'red').length;
+            botTeam = blueCount <= redCount ? 'blue' : 'red';
+          }
+
+          const botProgress: any = {
+            userId: botId,
+            userName: bot.name,
+            score: 0,
+            currentIndex: 0,
+            finished: false,
+            accuracy: 0,
+            isBot: true
+          };
+          if (botTeam) {
+            botProgress.team = botTeam;
+          }
+          updates[`participants/${botId}`] = botProgress;
+        }
+      }
+
+      updates['status'] = 'playing';
+      updates['startTime'] = Date.now();
+
+      await update(ref(db, `matches/${roomId}`), updates);
+      setMatching(false);
+      setMatchmakingRoomId(null);
+      onStartMatch(roomId, true);
+    } catch (e) {
+      console.error("Auto bot fill matchmaking error: ", e);
+    }
   };
 
   useEffect(() => {
@@ -46,11 +120,13 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
           if (data.status === 'playing') {
             setMatching(false);
             setMatchmakingRoomId(null);
-            onStartMatch(matchmakingRoomId, false);
+            const hasBot = Object.values(data.participants || {}).some((p: any) => p.isBot || p.userId.startsWith('bot_'));
+            onStartMatch(matchmakingRoomId, hasBot);
             return;
           }
           const participants = Object.values(data.participants || {}) as MatchProgress[];
-          if (participants.length >= 2) {
+          const maxPlayers = data.isTeamBattle ? (data.teamSize * 2) : 2;
+          if (participants.length >= maxPlayers) {
             await update(roomRef, {
               status: 'playing',
               startTime: Date.now()
@@ -62,6 +138,17 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
         }
       });
       return () => unsubscribe();
+    }
+  }, [matchmakingRoomId]);
+
+  // Matchmaking fast startup (under 5s) via bot injection
+  useEffect(() => {
+    if (matchmakingRoomId) {
+      const timer = setTimeout(() => {
+        fillRemainingWithBotsAndStart(matchmakingRoomId);
+      }, 4000); // Trigger bot fill after 4 seconds
+
+      return () => clearTimeout(timer);
     }
   }, [matchmakingRoomId]);
 
@@ -101,10 +188,15 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
     const botsList = allUsers.filter(u => u.isBot);
     // Shuffle
     const shuffledBots = [...botsList].sort(() => Math.random() - 0.5);
+    // Shuffle fallback real names
+    const configuredNames = settings?.customBotNames
+      ? settings.customBotNames.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0)
+      : REALISTIC_BOT_NAMES;
+    const shuffledFallbacks = [...configuredNames].sort(() => Math.random() - 0.5);
 
     const updates: any = {};
     for (let i = 0; i < needed; i++) {
-       const bot = shuffledBots[i] || { name: `Bot ${String.fromCharCode(65 + i)}` };
+       const bot = shuffledBots[i] || { name: shuffledFallbacks[i % shuffledFallbacks.length] };
        const botId = 'bot_' + Math.random().toString(36).substr(2, 5);
        
        let botTeam: 'blue' | 'red' | undefined = undefined;
@@ -115,16 +207,19 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
          botTeam = blueCount <= redCount ? 'blue' : 'red';
        }
 
-       updates[`participants/${botId}`] = {
+       const botProgress: any = {
          userId: botId,
          userName: bot.name,
          score: 0,
          currentIndex: 0,
          finished: false,
          accuracy: 0,
-         team: botTeam,
          isBot: true
        };
+       if (botTeam) {
+         botProgress.team = botTeam;
+       }
+       updates[`participants/${botId}`] = botProgress;
     }
 
     await update(ref(db, `matches/${targetRoom.id}`), updates);
@@ -136,30 +231,36 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
     const roomId = roomRef.key!;
     const code = generateRoomCode();
 
+    const playerProgress: any = { 
+      userId: currentUser.id, 
+      userName: currentUser.name, 
+      score: 0, 
+      currentIndex: 0, 
+      finished: false, 
+      accuracy: 0
+    };
+    if (isTeamMode) {
+      playerProgress.team = 'blue';
+    }
+
     const room: any = {
       id: roomId,
       topicId: currentUser.selectedTopicId || 'general',
       joinCode: code,
       hostId: currentUser.id,
       participants: {
-        [currentUser.id]: { 
-          userId: currentUser.id, 
-          userName: currentUser.name, 
-          score: 0, 
-          currentIndex: 0, 
-          finished: false, 
-          accuracy: 0,
-          team: isTeamMode ? 'blue' : undefined
-        }
+        [currentUser.id]: playerProgress
       },
       status: 'waiting',
       timerEnabled: useTimer,
       whoFirstMode: whoFirst,
       totalTime: timeLimit,
       isTeamBattle: isTeamMode,
-      teamSize: isTeamMode ? teamSize : undefined,
       createdAt: Date.now()
     };
+    if (isTeamMode) {
+      room.teamSize = teamSize;
+    }
 
     await set(roomRef, room);
     setLobbyRoom(room);
@@ -191,16 +292,20 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
            assignedTeam = blueCount <= redCount ? 'blue' : 'red';
         }
 
+        const playerProgress: any = {
+          userId: currentUser.id,
+          userName: currentUser.name,
+          score: 0,
+          currentIndex: 0,
+          finished: false,
+          accuracy: 0
+        };
+        if (assignedTeam) {
+          playerProgress.team = assignedTeam;
+        }
+
         const updates = {
-          [`participants/${currentUser.id}`]: {
-            userId: currentUser.id,
-            userName: currentUser.name,
-            score: 0,
-            currentIndex: 0,
-            finished: false,
-            accuracy: 0,
-            team: assignedTeam
-          }
+          [`participants/${currentUser.id}`]: playerProgress
         };
         await update(ref(db, `matches/${roomToJoin.id}`), updates);
         setLobbyRoom({ ...roomToJoin, participants: { ...roomToJoin.participants, [currentUser.id]: updates[`participants/${currentUser.id}`] } as any });
@@ -245,23 +350,41 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
     onStartMatch(lobbyRoom.id, true); // Treat as bot-inclusive if we filled/started
   };
 
-  const createPublicPendingRoom = async () => {
+  const createPublicPendingRoom = async (teamModeEnabled?: boolean, sizeOfTeam?: number) => {
     if (!currentUser) return;
     const roomRef = push(ref(db, 'matches'));
     const roomId = roomRef.key!;
+
+    const playerProgress: any = { 
+      userId: currentUser.id, 
+      userName: currentUser.name, 
+      score: 0, 
+      currentIndex: 0, 
+      finished: false, 
+      accuracy: 0
+    };
+    if (teamModeEnabled) {
+      playerProgress.team = 'blue';
+    }
+
     const room: any = {
       id: roomId,
       topicId: currentUser.selectedTopicId || 'general',
       hostId: currentUser.id,
       participants: {
-        [currentUser.id]: { userId: currentUser.id, userName: currentUser.name, score: 0, currentIndex: 0, finished: false, accuracy: 0 }
+        [currentUser.id]: playerProgress
       },
       status: 'waiting',
       timerEnabled: false,
       whoFirstMode: false,
       totalTime: 10,
+      isTeamBattle: !!teamModeEnabled,
       createdAt: Date.now()
     };
+    if (teamModeEnabled) {
+      room.teamSize = sizeOfTeam;
+    }
+
     await set(roomRef, room);
     setMatchmakingRoomId(roomId);
   };
@@ -271,6 +394,9 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
     setMatching(true);
     setError('');
 
+    const targetTeamMode = quickBattleMode !== 'solo';
+    const targetTeamSize = quickBattleMode === '2v2' ? 2 : quickBattleMode === '3v3' ? 3 : quickBattleMode === '4v4' ? 4 : undefined;
+
     try {
        const matchesSnap = await get(ref(db, 'matches'));
        if (matchesSnap.exists()) {
@@ -279,6 +405,8 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
              m.status === 'waiting' && 
              !m.joinCode &&
              m.hostId !== currentUser.id &&
+             !!m.isTeamBattle === targetTeamMode &&
+             (!targetTeamMode || m.teamSize === targetTeamSize) &&
              Object.keys(m.participants || {}).length < (m.isTeamBattle ? (m.teamSize * 2) : 2)
           ) as any;
 
@@ -290,16 +418,20 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
                 assignedTeam = blueCount <= redCount ? 'blue' : 'red';
              }
 
+             const playerProgress: any = {
+                userId: currentUser.id,
+                userName: currentUser.name,
+                score: 0,
+                currentIndex: 0,
+                finished: false,
+                accuracy: 0
+             };
+             if (assignedTeam) {
+                playerProgress.team = assignedTeam;
+             }
+
              const updates = {
-                [`participants/${currentUser.id}`]: {
-                  userId: currentUser.id,
-                  userName: currentUser.name,
-                  score: 0,
-                  currentIndex: 0,
-                  finished: false,
-                  accuracy: 0,
-                  team: assignedTeam
-                }
+                [`participants/${currentUser.id}`]: playerProgress
              };
              await update(ref(db, `matches/${joinable.id}`), updates);
              setMatching(false);
@@ -312,7 +444,7 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
     }
 
     // Since no waiting public match is available, host a public matching room
-    await createPublicPendingRoom();
+    await createPublicPendingRoom(targetTeamMode, targetTeamSize);
   };
 
   if (!currentUser) return null;
@@ -611,6 +743,45 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
                                 className="w-5 h-5 accent-[#facc15] bg-black border-white/10 rounded"
                              />
                           </label>
+
+                          <label className="flex items-center justify-between p-4 bg-white/5 rounded-2xl cursor-pointer hover:bg-white/10 transition-all">
+                             <div className="flex items-center gap-3">
+                                <Users size={18} className={cn(isTeamMode ? "text-primary" : "text-white/20")} />
+                                <div>
+                                   <span className="text-xs font-black uppercase tracking-widest block font-sans">Team Battle</span>
+                                   <p className="text-[8px] text-white/40 uppercase font-bold">Play in teams with friends</p>
+                                </div>
+                             </div>
+                             <input 
+                                type="checkbox" 
+                                checked={isTeamMode} 
+                                onChange={(e) => setIsTeamMode(e.target.checked)}
+                                className="w-5 h-5 accent-primary bg-black border-white/10 rounded"
+                             />
+                          </label>
+
+                          {isTeamMode && (
+                             <div className="space-y-2 p-3 bg-white/[0.02] rounded-2xl border border-white/5">
+                               <span className="text-[8px] font-black uppercase tracking-widest text-white/40 pl-1">Select Team Size</span>
+                               <div className="grid grid-cols-3 gap-2">
+                                 {([2, 3, 4] as const).map((sz) => (
+                                   <button
+                                     key={sz}
+                                     type="button"
+                                     onClick={() => setTeamSize(sz)}
+                                     className={cn(
+                                       "py-2 rounded-xl text-xs font-black transition-all uppercase",
+                                       teamSize === sz 
+                                         ? "bg-primary text-black" 
+                                         : "bg-white/5 text-white/60 hover:bg-white/10"
+                                     )}
+                                   >
+                                     {sz}v{sz}
+                                   </button>
+                                 ))}
+                               </div>
+                             </div>
+                          )}
                         </div>
 
                         {useTimer && (
@@ -672,6 +843,28 @@ export default function MultiplayerHub({ onClose, allUsers, onStartMatch }: Mult
                   <div className="flex items-center gap-2">
                     <Zap size={16} className="text-[#32befa]" />
                     <h3 className="text-[10px] font-black uppercase tracking-widest text-white/40">Online Match</h3>
+                  </div>
+                </div>
+
+                {/* Matchmaking Mode Selection */}
+                <div className="p-3 bg-white/5 rounded-2xl border border-white/5 space-y-2">
+                  <div className="text-[8px] font-black uppercase tracking-widest text-white/40 pl-1">Matchmaking Mode</div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {(['solo', '2v2', '3v3', '4v4'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setQuickBattleMode(mode)}
+                        className={cn(
+                          "py-2 rounded-lg text-[10px] font-black transition-all uppercase",
+                          quickBattleMode === mode 
+                            ? "bg-[#32befa] text-black shadow-md shadow-[#32befa]/20" 
+                            : "bg-white/5 text-white/60 hover:bg-white/10"
+                        )}
+                      >
+                        {mode === 'solo' ? '1v1' : mode}
+                      </button>
+                    ))}
                   </div>
                 </div>
                 
