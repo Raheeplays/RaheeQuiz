@@ -8,6 +8,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { useDialog } from '../contexts/DialogContext';
 import { Swords, Trophy, Zap, Clock, Check, X, AlertCircle, Volume2, Globe, RefreshCw, Minus, Shield, Send, Users } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { NotificationService } from '../services/notificationService';
 
 interface MultiplayerGameProps {
   roomId: string;
@@ -19,6 +20,7 @@ interface MultiplayerGameProps {
 export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: MultiplayerGameProps) {
   const { currentUser } = useUser();
   const [topics, setTopics] = useState<any[]>([]);
+  const [notifiedPlaying, setNotifiedPlaying] = useState(false);
 
   useEffect(() => {
     get(ref(db, 'topics')).then(snap => {
@@ -161,6 +163,74 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
       remove(ref(db, `users/${opponentId}/challengeReplies/${hostId}`));
     }
   }, [room?.status, currentUser?.id]);
+
+  // Trigger multiplayer active notification when the game starts playing and online competitors are detected
+  useEffect(() => {
+    if (!room || room.status !== 'playing' || !currentUser || notifiedPlaying) return;
+
+    // Only host triggers once to prevent duplicate notifications
+    if (room.hostId === currentUser.id) {
+      setNotifiedPlaying(true);
+
+      const triggerMultiplayerNotify = async () => {
+        try {
+          const serviceAccountSnap = await get(ref(db, 'adminConfig/serviceAccount'));
+          const serviceAccount = serviceAccountSnap.val();
+
+          const usersSnap = await get(ref(db, 'users'));
+          if (usersSnap.exists()) {
+             const allUsersMap = usersSnap.val();
+             const allUsers = Object.entries(allUsersMap).map(([id, val]: [string, any]) => ({ ...val, id }));
+
+             // Only other players who are online
+             const onlineCompetitors = allUsers.filter((u: any) => u.isOnline && !u.isBot && u.id !== currentUser.id && (!room.participants || !room.participants[u.id]));
+
+             if (onlineCompetitors.length > 0) {
+                const topicName = getTopicName(room.topicId || 'general');
+                const title = "Multiplayer Battle Active!";
+                const body = `${currentUser.name} is playing a Multiplayer Match right now!`;
+
+                for (const player of onlineCompetitors) {
+                   // 1. Send inside game alert to target user's custom live alerts
+                   const alertRef = push(ref(db, `users/${player.id}/liveAlerts`));
+                   await set(alertRef, {
+                      title: "Live Multiplayer Battle",
+                      body: `${currentUser.name} is actively playing in Multiplayer mode on topic "${topicName}".`,
+                      timestamp: Date.now()
+                   });
+
+                   // Auto delete alert after 30 seconds to avoid cluttering if they didn't dismiss it
+                   setTimeout(async () => {
+                     try {
+                       await remove(ref(db, `users/${player.id}/liveAlerts/${alertRef.key}`));
+                     } catch(e){}
+                   }, 30000);
+
+                   // 2. Real FCM Push Notification if they have tokens
+                   if (serviceAccount && settings?.pushNotificationsEnabled !== false) {
+                      try {
+                         const tokensSnap = await get(ref(db, `fcmTokens/${player.id}`));
+                         if (tokensSnap.exists()) {
+                            const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
+                            for (const token of tokens) {
+                               await NotificationService.sendToToken(serviceAccount, token, title, body);
+                            }
+                         }
+                      } catch (fcmErr) {
+                         console.error("Failed sending real fcm playing notification to player: ", player.id, fcmErr);
+                      }
+                   }
+                }
+             }
+          }
+        } catch (err) {
+          console.error("Failed executing multiplayer notifications on game play: ", err);
+        }
+      };
+
+      triggerMultiplayerNotify();
+    }
+  }, [room?.status, currentUser?.id, notifiedPlaying, settings, topics]);
 
   const finalizeGame = async (data: MatchRoom) => {
     const participants = Object.values(data.participants) as MatchProgress[];
@@ -471,7 +541,7 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
   };
 
   if (loading || !room) return (
-     <div className="fixed inset-0 bg-black z-[130] flex items-center justify-center">
+     <div className="fixed inset-0 bg-white dark:bg-black z-[130] flex items-center justify-center">
         <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
      </div>
   );
@@ -505,12 +575,12 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
     };
 
     return (
-      <div className="fixed inset-0 bg-[#050505] z-[130] flex flex-col items-center justify-center p-8 text-center transition-colors duration-300">
+      <div className="fixed inset-0 bg-neutral-50 dark:bg-[#050505] z-[130] flex flex-col items-center justify-center p-8 text-center transition-colors duration-300 text-neutral-900 dark:text-white col-span-full">
          <div className="w-24 h-24 bg-primary/10 rounded-[2.5rem] flex items-center justify-center text-primary mb-6 animate-pulse border border-primary/20 shadow-[0_0_50px_rgba(250,204,21,0.15)]">
             <Clock size={40} className="animate-spin duration-1000" style={{ animationDuration: '3s' }} />
          </div>
 
-         <h2 className="text-2xl font-black mb-2 uppercase tracking-tighter text-white">
+         <h2 className="text-2xl font-black mb-2 uppercase tracking-tighter text-neutral-900 dark:text-white">
             Match Lobby
          </h2>/ / lobby-header-placeholder
          <p className="text-[10px] font-black text-primary uppercase tracking-[0.3em] mb-8">
@@ -520,48 +590,54 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
          <div className="flex items-center gap-6 mb-8 w-full max-w-sm justify-center">
             {/* My User Card */}
             <div className={cn(
-              "flex-1 p-5 rounded-[2rem] bg-white/5 border transition-all duration-300 flex flex-col items-center",
-              myProgress?.ready ? "border-green-500/30 shadow-[0_0_20px_rgba(34,197,94,0.1)] bg-green-500/5" : "border-white/5"
+              "flex-1 p-5 rounded-[2rem] border transition-all duration-300 flex flex-col items-center",
+              myProgress?.ready 
+                ? "border-green-500/30 shadow-[0_0_20px_rgba(34,197,94,0.1)] bg-green-500/5 text-green-500" 
+                : "border-black/5 dark:border-white/5 bg-neutral-100 dark:bg-white/5"
             )}>
-              <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center mb-3 text-white/60">
+              <div className="w-12 h-12 bg-neutral-200 dark:bg-white/5 rounded-2xl flex items-center justify-center mb-3 text-neutral-500 dark:text-white/60">
                 <Users size={20} />
               </div>
-              <p className="font-black text-xs uppercase tracking-tight max-w-[100px] truncate text-white">
+              <p className="font-black text-xs uppercase tracking-tight max-w-[100px] truncate text-neutral-900 dark:text-white">
                 {currentUser?.name || "You"}
               </p>
               <span className={cn(
                 "text-[8px] font-black uppercase tracking-widest mt-2 px-2.5 py-1 rounded-full",
-                myProgress?.ready ? "bg-green-500/10 text-green-500" : "bg-white/5 text-white/40"
+                myProgress?.ready ? "bg-green-500/10 text-green-500" : "bg-neutral-200 dark:bg-white/10 text-neutral-500 dark:text-white/40"
               )}>
                 {myProgress?.ready ? "Ready" : "Waiting"}
               </span>
             </div>
 
             {/* Duel vs Icon */}
-            <div className="text-white/20 font-sans italic text-sm">VS</div>
+            <div className="text-neutral-400 dark:text-white/20 font-sans italic text-sm">VS</div>
 
             {/* Opponent User Card */}
             <div className={cn(
-              "flex-1 p-5 rounded-[2rem] bg-white/5 border transition-all duration-300 flex flex-col items-center",
-              opponentProgress?.ready ? "border-green-500/30 shadow-[0_0_20px_rgba(34,197,94,0.1)] bg-green-500/5" : "border-white/5"
+              "flex-1 p-5 rounded-[2rem] border transition-all duration-300 flex flex-col items-center",
+              opponentProgress?.ready 
+                ? "border-green-500/30 shadow-[0_0_20px_rgba(34,197,94,0.1)] bg-green-500/5 text-green-500" 
+                : "border-black/5 dark:border-white/5 bg-neutral-100 dark:bg-white/5"
             )}>
-              <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center mb-3 text-white/60">
+              <div className="w-12 h-12 bg-neutral-200 dark:bg-white/5 rounded-2xl flex items-center justify-center mb-3 text-neutral-500 dark:text-white/60">
                 <Users size={20} />
               </div>
-              <p className="font-black text-xs uppercase tracking-tight max-w-[100px] truncate text-white">
+              <p className="font-black text-xs uppercase tracking-tight max-w-[100px] truncate text-neutral-900 dark:text-white">
                 {opponentProgress?.userName || "Opponent"}
               </p>
               <span className={cn(
                 "text-[8px] font-black uppercase tracking-widest mt-2 px-2.5 py-1 rounded-full",
-                opponentProgress ? (opponentProgress.ready ? "bg-green-500/10 text-green-500" : "bg-white/5 text-white/40") : "bg-white/5 text-white/20"
+                opponentProgress 
+                  ? (opponentProgress.ready ? "bg-green-500/10 text-green-500" : "bg-neutral-200 dark:bg-white/10 text-neutral-550 dark:text-white/40") 
+                  : "bg-neutral-150 dark:bg-white/5 text-neutral-400 dark:text-white/20"
               )}>
                 {opponentProgress ? (opponentProgress.ready ? "Ready" : "Waiting") : "Joining..."}
               </span>
             </div>
          </div>
 
-         <div className="bg-white/5 p-6 rounded-[2rem] border border-white/5 max-w-sm w-full space-y-4 mb-8">
-            <p className="text-xs text-white/60 font-medium leading-relaxed">
+         <div className="bg-neutral-100 dark:bg-white/5 p-6 rounded-[2rem] border border-black/5 dark:border-white/5 max-w-sm w-full space-y-4 mb-8">
+            <p className="text-xs text-neutral-600 dark:text-white/60 font-medium leading-relaxed">
               Click <strong>Play Now</strong> to confirm you are ready. Once BOTH players click Play Now, the match will automatically begin!
             </p>
          </div>
@@ -572,7 +648,7 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
               className={cn(
                 "w-full py-4 rounded-2xl text-xs font-black uppercase tracking-[0.2em] transition-all transform hover:scale-105 active:scale-95 shadow-lg font-sans",
                 myProgress?.ready 
-                  ? "bg-white/10 hover:bg-white/15 text-white shadow-none" 
+                  ? "bg-neutral-200 dark:bg-white/10 hover:bg-neutral-300 dark:hover:bg-white/15 text-neutral-950 dark:text-white shadow-none" 
                   : "bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-400 hover:to-emerald-400 text-black shadow-green-500/20 active:scale-95 animate-pulse"
               )}
             >
@@ -587,7 +663,7 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
                  onClose();
                }
              }}
-             className="w-full py-4 rounded-2xl bg-white/5 hover:bg-white/10 text-[10px] font-black uppercase tracking-[0.2em] transition-all border border-white/5 text-white/60 font-sans"
+             className="w-full py-4 rounded-2xl bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-[10px] font-black uppercase tracking-[0.2em] transition-all border border-black/5 dark:border-white/5 text-neutral-700 dark:text-white/60 font-sans"
            >
              Play Later
            </button>
@@ -623,7 +699,7 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
                  onClose();
                }
              }}
-             className="w-full py-4 rounded-2xl bg-white/5 hover:bg-red-500/10 hover:text-red-500 text-[10px] font-black uppercase tracking-[0.15em] transition-all border border-white/5 hover:border-red-500/20 text-white/40"
+             className="w-full py-4 rounded-2xl bg-neutral-100 dark:bg-white/5 hover:bg-red-500/10 hover:text-red-500 text-[10px] font-black uppercase tracking-[0.15em] transition-all border border-black/5 dark:border-white/5 hover:border-red-500/20 text-neutral-500 dark:text-white/40"
            >
              Leave Lobby
            </button>
@@ -642,12 +718,12 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
     const redTotal = redTeam.reduce((sum, p: any) => sum + p.score, 0);
 
     return (
-      <div className="fixed inset-0 bg-black/95 z-[140] flex flex-col items-center justify-center p-8 text-center backdrop-blur-xl overflow-y-auto">
-          <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mb-6 border border-white/10">
-             <Trophy size={32} className="text-primary" />
+      <div className="fixed inset-0 bg-neutral-50/95 dark:bg-black/95 z-[140] flex flex-col items-center justify-center p-8 text-center backdrop-blur-xl overflow-y-auto text-neutral-900 dark:text-white transition-colors duration-300">
+          <div className="w-16 h-16 bg-neutral-200 dark:bg-white/5 rounded-2xl flex items-center justify-center mb-6 border border-black/10 dark:border-white/10 text-primary">
+             <Trophy size={32} />
           </div>
 
-          <h2 className="text-2xl font-black mb-2 tracking-tighter uppercase text-white">
+          <h2 className="text-2xl font-black mb-2 tracking-tighter uppercase text-neutral-900 dark:text-white">
              Battle Completed
           </h2>
 
@@ -655,9 +731,9 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
              <div className="mb-8">
                 <span className={cn(
                    "text-xs font-black px-4 py-2 rounded-full uppercase tracking-widest border",
-                   winner === 'team_blue' ? "bg-blue-500/20 border-blue-500/30 text-blue-400" :
-                   winner === 'team_red' ? "bg-red-500/20 border-red-500/30 text-red-400" :
-                   "bg-yellow-500/20 border-yellow-500/30 text-yellow-500"
+                   winner === 'team_blue' ? "bg-blue-500/20 border-blue-500/30 text-blue-500 dark:text-blue-400" :
+                   winner === 'team_red' ? "bg-red-500/20 border-red-500/30 text-red-500 dark:text-red-400" :
+                   "bg-yellow-500/20 border-yellow-500/30 text-yellow-600 dark:text-yellow-500"
                 )}>
                    {winner === 'team_blue' ? "🔵 TEAM BLUE VICTORIOUS!" :
                     winner === 'team_red' ? "🔴 TEAM RED VICTORIOUS!" :
@@ -676,25 +752,25 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
              <div className="space-y-6 w-full max-w-sm mb-10">
                 <div className="flex gap-4">
                    <div className="flex-1 bg-blue-500/5 p-4 rounded-2xl border border-blue-500/10 text-center">
-                       <p className="text-[8px] font-black text-blue-400 uppercase tracking-widest mb-1">Blue Team</p>
-                       <p className="text-lg font-black text-blue-300">{blueTotal} PTS</p>
+                       <p className="text-[8px] font-black text-blue-500 dark:text-blue-400 uppercase tracking-widest mb-1">Blue Team</p>
+                       <p className="text-lg font-black text-blue-600 dark:text-blue-300">{blueTotal} PTS</p>
                    </div>
                    <div className="flex-1 bg-red-500/5 p-4 rounded-2xl border border-red-500/10 text-center">
-                       <p className="text-[8px] font-black text-red-400 uppercase tracking-widest mb-1">Red Team</p>
-                       <p className="text-lg font-black text-red-300">{redTotal} PTS</p>
+                       <p className="text-[8px] font-black text-red-500 dark:text-red-400 uppercase tracking-widest mb-1">Red Team</p>
+                       <p className="text-lg font-black text-red-600 dark:text-red-300">{redTotal} PTS</p>
                    </div>
                 </div>
 
-                <div className="bg-white/5 border border-white/5 rounded-3xl p-5 space-y-3.5 text-left">
-                   <p className="text-[9px] font-black uppercase tracking-widest text-white/40 border-b border-white/5 pb-2">Score Sheet</p>
-                   {Object.values(room?.participants || {}).sort((a: any, b: any) => b.score - a.score).map((p: any) => (
-                      <div key={p.userId} className="flex items-center justify-between">
+                <div className="bg-neutral-100 dark:bg-white/5 border border-black/5 dark:border-white/5 rounded-3xl p-5 space-y-3.5 text-left">
+                   <p className="text-[9px] font-black uppercase tracking-widest text-neutral-500 dark:text-white/40 border-b border-black/5 dark:border-white/5 pb-2">Score Sheet</p>
+                   {Object.values(room?.participants || {}).sort((a: any, b: any) => b.score - a.score).map((p: any, idx: number) => (
+                      <div key={`arena-score-${p.userId || idx}-${idx}`} className="flex items-center justify-between">
                          <div className="flex items-center gap-2">
-                            <span className={cn("w-2 h-2 rounded-full", p.team === 'blue' ? "bg-blue-400" : "bg-red-400")} />
-                            <span className="text-xs font-bold text-white/80">{p.userName}</span>
-                            {p.userId === currentUser?.id && <span className="text-[7px] bg-primary/20 text-primary px-1 rounded font-black uppercase font-bold">You</span>}
+                            <span className={cn("w-2 h-2 rounded-full", p.team === 'blue' ? "bg-blue-500" : "bg-red-500")} />
+                            <span className="text-xs font-bold text-neutral-800 dark:text-white/80">{p.userName}</span>
+                            {p.userId === currentUser?.id && <span className="text-[7px] bg-primary/25 text-primary px-1 rounded font-black uppercase font-bold">You</span>}
                          </div>
-                         <span className="text-xs font-black text-white">{p.score} pts</span>
+                         <span className="text-xs font-black text-neutral-900 dark:text-white">{p.score} pts</span>
                       </div>
                    ))}
                 </div>
@@ -702,27 +778,27 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
           ) : (
              <div className="space-y-4 w-full max-w-sm mb-10">
                 <div className="flex gap-4">
-                   <div className="flex-1 bg-white/5 p-4 rounded-2xl border border-white/5 text-center">
-                       <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mb-1">Your Score</p>
+                   <div className="flex-1 bg-neutral-100 dark:bg-white/5 p-4 rounded-2xl border border-black/5 dark:border-white/5 text-center">
+                       <p className="text-[8px] font-black text-neutral-550 dark:text-white/40 uppercase tracking-widest mb-1">Your Score</p>
                        <p className="text-xl font-black text-primary">{myProgress?.score || 0} pts</p>
                    </div>
-                   <div className="flex-1 bg-white/5 p-4 rounded-2xl border border-white/5 text-center">
-                       <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mb-1">{opponentProgress?.userName || 'Opponent'}</p>
-                       <p className="text-xl font-black text-white">{opponentProgress?.score || 0} pts</p>
+                   <div className="flex-1 bg-neutral-100 dark:bg-white/5 p-4 rounded-2xl border border-black/5 dark:border-white/5 text-center">
+                       <p className="text-[8px] font-black text-neutral-550 dark:text-white/40 uppercase tracking-widest mb-1 truncate">{opponentProgress?.userName || 'Opponent'}</p>
+                       <p className="text-xl font-black text-neutral-900 dark:text-white">{opponentProgress?.score || 0} pts</p>
                    </div>
                 </div>
 
-                <div className="bg-white/5 border border-white/5 rounded-3xl p-5 space-y-3.5 text-left">
-                   <p className="text-[9px] font-black uppercase tracking-widest text-primary border-b border-white/5 pb-2">Battle Scoresheet</p>
-                   {Object.values(room?.participants || {}).sort((a: any, b: any) => (b.score || 0) - (a.score || 0)).map((p: any) => (
-                      <div key={p.userId} className="flex items-center justify-between">
+                <div className="bg-neutral-100 dark:bg-white/5 border border-black/5 dark:border-white/5 rounded-3xl p-5 space-y-3.5 text-left">
+                   <p className="text-[9px] font-black uppercase tracking-widest text-primary border-b border-black/5 dark:border-white/5 pb-2">Battle Scoresheet</p>
+                   {Object.values(room?.participants || {}).sort((a: any, b: any) => (b.score || 0) - (a.score || 0)).map((p: any, idx: number) => (
+                      <div key={`arena-score-${p.userId || idx}-${idx}`} className="flex items-center justify-between">
                          <div className="flex items-center gap-2">
-                            <span className={cn("w-1.5 h-1.5 rounded-full", p.userId === currentUser?.id ? "bg-primary" : "bg-white/45")} />
-                            <span className="text-xs font-bold text-white/80">{p.userName}</span>
+                            <span className={cn("w-1.5 h-1.5 rounded-full", p.userId === currentUser?.id ? "bg-primary" : "bg-neutral-400 dark:bg-white/45")} />
+                            <span className="text-xs font-bold text-neutral-800 dark:text-white/80">{p.userName}</span>
                             {p.userId === currentUser?.id && <span className="text-[7px] bg-primary/20 text-primary px-1.5 rounded font-black uppercase font-bold ml-1">You</span>}
                             {p.hasQuit && <span className="text-[7px] bg-red-500/20 text-red-500 px-1.5 rounded font-black uppercase ml-1">Surrendered</span>}
                          </div>
-                         <span className="text-xs font-black text-white">{p.score || 0} PTS</span>
+                         <span className="text-xs font-black text-neutral-900 dark:text-white">{p.score || 0} PTS</span>
                       </div>
                    ))}
                 </div>
@@ -818,11 +894,11 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
                <p className="text-[10px] font-black uppercase text-primary tracking-widest truncate">{currentUser?.name}</p>
                <div className="h-1.5 bg-black/5 dark:bg-white/5 rounded-full mt-1.5 overflow-hidden">
                   <motion.div 
-                    animate={{ width: `${(myProgress.currentIndex / 10) * 100}%` }}
+                    animate={{ width: `${(((myProgress as any)?.currentIndex || 0) / 10) * 100}%` }}
                     className="h-full bg-primary"
                   />
                </div>
-               <p className="text-[8px] font-black text-white/20 mt-1 uppercase tracking-widest">{myProgress.score} PTS</p>
+               <p className="text-[8px] font-black text-white/20 mt-1 uppercase tracking-widest">{(myProgress?.score || 0)} PTS</p>
             </div>
 
             <div className="w-8 h-8 bg-black/5 dark:bg-white/5 rounded-full flex items-center justify-center border border-white/5">
@@ -835,11 +911,11 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
                </p>
                <div className="h-1.5 bg-black/5 dark:bg-white/5 rounded-full mt-1.5 overflow-hidden">
                   <motion.div 
-                    animate={{ width: `${(opponentProgress.currentIndex / 10) * 100}%` }}
+                    animate={{ width: `${(((opponentProgress as any)?.currentIndex || 0) / 10) * 100}%` }}
                     className="h-full bg-white/40"
                   />
                </div>
-               <p className="text-[8px] font-black text-white/20 mt-1 uppercase tracking-widest">{opponentProgress.score} PTS</p>
+               <p className="text-[8px] font-black text-white/20 mt-1 uppercase tracking-widest">{(opponentProgress?.score || 0)} PTS</p>
             </div>
          </div>
       </div>
@@ -1001,7 +1077,7 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
                  disabled={!currentUser || isAnswered || (currentUser.lifelines?.fiftyFifty || 0) <= 0 || hiddenOptions.length > 0}
                  className="flex flex-col items-center gap-2 group disabled:opacity-30"
                >
-                  <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-[#facc15] group-hover:bg-[#facc15]/10 group-hover:border-[#facc15]/20 group-hover:scale-110 transition-all">
+                  <div className="w-12 h-12 rounded-[33%] bg-white/5 border border-white/10 flex items-center justify-center text-[#facc15] group-hover:bg-[#facc15]/10 group-hover:border-[#facc15]/20 group-hover:scale-110 transition-all">
                      <Zap size={20} />
                   </div>
                   <div className="flex flex-col items-center">
@@ -1015,7 +1091,7 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
                  disabled={!currentUser || isAnswered || (currentUser.lifelines?.audiencePoll || 0) <= 0 || !!pollResults}
                  className="flex flex-col items-center gap-2 group disabled:opacity-30"
                >
-                  <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-green-500 group-hover:bg-green-500/10 group-hover:border-green-500/20 group-hover:scale-110 transition-all">
+                  <div className="w-12 h-12 rounded-[33%] bg-white/5 border border-white/10 flex items-center justify-center text-green-500 group-hover:bg-green-500/10 group-hover:border-green-500/20 group-hover:scale-110 transition-all">
                      <Users size={20} />
                   </div>
                   <div className="flex flex-col items-center">
@@ -1029,7 +1105,7 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
                  disabled={!currentUser || isAnswered || (currentUser.lifelines?.hint || 0) <= 0 || showHint}
                  className="flex flex-col items-center gap-2 group disabled:opacity-30"
                >
-                  <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-primary group-hover:bg-primary/10 group-hover:border-primary/20 group-hover:scale-110 transition-all">
+                  <div className="w-12 h-12 rounded-[33%] bg-white/5 border border-white/10 flex items-center justify-center text-primary group-hover:bg-primary/10 group-hover:border-primary/20 group-hover:scale-110 transition-all">
                      <Zap size={20} />
                   </div>
                   <div className="flex flex-col items-center">
@@ -1041,9 +1117,9 @@ export default function MultiplayerGame({ roomId, isBot, onClose, onMinimize }: 
                <button 
                  onClick={useChangeQuiz}
                  disabled={!currentUser || isAnswered || (currentUser.lifelines?.changeQuiz || 0) <= 0}
-                 className="flex-1 max-w-[100px] flex flex-col items-center gap-2 group disabled:opacity-30"
+                 className="flex flex-col items-center gap-2 group disabled:opacity-30"
                >
-                  <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-red-500 group-hover:bg-red-500/10 group-hover:border-red-500/20 group-hover:scale-110 transition-all">
+                  <div className="w-12 h-12 rounded-[33%] bg-white/5 border border-white/10 flex items-center justify-center text-red-500 group-hover:bg-red-500/10 group-hover:border-red-500/20 group-hover:scale-110 transition-all">
                      <RefreshCw size={20} />
                   </div>
                   <div className="flex flex-col items-center">

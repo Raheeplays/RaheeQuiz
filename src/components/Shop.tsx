@@ -8,12 +8,16 @@ import { ref, update, get, push } from 'firebase/database';
 import { User, Coupon } from '../types';
 import { translations } from '../translations';
 import { cn } from '../lib/utils';
+import { useTheme } from '../contexts/ThemeContext';
 
 export default function Shop({ onClose, language }: { onClose: () => void, language: string }) {
   const { currentUser, settings } = useUser();
+  const { layoutTheme } = useTheme();
   const { alert } = useDialog();
   const [couponCode, setCouponCode] = useState('');
   const [isRedeeming, setIsRedeeming] = useState(false);
+  const [raheeToQuizAmt, setRaheeToQuizAmt] = useState<number>(0);
+  const [quizToRaheeAmt, setQuizToRaheeAmt] = useState<number>(0);
   const t = translations[language as 'en' | 'hi'] || translations.en;
 
   const items = [
@@ -115,10 +119,29 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
     const code = couponCode.trim().toUpperCase();
 
     try {
+      // 1. Check direct code first
       const couponRef = ref(db, `coupons/${code}`);
-      const snapshot = await get(couponRef);
+      let snapshot = await get(couponRef);
+      let foundCoupon: any = null;
+      let matchedCodeKey = code;
 
-      if (!snapshot.exists()) {
+      if (snapshot.exists()) {
+        foundCoupon = snapshot.val();
+        matchedCodeKey = code;
+      } else {
+        // 2. Scan for secretLinkedCode
+        const couponsSnap = await get(ref(db, 'coupons'));
+        if (couponsSnap.exists()) {
+          const allCoupons = couponsSnap.val();
+          const matchEntry = Object.entries(allCoupons).find(([k, v]: [string, any]) => v.secretLinkedCode === code);
+          if (matchEntry) {
+            foundCoupon = matchEntry[1];
+            matchedCodeKey = matchEntry[0];
+          }
+        }
+      }
+
+      if (!foundCoupon) {
         // Log failure
         await push(ref(db, `couponLogs/${currentUser.id}`), {
           userId: currentUser.id,
@@ -130,26 +153,52 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
         });
         await alert({ title: "Invalid Code", description: "This coupon code does not exist.", type: 'error' });
       } else {
-        const coupon = snapshot.val() as Coupon;
-        if (coupon.isUsed) {
-           await push(ref(db, `couponLogs/${currentUser.id}`), {
+        const maxUses = foundCoupon.maxUses !== undefined ? foundCoupon.maxUses : 1;
+        const usesCount = foundCoupon.usesCount !== undefined ? foundCoupon.usesCount : (foundCoupon.isUsed ? 1 : 0);
+        
+        // Multi-use tracking
+        const usedUsers = foundCoupon.usedUsers || {};
+        const alreadyRedeemed = !!usedUsers[currentUser.id] || (maxUses === 1 && foundCoupon.isUsed && foundCoupon.usedBy === currentUser.id);
+        const isFullyUsed = foundCoupon.isUsed || usesCount >= maxUses;
+
+        if (alreadyRedeemed) {
+          await push(ref(db, `couponLogs/${currentUser.id}`), {
             userId: currentUser.id,
             userName: currentUser.name || currentUser.username || 'Unknown',
             code,
             isSuccess: false,
-            error: 'Already Used',
+            error: 'Already Redeemed',
             timestamp: Date.now()
           });
-          await alert({ title: "Used Coupon", description: "This coupon has already been redeemed.", type: 'error' });
+          await alert({ title: "Already Redeemed", description: "You have already redeemed this coupon code.", type: 'error' });
+        } else if (isFullyUsed) {
+          await push(ref(db, `couponLogs/${currentUser.id}`), {
+            userId: currentUser.id,
+            userName: currentUser.name || currentUser.username || 'Unknown',
+            code,
+            isSuccess: false,
+            error: 'Max Limit Reached',
+            timestamp: Date.now()
+          });
+          await alert({ title: "Expired Coupon", description: "This coupon has reached its maximum usage limit.", type: 'error' });
         } else {
           // Success!
+          const nextUsesCount = usesCount + 1;
+          const finished = nextUsesCount >= maxUses;
+
           const updates: any = {};
-          updates[`coupons/${code}/isUsed`] = true;
-          updates[`coupons/${code}/usedBy`] = currentUser.id;
-          updates[`coupons/${code}/usedByName`] = currentUser.name || '';
-          updates[`coupons/${code}/usedByUsername`] = currentUser.username || '';
-          updates[`coupons/${code}/usedAt`] = Date.now();
-          updates[`users/${currentUser.id}/raheeCoins`] = (currentUser.raheeCoins || 0) + coupon.value;
+          updates[`coupons/${matchedCodeKey}/usesCount`] = nextUsesCount;
+          updates[`coupons/${matchedCodeKey}/isUsed`] = finished;
+          updates[`coupons/${matchedCodeKey}/usedUsers/${currentUser.id}`] = Date.now();
+          
+          if (maxUses === 1) {
+            updates[`coupons/${matchedCodeKey}/usedBy`] = currentUser.id;
+            updates[`coupons/${matchedCodeKey}/usedByName`] = currentUser.name || '';
+            updates[`coupons/${matchedCodeKey}/usedByUsername`] = currentUser.username || '';
+            updates[`coupons/${matchedCodeKey}/usedAt`] = Date.now();
+          }
+
+          updates[`users/${currentUser.id}/raheeCoins`] = (currentUser.raheeCoins || 0) + foundCoupon.value;
           
           await update(ref(db), updates);
           
@@ -162,7 +211,7 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
             timestamp: Date.now()
           });
 
-          await alert({ title: "Redeem Successful!", description: `You have successfully redeemed ${coupon.value} Rahee Coins!`, type: 'success' });
+          await alert({ title: "Redeem Successful!", description: `You have successfully redeemed ${foundCoupon.value} Rahee Coins!`, type: 'success' });
           setCouponCode('');
         }
       }
@@ -170,6 +219,58 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
       await alert({ title: "Error", description: err.message, type: 'error' });
     } finally {
       setIsRedeeming(false);
+    }
+  };
+
+  const convertRaheeToQuiz = async () => {
+    if (!currentUser || raheeToQuizAmt <= 0) return;
+    const currentRahee = currentUser.raheeCoins || 0;
+    if (currentRahee < raheeToQuizAmt) {
+      await alert({ title: "Exchange Failed", description: "You do not have enough Rahee Coins.", type: 'error' });
+      return;
+    }
+    const currentQuiz = currentUser.quizCoins || 0;
+    const addition = raheeToQuizAmt * 100;
+
+    try {
+      await update(ref(db, `users/${currentUser.id}`), {
+        raheeCoins: currentRahee - raheeToQuizAmt,
+        quizCoins: currentQuiz + addition
+      });
+      await alert({ 
+        title: "Exchange Successful!", 
+        description: `Successfully exchanged ${raheeToQuizAmt} Rahee Coins for ${addition} Quiz Coins!`, 
+        type: 'success' 
+      });
+      setRaheeToQuizAmt(0);
+    } catch (err: any) {
+      await alert({ title: "Database Error", description: err.message, type: 'error' });
+    }
+  };
+
+  const convertQuizToRahee = async () => {
+    if (!currentUser || quizToRaheeAmt < 100) return;
+    const currentQuiz = currentUser.quizCoins || 0;
+    if (currentQuiz < quizToRaheeAmt) {
+      await alert({ title: "Exchange Failed", description: "You do not have enough Quiz Coins.", type: 'error' });
+      return;
+    }
+    const currentRahee = currentUser.raheeCoins || 0;
+    const addition = Math.floor(quizToRaheeAmt / 100);
+
+    try {
+      await update(ref(db, `users/${currentUser.id}`), {
+        quizCoins: currentQuiz - quizToRaheeAmt,
+        raheeCoins: currentRahee + addition
+      });
+      await alert({ 
+        title: "Exchange Successful!", 
+        description: `Successfully exchanged ${quizToRaheeAmt} Quiz Coins for ${addition} Rahee Coins!`, 
+        type: 'success' 
+      });
+      setQuizToRaheeAmt(0);
+    } catch (err: any) {
+      await alert({ title: "Database Error", description: err.message, type: 'error' });
     }
   };
 
@@ -187,9 +288,18 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
           </div>
         </div>
         
-        <div className="flex items-center gap-2 px-4 py-2 bg-primary/10 rounded-2xl border border-primary/20">
-           <Coins size={16} className="text-primary italic" />
-           <span className="text-primary font-black">{currentUser?.raheeCoins || 0}</span>
+        <div className="flex items-center gap-3 px-4 py-2 bg-[#32befa]/5 rounded-2xl border border-[#32befa]/10">
+          <div className="flex items-center gap-1">
+            <Coins size={16} className="text-[#32befa] italic" />
+            <span className="text-[10px] font-black text-[#32befa]/80">Rahee Coins:</span>
+            <span className="text-sm font-black text-[#32befa]">{currentUser?.raheeCoins || 0}</span>
+          </div>
+          <div className="w-[1px] h-3 bg-black/10 dark:bg-white/10" />
+          <div className="flex items-center gap-1">
+            <Coins size={16} className="text-yellow-500 italic animate-pulse" />
+            <span className="text-[10px] font-black text-yellow-500/80">Quiz Coins:</span>
+            <span className="text-sm font-black text-yellow-500">{currentUser?.quizCoins || 0}</span>
+          </div>
         </div>
       </div>
 
@@ -268,6 +378,136 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
           </section>
         )}
 
+        {/* Coin Converter Section */}
+        <section className="space-y-4">
+          <p className="text-[10px] font-black uppercase tracking-widest text-[#32befa] px-2 flex items-center gap-1.5">
+            <RefreshCw size={13} className="animate-spin" style={{ animationDuration: '6s' }} />
+            <span>{language === 'hi' ? 'कॉइन वॉलेट कनवर्टर (Exchange)' : 'Premium Currency Exchange'}</span>
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+             {/* Convert Rahee to Quiz */}
+             <div className="p-6 bg-black/5 dark:bg-white/5 rounded-3xl border border-black/5 dark:border-white/5 space-y-4 text-left">
+                <div className="flex items-center gap-3">
+                   <div className="w-10 h-10 bg-[#32befa]/10 rounded-xl flex items-center justify-center text-[#32befa]">
+                      <Coins size={20} />
+                   </div>
+                   <div>
+                      <h4 className="font-extrabold text-[13px] uppercase tracking-wide text-neutral-800 dark:text-neutral-100">{language === 'hi' ? 'राही कॉइन ➔ क्विज़ कॉइन' : 'Rahee Coins ➔ Quiz Coins'}</h4>
+                      <p className="text-[9px] text-neutral-400 font-bold uppercase tracking-widest">Rate: 1 Rahee = 100 Quiz</p>
+                   </div>
+                </div>
+                
+                <div className="space-y-2">
+                   <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40">{language === 'hi' ? 'राशि दर्ज करें:' : 'Amount to Convert:'}</label>
+                   <div className="flex items-center gap-2">
+                      <input 
+                        type="number"
+                        min="1"
+                        placeholder="0"
+                        value={raheeToQuizAmt || ''}
+                        onChange={e => {
+                           const val = Math.max(0, parseInt(e.target.value) || 0);
+                           setRaheeToQuizAmt(val);
+                        }}
+                        className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-3 rounded-xl font-bold text-sm outline-none focus:border-[#32befa] text-neutral-900 dark:text-white"
+                      />
+                      <button 
+                        onClick={() => {
+                           setRaheeToQuizAmt(currentUser?.raheeCoins || 0);
+                        }}
+                        className="px-3 py-2 bg-[#32befa]/10 hover:bg-[#32befa]/20 text-[#32befa] text-[9px] font-black uppercase tracking-wider rounded-lg transition-all"
+                      >
+                         {language === 'hi' ? 'मैक्स' : 'Max'}
+                      </button>
+                   </div>
+                </div>
+
+                <div className="p-3 bg-neutral-150 dark:bg-white/5 rounded-2xl flex items-center justify-between">
+                   <span className="text-[10px] font-bold text-neutral-400 uppercase">{language === 'hi' ? 'आपको मिलेगा:' : 'You will receive:'}</span>
+                   <span className="text-sm font-black text-yellow-500 flex items-center gap-1">
+                      <Coins size={14} className="animate-pulse" />
+                      {raheeToQuizAmt * 100} Quiz
+                   </span>
+                </div>
+
+                <button 
+                  disabled={raheeToQuizAmt <= 0 || (currentUser?.raheeCoins || 0) < raheeToQuizAmt}
+                  onClick={convertRaheeToQuiz}
+                  className={cn(
+                    "w-full py-3 hover:scale-[1.02] active:scale-[0.98] disabled:scale-100 font-black text-[10px] uppercase tracking-widest transition-all cursor-pointer shadow-md rounded-2xl",
+                    (layoutTheme === 'glass' || layoutTheme === 'rahee-edition')
+                      ? "bg-white/10 hover:bg-white/20 text-white border border-white/20"
+                      : "bg-[#32befa] text-black disabled:opacity-50"
+                  )}
+                >
+                   {language === 'hi' ? 'क्विज़ कॉइन में बदलें' : 'Exchange to Quiz Coins'}
+                </button>
+             </div>
+
+             {/* Convert Quiz to Rahee */}
+             <div className="p-6 bg-black/5 dark:bg-white/5 rounded-3xl border border-black/5 dark:border-white/5 space-y-4 text-left">
+                <div className="flex items-center gap-3">
+                   <div className="w-10 h-10 bg-yellow-500/10 rounded-xl flex items-center justify-center text-yellow-500">
+                      <Coins size={20} />
+                   </div>
+                   <div>
+                      <h4 className="font-extrabold text-[13px] uppercase tracking-wide text-neutral-800 dark:text-neutral-100">{language === 'hi' ? 'क्विज़ कॉइन ➔ राही कॉइन' : 'Quiz Coins ➔ Rahee Coins'}</h4>
+                      <p className="text-[9px] text-neutral-400 font-bold uppercase tracking-widest">Rate: 100 Quiz = 1 Rahee</p>
+                   </div>
+                </div>
+
+                <div className="space-y-2">
+                   <label className="text-[10px] font-black uppercase text-black/40 dark:text-white/40">{language === 'hi' ? 'राशि दर्ज करें (100 के गुणक):' : 'Amount to Convert (Min 100):'}</label>
+                   <div className="flex items-center gap-2">
+                      <input 
+                        type="number"
+                        min="100"
+                        step="100"
+                        placeholder="0"
+                        value={quizToRaheeAmt || ''}
+                        onChange={e => {
+                           const val = Math.max(0, parseInt(e.target.value) || 0);
+                           setQuizToRaheeAmt(val);
+                        }}
+                        className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-3 rounded-xl font-bold text-sm outline-none focus:border-yellow-500 text-neutral-900 dark:text-white"
+                      />
+                      <button 
+                        onClick={() => {
+                           const maxQuiz = currentUser?.quizCoins || 0;
+                           setQuizToRaheeAmt(maxQuiz - (maxQuiz % 100)); // multiple of 100
+                        }}
+                        className="px-3 py-2 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-500 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all"
+                      >
+                         {language === 'hi' ? 'मैक्स' : 'Max'}
+                      </button>
+                   </div>
+                </div>
+
+                <div className="p-3 bg-neutral-150 dark:bg-white/5 rounded-2xl flex items-center justify-between">
+                   <span className="text-[10px] font-bold text-neutral-400 uppercase">{language === 'hi' ? 'आपको मिलेगा:' : 'You will receive:'}</span>
+                   <span className="text-sm font-black text-[#32befa] flex items-center gap-1">
+                      <Coins size={14} />
+                      {Math.floor(quizToRaheeAmt / 100)} Rahee
+                   </span>
+                </div>
+
+                <button 
+                  disabled={quizToRaheeAmt < 100 || (currentUser?.quizCoins || 0) < quizToRaheeAmt}
+                  onClick={convertQuizToRahee}
+                  className={cn(
+                    "w-full py-3 hover:scale-[1.02] active:scale-[0.98] disabled:scale-100 font-black text-[10px] uppercase tracking-widest transition-all cursor-pointer shadow-md rounded-2xl",
+                    (layoutTheme === 'glass' || layoutTheme === 'rahee-edition')
+                      ? "bg-white/10 hover:bg-white/20 text-white border border-white/20"
+                      : "bg-yellow-500 text-black disabled:opacity-50"
+                  )}
+                >
+                   {language === 'hi' ? 'राही कॉइन में बदलें' : 'Exchange to Rahee Coins'}
+                </button>
+             </div>
+          </div>
+        </section>
+
         {/* Coupons Section */}
         <section className="space-y-4">
            <p className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40 px-2">Coupon Redemption</p>
@@ -291,7 +531,9 @@ export default function Shop({ onClose, language }: { onClose: () => void, langu
                    onClick={redeemCoupon}
                    disabled={isRedeeming || !couponCode.trim()}
                    className={cn(
-                     "px-8 py-4 bg-primary text-black rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-primary/20 hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2",
+                     (layoutTheme === 'glass' || layoutTheme === 'rahee-edition')
+                       ? "px-8 py-4 bg-white/10 hover:bg-white/20 text-white border border-white/20 hover:border-white/30 hover:scale-105 active:scale-95 cursor-pointer rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg"
+                       : "px-8 py-4 bg-primary text-black rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-primary/20 hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2",
                      (isRedeeming || !couponCode.trim()) && "opacity-50 cursor-not-allowed scale-100"
                    )}
                  >

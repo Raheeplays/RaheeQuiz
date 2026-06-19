@@ -50,4 +50,279 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
+  /* Theme Layout Overrides: Glass Design */
+  .theme-layout-glass {
+    --bg-main: #09021a !important;
+    --text-main: #f5f0ff !important;
+  }
+  .dark .theme-layout-glass, .theme-layout-glass.dark {
+    --bg-main: #050012 !important;
+    --text-main: #f5f0ff !important;
+  }
+  .theme-layout-glass body {
+    background: radial-gradient(circle at top left, #1c0545, #040110) !important;
+    color: var(--text-main) !important;
+  }
+
+  /* Glass design container styling presets */
+  .theme-layout-glass .bg-white,
+  .theme-layout-glass .bg-[#050505],
+  .theme-layout-glass .bg-[#111],
+  .theme-layout-glass .bg-neutral-100.dark\:bg-white\/5,
+  .theme-layout-glass .bg-black\/5.dark\:bg-white\/5,
+  .theme-layout-glass .bg-white\/80,
+  .theme-layout-glass .bg-white\/90,
+  .theme-layout-glass .bg-white.dark\:bg-black\/40 {
+    background-color: rgba(255, 255, 255, 0.04) !important;
+    backdrop-filter: blur(18px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(18px) saturate(180%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.25) !important;
+  }
+
+  /* Theme Layout Overrides: Rahee Edition (Glassmorphism & 3D Chrome Finish) */
+  .theme-layout-rahee-edition {
+    --bg-main: #080a16 !important;
+    --text-main: #f1ebd9 !important;
+    font-family: "Space Grotesk", "Inter", sans-serif !important;
+  }
+  .dark .theme-layout-rahee-edition, .theme-layout-rahee-edition.dark {
+    --bg-main: #04050e !important;
+    --text-main: #ffffff !important;
+  }
+  .theme-layout-rahee-edition body {
+    background: radial-gradient(circle at top left, #0d122e, #04050d) !important;
+    color: var(--text-main) !important;
+  }
+
+  /* Glassmorphism layouts for Rahee Edition elements */
+  .theme-layout-rahee-edition .bg-white,
+  .theme-layout-rahee-edition .bg-[#050505],
+  .theme-layout-rahee-edition .bg-[#111],
+  .theme-layout-rahee-edition .bg-neutral-100.dark\:bg-white\/5,
+  .theme-layout-rahee-edition .bg-black\/5.dark\:bg-white\/5,
+  .theme-layout-rahee-edition .bg-white\/80,
+  .theme-layout-rahee-edition .bg-white\/90,
+  .theme-layout-rahee-edition .bg-white.dark\:bg-black\/40 {
+    background-color: rgba(255, 255, 255, 0.03) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3) !important;
+  }
+
+  /* Premium spacing/paddings overrides */
+  .theme-layout-rahee-edition .max-w-2xl,
+  .theme-layout-rahee-edition .max-w-md,
+  .theme-layout-rahee-edition .max-w-xl {
+    padding-left: 1.5rem !important;
+    padding-right: 1.5rem !important;
+  }
+
+  /* 3D Chrome buttons style with reflection animation */
+  .theme-layout-rahee-edition button,
+  .theme-layout-rahee-edition .bg-primary.text-black,
+  .theme-layout-rahee-edition button.bg-primary {
+    text-shadow: 0 1px 1px rgba(0,0,0,0.5) !important;
+    font-weight: 900 !important;
+    letter-spacing: 0.1em !important;
+    position: relative !important;
+    transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+    overflow: hidden !important;
+  }
+
+  /* Default control buttons under Rahee Edition */
+  .theme-layout-rahee-edition button:not([disabled]):not(.p-1):not(.w-10):not(.h-10):not(.p-1\.5):not(.p-2):not(.w-6):not(.h-6) {
+    background: linear-gradient(135deg, #ffffff 0%, #dcdcdc 50%, #b0b0b0 51%, #e5e5e5 100%) !important;
+    color: #111111 !important;
+    border-radius: 9999px !important;
+    border-top: 2px solid #ffffff !important;
+    border-left: 2px solid #ffffff !important;
+    border-bottom: 4px solid #7a7a7a !important;
+    border-right: 3px solid #8e8e8e !important;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35), inset 0 2px 2px rgba(255,255,255,0.85) !important;
+    transform: translateY(0px);
+  }
+
+  /* Primary/highlight buttons for Rahee Edition */
+  .theme-layout-rahee-edition button.bg-primary:not([disabled]),
+  .theme-layout-rahee-edition .bg-primary.text-black:not([disabled]) {
+    background: linear-gradient(135deg, #02f2ff 0%, #00b4d8 50%, #0077b6 51%, #02f2ff 100%) !important;
+    color: #ffffff !important;
+    border-top: 2px solid #00f0ff !important;
+    border-left: 2px solid #00f0ff !important;
+    border-bottom: 4px solid #004e7c !important;
+    border-right: 3px solid #005f96 !important;
+    box-shadow: 0 8px 24px rgba(2, 242, 255, 0.25), inset 0 2px 2px rgba(255,255,255,0.4) !important;
+  }
+
+  /* Cool metallic hover transitions */
+  .theme-layout-rahee-edition button:hover:not([disabled]) {
+    filter: brightness(1.15);
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.4), inset 0 2px 2px rgba(255,255,255,0.9) !important;
+  }
+
+  .theme-layout-rahee-edition button.bg-primary:hover:not([disabled]),
+  .theme-layout-rahee-edition .bg-primary.text-black:hover:not([disabled]) {
+    box-shadow: 0 12px 30px rgba(2, 242, 255, 0.45), inset 0 2px 2px rgba(255,255,255,0.65) !important;
+  }
+
+  /* Deep active depression click animation */
+  .theme-layout-rahee-edition button:active:not([disabled]),
+  .theme-layout-rahee-edition button.bg-primary:active:not([disabled]),
+  .theme-layout-rahee-edition .bg-primary.text-black:active:not([disabled]) {
+    transform: translateY(3px) scale(0.97) !important;
+    border-bottom: 1px solid #5a5a5a !important;
+    border-right: 1px solid #6a6a6a !important;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25), inset 0 1px 1px rgba(255,255,255,0.45) !important;
+  }
+
+  /* Glare flash reflex effect on hover */
+  .theme-layout-rahee-edition button::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -75%;
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(to right, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.3) 100%);
+    transform: skewX(-25deg);
+    pointer-events: none;
+  }
+
+  .theme-layout-rahee-edition button:hover::after {
+    left: 125%;
+    transition: all 0.7s ease-in-out;
+  }
+
+  /* Form controls styled elegantly */
+  .theme-layout-rahee-edition input,
+  .theme-layout-rahee-edition select,
+  .theme-layout-rahee-edition textarea {
+    background-color: rgba(0, 0, 0, 0.45) !important;
+    border: 1.5px solid rgba(255, 255, 255, 0.12) !important;
+    color: #ffffff !important;
+    border-radius: 16px !important;
+    backdrop-filter: blur(10px) !important;
+    transition: all 0.3s ease !important;
+  }
+  .theme-layout-rahee-edition input:focus {
+    border-color: #02f2ff !important;
+    box-shadow: 0 0 12px rgba(2, 242, 255, 0.35) !important;
+  }
+
+  /* Glowing containers with breathing heartbeat outlines */
+  .theme-layout-rahee-edition .rounded-\[2\.5rem\],
+  .theme-layout-rahee-edition .rounded-\[3rem\],
+  .theme-layout-rahee-edition .rounded-3xl {
+    border: 1px solid rgba(2, 242, 255, 0.15) !important;
+    box-shadow: 0 14px 44px rgba(0, 0, 0, 0.55), inset 0 1px 1px rgba(255, 255, 255, 0.05) !important;
+    animation: rahee-pulse-glow-anim 4s infinite alternate !important;
+  }
+
+  @keyframes rahee-pulse-glow-anim {
+    0% {
+      border-color: rgba(2, 242, 255, 0.1);
+      box-shadow: 0 14px 44px rgba(0, 0, 0, 0.5), 0 0 10px rgba(2, 242, 255, 0.03);
+    }
+    100% {
+      border-color: rgba(2, 242, 255, 0.28);
+      box-shadow: 0 14px 44px rgba(0, 0, 0, 0.6), 0 0 25px rgba(2, 242, 255, 0.1);
+    }
+  }
+
+  /* Glass design disabled button styling overriding any blue primary styling */
+  .theme-layout-glass button[disabled],
+  .theme-layout-glass .bg-primary[disabled],
+  .theme-layout-glass button:disabled,
+  .theme-layout-glass button.opacity-50 {
+    background: rgba(255, 255, 255, 0.04) !important;
+    color: rgba(255, 255, 255, 0.18) !important;
+    border: 1px solid rgba(255, 255, 255, 0.05) !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    cursor: not-allowed !important;
+  }
+
+  /* Rahee Edition disabled button styling overriding any blue primary styling */
+  .theme-layout-rahee-edition button[disabled],
+  .theme-layout-rahee-edition .bg-primary[disabled],
+  .theme-layout-rahee-edition button:disabled,
+  .theme-layout-rahee-edition button.opacity-50 {
+    background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(120,120,120,0.03) 100%) !important;
+    color: rgba(255, 255, 255, 0.2) !important;
+    border: 1px solid rgba(255, 255, 255, 0.04) !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    cursor: not-allowed !important;
+  }
+
+  /* Glass design text styling */
+  .theme-layout-glass h1,
+  .theme-layout-glass h2,
+  .theme-layout-glass h3,
+  .theme-layout-glass .text-2xl,
+  .theme-layout-glass .text-3xl {
+    text-shadow: 0 0 1px rgba(255, 255, 255, 0.85), 0 0 8px rgba(139, 92, 246, 0.5), 0 1px 2px rgba(255, 255, 255, 0.1) !important;
+    -webkit-text-stroke: 0.6px rgba(255, 255, 255, 0.75) !important;
+    color: #f3f0ff !important;
+  }
+
+  .theme-layout-glass p,
+  .theme-layout-glass span:not(.font-mono),
+  .theme-layout-glass div:not(.font-mono) {
+    text-shadow: 0 0 1px rgba(255, 255, 255, 0.5), 0 1px 3px rgba(139, 92, 246, 0.15) !important;
+    -webkit-text-stroke: 0.25px rgba(255, 255, 255, 0.65) !important;
+  }
+
+  /* Force light/glowing colors for text in glass mode to prevent dark-on-dark issues in light mode */
+  .theme-layout-glass .text-black,
+  .theme-layout-glass .text-neutral-800,
+  .theme-layout-glass .text-neutral-900,
+  .theme-layout-glass h2,
+  .theme-layout-glass h3 {
+    color: #f3f0ff !important;
+  }
+
+  .theme-layout-glass .text-black\/40,
+  .theme-layout-glass .text-black\/30,
+  .theme-layout-glass .text-neutral-400 {
+    color: rgba(243, 240, 255, 0.6) !important;
+  }
+
+  .theme-layout-glass input {
+    color: #ffffff !important;
+    background-color: rgba(255, 255, 255, 0.05) !important;
+    border-color: rgba(255, 255, 255, 0.15) !important;
+  }
+
+  /* Rahee Edition text styling */
+  .theme-layout-rahee-edition h1,
+  .theme-layout-rahee-edition h2,
+  .theme-layout-rahee-edition h3 {
+    text-shadow: 0 0 15px rgba(2, 242, 255, 0.4), 0 2px 4px rgba(0, 0, 0, 0.7) !important;
+    background: linear-gradient(135deg, #ffffff 30%, #a2f9ff 100%) !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+  }
+
+  .theme-layout-rahee-edition .text-black,
+  .theme-layout-rahee-edition .text-neutral-800,
+  .theme-layout-rahee-edition .text-neutral-900 {
+    color: #ffffff !important;
+  }
+
+  .theme-layout-rahee-edition .text-black\/40,
+  .theme-layout-rahee-edition .text-black\/30,
+  .theme-layout-rahee-edition .text-neutral-400 {
+    color: rgba(255, 255, 255, 0.65) !important;
+  }
+
+  .theme-layout-rahee-edition input {
+    color: #ffffff !important;
+    background-color: rgba(255, 255, 255, 0.05) !important;
+    border-color: rgba(255, 255, 255, 0.15) !important;
+  }
 }

@@ -19,13 +19,77 @@ function AppContent() {
   const { currentUser, loading, settings } = useUser();
   const { isDark, setIsDark } = useTheme();
   const [showSplash, setShowSplash] = useState(true);
+  const [updateCheckingComplete, setUpdateCheckingComplete] = useState(false);
+  const [hasUpdateMismatch, setHasUpdateMismatch] = useState(false);
+  const [minSplashDone, setMinSplashDone] = useState(false);
+  const [bgmDownloaded, setBgmDownloaded] = useState(false);
 
+  // Pre-load custom local BGM file during Splash Screen if enabled
+  useEffect(() => {
+    if (loading) return;
+    if (settings && settings.bgmMode === 'uploaded_only') {
+      setBgmDownloaded(false);
+      const audio = new Audio();
+      
+      const handleCanPlay = () => {
+        setBgmDownloaded(true);
+        audio.removeEventListener('canplaythrough', handleCanPlay);
+        audio.removeEventListener('error', handleError);
+      };
+      
+      const handleError = () => {
+        setBgmDownloaded(true);
+        audio.removeEventListener('canplaythrough', handleCanPlay);
+        audio.removeEventListener('error', handleError);
+      };
+
+      audio.addEventListener('canplaythrough', handleCanPlay);
+      audio.addEventListener('error', handleError);
+
+      audio.src = '/Music/Rahee Quiz Final.mp3';
+      audio.load();
+
+      // Guard with a short 2 seconds absolute timeout to prevent splash freeze if the file is missing
+      const timeout = setTimeout(() => {
+        setBgmDownloaded(true);
+      }, 2000);
+
+      return () => {
+        clearTimeout(timeout);
+        audio.removeEventListener('canplaythrough', handleCanPlay);
+        audio.removeEventListener('error', handleError);
+      };
+    } else {
+      setBgmDownloaded(true);
+    }
+  }, [loading, settings?.bgmMode]);
+
+  // Minimum splash timer for branding pacing
   useEffect(() => {
     const timer = setTimeout(() => {
-      setShowSplash(false);
-    }, 2000);
+      setMinSplashDone(true);
+    }, 1500); // 1.5s is perfect
     return () => clearTimeout(timer);
   }, []);
+
+  // Sync splash transition trigger
+  useEffect(() => {
+    if (!loading && bgmDownloaded) {
+      if (!currentUser) {
+        if (minSplashDone) {
+          setShowSplash(false);
+        }
+      } else {
+        // If there is an update mismatch, dismiss splash immediately so blocker screen covers viewport directly
+        if (updateCheckingComplete && hasUpdateMismatch) {
+          setShowSplash(false);
+        } else if (updateCheckingComplete && minSplashDone) {
+          // If update is verified fine, exit splash smoothly once minimum duration is reached
+          setShowSplash(false);
+        }
+      }
+    }
+  }, [loading, currentUser, updateCheckingComplete, hasUpdateMismatch, minSplashDone, bgmDownloaded]);
 
   // Resume background music on first user interaction (browser restriction bypass)
   useEffect(() => {
@@ -59,6 +123,7 @@ function AppContent() {
       harp: currentUser?.bgmVolumeHarp !== undefined ? currentUser.bgmVolumeHarp : (settings?.bgmVolumeHarp !== undefined ? settings.bgmVolumeHarp : 0.4),
       beats: currentUser?.bgmVolumeBeats !== undefined ? currentUser.bgmVolumeBeats : (settings?.bgmVolumeBeats !== undefined ? settings.bgmVolumeBeats : 0.25),
       bpm: currentUser?.bgmBpm !== undefined ? currentUser.bgmBpm : (settings?.bgmBpm !== undefined ? settings.bgmBpm : 95),
+      bgmMasterVolume: currentUser?.bgmVolume !== undefined ? currentUser.bgmVolume : (settings?.bgmVolume !== undefined ? settings.bgmVolume : 0.5),
       midiPresetName: currentUser?.midiPresetName || settings?.midiPresetName || 'satie',
       midiUrlSynth: currentUser?.midiUrlSynth || settings?.midiUrlSynth || '',
       midiUrlFlute: currentUser?.midiUrlFlute || settings?.midiUrlFlute || '',
@@ -68,7 +133,7 @@ function AppContent() {
       midiUrlHarp: currentUser?.midiUrlHarp || settings?.midiUrlHarp || '',
     };
 
-    bgm.updateState(globalBgm, userBgm, activePreset, settings?.bgmUrl, mix);
+    bgm.updateState(globalBgm, userBgm, activePreset, settings?.bgmUrl, mix, settings?.bgmMode);
   }, [
     currentUser?.bgmEnabled, 
     currentUser?.bgmPreset, 
@@ -90,6 +155,7 @@ function AppContent() {
     settings?.bgmEnabled, 
     settings?.bgmPreset, 
     settings?.bgmUrl, 
+    settings?.bgmMode,
     settings?.bgmVolumeSynth,
     settings?.bgmVolumeFlute,
     settings?.bgmVolumePiano,
@@ -153,7 +219,12 @@ function AppContent() {
       ) : currentUser.status === 'pending' ? (
         <WaitingRoom />
       ) : (
-        <UpdateBlocker>
+        <UpdateBlocker
+          onCheckingComplete={(mismatch) => {
+            setHasUpdateMismatch(mismatch);
+            setUpdateCheckingComplete(true);
+          }}
+        >
           <NotificationManager />
           <MainMenu />
         </UpdateBlocker>

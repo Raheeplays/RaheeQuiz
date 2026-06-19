@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Calendar, Clock, Trophy, ChevronRight, AlertCircle, CheckCircle, Download, FileText, Eye, Award, BookOpen, ArrowLeft, Check, X, Printer } from 'lucide-react';
+import { Calendar, Clock, Trophy, ChevronRight, AlertCircle, CheckCircle, Download, FileText, Eye, Award, BookOpen, ArrowLeft, Check, X, Printer, Share2 } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
 import { db } from '../firebase/config';
 import { ref, onValue, update, get } from 'firebase/database';
@@ -28,7 +28,7 @@ export default function Events() {
   const [selectedEventForReview, setSelectedEventForReview] = useState<Event | null>(null);
   const [reviewQuizzes, setReviewQuizzes] = useState<Quiz[]>([]);
   const [loadingReview, setLoadingReview] = useState(false);
-  const [reviewModalTab, setReviewModalTab] = useState<'paper' | 'answers'>('paper');
+  const [reviewModalTab, setReviewModalTab] = useState<'paper' | 'answers'>('answers');
   const [reviewLanguage, setReviewLanguage] = useState<'en' | 'hi'>('en');
   const [reviewFilter, setReviewFilter] = useState<'all' | 'correct' | 'incorrect' | 'unattempted'>('all');
   const [downloadingEventId, setDownloadingEventId] = useState<string | null>(null);
@@ -246,12 +246,26 @@ export default function Events() {
           .filter(([_, val]) => val !== null)
           .map(([id, val]: [string, any]) => ({ ...val, id })) as Event[];
 
-        // Filter testing events: only visible to Admin or explicitly allowed players
+        // Filter old events for new users & support specific user visibility targeting
         eventList = eventList.filter(event => {
-          if (!event.isTesting) return true;
           if (currentUser?.role === 'admin') return true;
-          if (event.selectedPlayers?.includes(currentUser?.id || '')) return true;
-          return false;
+
+          // New users can't see events created before their account registration
+          if (currentUser?.createdAt && event.createdAt && event.createdAt < currentUser.createdAt) {
+            return false;
+          }
+
+          // Support customized Visibility to specific users
+          if (event.selectedPlayers && event.selectedPlayers.length > 0) {
+            return event.selectedPlayers.includes(currentUser?.id || '');
+          }
+
+          // Handle test/exam markers
+          if (event.isTesting) {
+            return false;
+          }
+
+          return true;
         });
 
         setEvents(eventList.sort((a, b) => a.startTime - b.startTime));
@@ -495,7 +509,7 @@ export default function Events() {
       <QuizScreen 
         onClose={() => setActiveEventQuiz(null)} 
         eventId={activeEventQuiz.id}
-        topicIds={[activeEventQuiz.topicId]}
+        topicIds={activeEventQuiz.topicIds || (activeEventQuiz.topicId ? (activeEventQuiz.topicId.includes(',') ? activeEventQuiz.topicId.split(',').map((s: any) => s.trim()) : [activeEventQuiz.topicId]) : [])}
       />
     );
   }
@@ -645,71 +659,7 @@ export default function Events() {
                   </div>
                 </div>
 
-                {isJoined && (
-                  <div className="mt-6 col-span-full">
-                    {expandedDocsEventId !== event.id ? (
-                      <button
-                        type="button"
-                        onClick={() => setExpandedDocsEventId(event.id)}
-                        className="w-full bg-white/5 hover:bg-white/10 dark:bg-white/[0.03] dark:hover:bg-white/[0.08] border border-black/10 dark:border-white/5 rounded-2xl py-3.5 px-5 flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-primary hover:text-primary/90 transition-all active:scale-[0.98]"
-                      >
-                        <span className="flex items-center gap-2">
-                          <FileText size={14} className="text-primary" />
-                          View Exam Documents Card
-                        </span>
-                        <div className="flex items-center gap-1 text-white/40">
-                          <span className="text-[8px] font-mono lowercase">tap to open</span>
-                          <ChevronRight size={14} />
-                        </div>
-                      </button>
-                    ) : (
-                      <div className="p-4 rounded-3xl bg-black/5 dark:bg-white/[0.02] border border-black/5 dark:border-white/5 space-y-3">
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="text-[9px] font-black tracking-wider text-primary uppercase">Exam Verification Documents</span>
-                          <button
-                            type="button"
-                            onClick={() => setExpandedDocsEventId(null)}
-                            className="text-[8px] font-bold text-zinc-400 hover:text-white uppercase tracking-wider bg-white/5 px-2 py-0.5 rounded-lg active:scale-95 transition-all"
-                          >
-                            Hide Card
-                          </button>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => processDocumentAction(event, 'certificate', 'preview')}
-                            className="bg-primary hover:bg-opacity-90 text-black font-black text-[9px] uppercase tracking-wider py-2.5 px-3 rounded-2xl flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-md shadow-primary/5"
-                          >
-                            <Award size={12} />
-                            Certificate
-                          </button>
-                          
-                          <button
-                            type="button"
-                            disabled={downloadingEventId === event.id}
-                            onClick={() => processDocumentAction(event, 'omr', 'preview')}
-                            className="relative bg-black/10 dark:bg-white/5 hover:bg-black/25 dark:hover:bg-white/10 text-black dark:text-white border border-black/10 dark:border-white/10 font-black text-[9px] uppercase tracking-wider py-2.5 px-3 rounded-2xl flex items-center justify-center gap-1.5 active:scale-95 transition-all disabled:opacity-50 overflow-hidden"
-                            title="Tap to View OMR Sheet"
-                          >
-                            <FileText size={12} className="text-primary" />
-                            {downloadingEventId === event.id ? 'Loading...' : 'OMR Sheet'}
-                          </button>
 
-                          <button
-                            type="button"
-                            disabled={downloadingEventId === event.id}
-                            onClick={() => processDocumentAction(event, 'question_paper', 'preview')}
-                            className="relative bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/10 dark:border-emerald-500/20 font-black text-[9px] uppercase tracking-wider py-2.5 px-3 rounded-2xl flex items-center justify-center gap-1.5 active:scale-95 transition-all disabled:opacity-50 overflow-hidden"
-                            title="Tap to View Question Paper"
-                          >
-                            <BookOpen size={12} className="text-emerald-500" />
-                            {downloadingEventId === event.id ? 'Loading...' : 'Question Paper'}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
 
                 <div className="flex items-center gap-6 mt-6 pt-6 border-t border-black/5 dark:border-white/5">
                   <div className="flex items-center gap-2">
@@ -886,33 +836,15 @@ export default function Events() {
 
             {/* Tab Controls & Filter Controls */}
             <div className="px-6 py-4 border-b border-white/5 bg-black/20 flex flex-col sm:flex-row gap-4 items-center justify-between">
-              {/* Tab selector */}
-              <div className="flex bg-white/5 p-1 rounded-xl border border-white/5 self-stretch sm:self-auto">
-                <button
-                  type="button"
-                  onClick={() => setReviewModalTab('paper')}
-                  className={cn(
-                    "flex-1 sm:flex-none px-4 py-2 text-[10px] font-black uppercase rounded-lg transition-all flex items-center justify-center gap-1.5",
-                    reviewModalTab === 'paper' ? "bg-white text-black" : "text-white/60 hover:text-white"
-                  )}
-                >
-                  <BookOpen size={13} />
-                  Question Paper (Sample)
-                </button>
-                
-                {selectedEventForReview.results?.[currentUser?.id || ''] && (
-                  <button
-                    type="button"
-                    onClick={() => setReviewModalTab('answers')}
-                    className={cn(
-                      "flex-1 sm:flex-none px-4 py-2 text-[10px] font-black uppercase rounded-lg transition-all flex items-center justify-center gap-1.5",
-                      reviewModalTab === 'answers' ? "bg-white text-black" : "text-white/60 hover:text-white"
-                    )}
-                  >
-                    <CheckCircle size={13} />
-                    Attempted Answer Key
-                  </button>
-                )}
+              {/* Feature Title */}
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
+                  <CheckCircle size={15} />
+                </div>
+                <div>
+                  <h4 className="font-mono text-xs font-black text-white uppercase tracking-wider">Attempted Answer Key</h4>
+                  <p className="font-mono text-[9px] text-zinc-400 uppercase tracking-widest leading-none">Detailed Exam Review & Explanations</p>
+                </div>
               </div>
 
               {/* Filters for Answer Sheet */}
@@ -1503,16 +1435,10 @@ export default function Events() {
               </span>
               <div className="flex gap-2">
                 {previewPdfUrl && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      window.open(previewPdfUrl, '_blank');
-                    }}
-                    className="bg-[#32befa] hover:bg-[#32befa]/85 text-black text-xs px-5 py-2.5 rounded-xl border border-transparent font-black uppercase tracking-wider transition-all active:scale-95 flex items-center gap-1.5 shadow-lg shadow-[#32befa]/20"
-                  >
-                    <Download size={12} />
-                    View & Download PDF
-                  </button>
+                  <div className="bg-white/5 text-zinc-400 text-[10px] font-black uppercase tracking-wider px-4 py-2.5 rounded-xl border border-white/5 flex items-center gap-1.5 font-mono">
+                    <Eye size={12} className="text-[#32befa]" />
+                    Verified Document View
+                  </div>
                 )}
                 <button
                   type="button"

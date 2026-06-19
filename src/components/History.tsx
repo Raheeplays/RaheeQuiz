@@ -117,7 +117,7 @@ export default function History({ onClose, onPlayAgain }: HistoryProps) {
                activeHistoryTab === 'sessions' ? "bg-primary text-black" : "text-white/40 hover:text-white"
              )}
            >
-             Sessions
+             Rounds
            </button>
            <button 
              onClick={() => setActiveHistoryTab('recent')}
@@ -142,8 +142,8 @@ export default function History({ onClose, onPlayAgain }: HistoryProps) {
                <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-6">
                  <Search size={40} />
                </div>
-               <p className="font-black text-xs uppercase tracking-widest">No completed sessions found</p>
-               <p className="text-[10px] font-bold mt-2 max-w-[200px]">Complete a full round of 10 questions to see session history here.</p>
+               <p className="font-black text-xs uppercase tracking-widest">No completed rounds found</p>
+               <p className="text-[10px] font-bold mt-2 max-w-[200px]">Complete a full round of 10 questions to see round history here.</p>
             </div>
            ) : (
             <div className="max-w-3xl mx-auto space-y-4">
@@ -178,6 +178,9 @@ export default function History({ onClose, onPlayAgain }: HistoryProps) {
                           <span className="text-[10px] font-bold text-white/20 whitespace-nowrap">{format(session.timestamp, 'MMM d, HH:mm')}</span>
                         </div>
                         <div className="flex items-center gap-3">
+                          <div className="px-2 py-0.5 bg-white/5 rounded-full text-[9px] font-black tracking-widest text-primary">
+                            ROUND: {session.round || (sessions.length - sIdx)}
+                          </div>
                           <div className="px-2 py-0.5 bg-white/5 rounded-full text-[9px] font-black tracking-widest text-[#32befa]">
                             SCORE: {session.score}/{session.total}
                           </div>
@@ -262,9 +265,15 @@ export default function History({ onClose, onPlayAgain }: HistoryProps) {
                           <p className="text-sm font-bold text-white/90 line-clamp-1 max-w-[200px] md:max-w-md">
                             {quiz?.question?.en || 'Question data missing'}
                           </p>
-                          <p className="text-[8px] font-bold text-white/30 uppercase tracking-widest">
-                            {format(h.timestamp || Date.now(), 'MMM d, HH:mm')}
-                          </p>
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            <p className="text-[8px] font-bold text-white/30 uppercase tracking-widest">
+                              {format(h.timestamp || Date.now(), 'MMM d, HH:mm')}
+                            </p>
+                            <span className="text-white/20 text-[8px]">•</span>
+                            <span className="px-1.5 py-0.5 bg-primary/10 text-primary rounded text-[7px] font-black tracking-widest">
+                              R-{h.round !== undefined ? h.round : (Math.floor(idx / 10) + 1)} • Q-{h.questionNumber !== undefined ? h.questionNumber : (idx % 10 + 1)}
+                            </span>
+                          </div>
                         </div>
                      </div>
                      <span className={cn(

@@ -246,6 +246,54 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     };
   }, [activeUserId]);
 
+  // Handle dynamically updating isOnline state for real-time presence tracking
+  useEffect(() => {
+    // Only track the real user's online status (not the impersonation context)
+    const realId = currentUser?.id && !currentUser?.isBot ? currentUser.id : activeUserId;
+    if (!realId) return;
+
+    const userPresenceRef = ref(db, `users/${realId}/isOnline`);
+
+    // On disconnect (browser close/exit/crash), mark offline in backend
+    const onDisconnectPresence = onDisconnect(userPresenceRef);
+    onDisconnectPresence.set(false).catch((err) => {
+      console.error("onDisconnect setup failed:", err);
+    });
+
+    const setPresenceState = (online: boolean) => {
+      update(ref(db, `users/${realId}`), {
+        isOnline: online
+      }).catch((e) => console.error("Error updating online state:", e));
+    };
+
+    // Listen to tab visibility & window focus/blur
+    const handlePresenceVisibility = () => {
+      const isVisible = document.visibilityState === 'visible';
+      setPresenceState(isVisible);
+    };
+
+    const handleFocus = () => setPresenceState(true);
+    const handleBlur = () => setPresenceState(false);
+
+    // Initial state: set online if page is visible
+    setPresenceState(document.visibilityState === 'visible');
+
+    document.addEventListener('visibilitychange', handlePresenceVisibility);
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('blur', handleBlur);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handlePresenceVisibility);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('blur', handleBlur);
+      try {
+        onDisconnectPresence.cancel();
+      } catch (e) {}
+      // When unmounting (like logout) mark offline
+      setPresenceState(false);
+    };
+  }, [activeUserId, currentUser?.id]);
+
   // Synchronize dynamic exit lastPlayedTime
   useEffect(() => {
     const activeUserId = impersonatedUser?.id || currentUser?.id;

@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { ref, onValue, remove, update, get } from 'firebase/database';
+import { ref, onValue, remove, update, get, set } from 'firebase/database';
 import { User } from '../types';
-import { Trophy, Medal, Crown, TrendingUp, Bot, Clock, Trash2, Edit2 } from 'lucide-react';
+import { Trophy, Medal, Crown, TrendingUp, Bot, Clock, Trash2, Edit2, UserPlus, Heart, Check, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion } from 'motion/react';
 
 import { useUser } from '../contexts/UserContext';
+import { useNotifications } from '../contexts/NotificationContext';
+import { NotificationService } from '../services/notificationService';
 
 import { Skeleton } from './ui/Skeleton';
 
@@ -19,6 +21,139 @@ export default function Leaderboard() {
 
   const [dailyCountdown, setDailyCountdown] = useState('');
   const [weeklyCountdown, setWeeklyCountdown] = useState('');
+
+  const [selectedPlayer, setSelectedPlayer] = useState<User | null>(null);
+  const [sendingRequestId, setSendingRequestId] = useState<string | null>(null);
+  const [requestStatus, setRequestStatus] = useState<'send' | 'pending_outgoing' | 'pending_incoming' | 'friends'>('send');
+  const [sysSettings, setSysSettings] = useState<any>(null);
+  const { serviceAccount } = useNotifications();
+
+  useEffect(() => {
+    return onValue(ref(db, 'settings'), (snap) => {
+      if (snap.exists()) {
+        setSysSettings(snap.val());
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!selectedPlayer || !currentUser) return;
+    const isFriend = currentUser.friends?.[selectedPlayer.id];
+    const pendingType = currentUser.pendingRequests?.[selectedPlayer.id];
+    
+    if (isFriend) {
+      setRequestStatus('friends');
+    } else if (pendingType === 'outgoing') {
+      setRequestStatus('pending_outgoing');
+    } else if (pendingType === 'incoming') {
+      setRequestStatus('pending_incoming');
+    } else {
+      setRequestStatus('send');
+    }
+  }, [selectedPlayer, currentUser]);
+
+  const sendLeaderboardFriendRequest = async (targetId: string, targetName: string) => {
+    if (!currentUser) return;
+    setSendingRequestId(targetId);
+    try {
+      const targetIsBot = selectedPlayer?.isBot || false;
+      const targetPath = targetIsBot ? `bots/${targetId}` : `users/${targetId}`;
+
+      await update(ref(db, `users/${currentUser.id}/pendingRequests`), {
+        [targetId]: 'outgoing'
+      });
+      await update(ref(db, `${targetPath}/pendingRequests`), {
+        [currentUser.id]: 'incoming'
+      });
+
+      // Send FCM push callback
+      if (sysSettings?.pushNotificationsEnabled !== false && serviceAccount) {
+        try {
+          if (targetIsBot) {
+            const adminToken = sysSettings?.adminConfigFcmToken;
+            const isMasterFcmEnabled = sysSettings?.adminMasterFcmEnabled !== false;
+            if (isMasterFcmEnabled && adminToken && adminToken.trim().length > 10) {
+              const title = 'Bot Friend Request';
+              const body = `Real player ${currentUser.name} (@${currentUser.username}) sent a friend request to bot ${targetName} (@${selectedPlayer?.username || ''})`;
+              const pushData = {
+                action_type: 'friend_request_to_bot',
+                senderId: currentUser.id,
+                senderName: currentUser.name,
+                targetUserId: targetId,
+                targetUserName: targetName
+              };
+              await NotificationService.sendToToken(serviceAccount, adminToken.trim(), title, body, undefined, pushData);
+            }
+          } else {
+            const tokensSnap = await get(ref(db, `fcmTokens/${targetId}`));
+            if (tokensSnap.exists()) {
+              const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
+              const title = 'New Friend Request';
+              const body = `${currentUser.name} wants to be your friend!`;
+              const pushData = {
+                action_type: 'friend_request',
+                senderId: currentUser.id,
+                senderName: currentUser.name,
+                targetUserId: targetId,
+                targetUserName: targetName
+              };
+              for (const token of tokens) {
+                await NotificationService.sendToToken(serviceAccount, token, title, body, undefined, pushData);
+              }
+            }
+          }
+        } catch (e) {
+          console.error("FCM push failed:", e);
+        }
+      }
+      setRequestStatus('pending_outgoing');
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSendingRequestId(null);
+    }
+  };
+
+  const acceptLeaderboardFriendRequest = async (targetId: string) => {
+    if (!currentUser) return;
+    setSendingRequestId(targetId);
+    try {
+      await update(ref(db, `users/${currentUser.id}/friends`), { [targetId]: true });
+      await update(ref(db, `users/${targetId}/friends`), { [currentUser.id]: true });
+      await set(ref(db, `users/${currentUser.id}/pendingRequests/${targetId}`), null);
+      await set(ref(db, `users/${targetId}/pendingRequests/${currentUser.id}`), null);
+
+      if (sysSettings?.pushNotificationsEnabled !== false && serviceAccount) {
+        try {
+          const tokensSnap = await get(ref(db, `fcmTokens/${targetId}`));
+          if (tokensSnap.exists()) {
+            const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
+            const title = 'Friend Request Accepted';
+            const body = `${currentUser.name} accepted your friend request!`;
+            for (const token of tokens) {
+              await NotificationService.sendToToken(serviceAccount, token, title, body);
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      setRequestStatus('friends');
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSendingRequestId(null);
+    }
+  };
+
+  const handlePlayerClick = (player: User) => {
+    if (player.id === currentUser?.id) return;
+    if (player.privacyEnabled !== false) {
+      // If privacy enabled (ON), don't open the profile or send friend request option!
+      return;
+    }
+    setSelectedPlayer(player);
+  };
 
   useEffect(() => {
     const fetchLeaderboardData = async () => {
@@ -51,7 +186,7 @@ export default function Leaderboard() {
         const botsList = Object.entries(botsData)
           .filter(([_, val]) => val !== null)
           .map(([key, val]: [string, any]) => {
-            const u = { ...val, id: key, isBot: true } as User;
+            const u = { privacyEnabled: false, ...val, id: key, isBot: true } as User;
             const isAdmin = currentUser?.role === 'admin';
             if (!u.name || u.name.trim() === '' || (u.name.toLowerCase().includes('bot') && !isAdmin)) {
               const firstNames = ["Rohan", "Amit", "Priya", "Rahul", "Sneha", "Vikram", "Anjali", "Aditya", "Neha", "Sanjay", "Karan", "Riya", "Aarav", "Meera", "Kabir", "Deepak", "Tanvi", "Arjun", "Kiran", "Yash"];
@@ -186,6 +321,90 @@ export default function Leaderboard() {
 
   return (
     <div className="p-6">
+      {/* Player Profile & Friend Request Modal Overlay */}
+      {selectedPlayer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm">
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="w-full max-w-sm overflow-hidden bg-white dark:bg-[#111] border border-black/10 dark:border-white/10 rounded-[2.5rem] shadow-2xl relative"
+          >
+            {/* Header / Background Pattern */}
+            <div className="h-24 bg-gradient-to-r from-primary/10 to-primary/5 dark:from-[#32befa]/20 dark:to-transparent" />
+            
+            {/* Close Button */}
+            <button
+              onClick={() => setSelectedPlayer(null)}
+              className="absolute top-4 right-4 p-2 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-black/50 dark:text-white/60 rounded-full transition-colors active:scale-95"
+            >
+              <X size={16} />
+            </button>
+
+            {/* Content Details */}
+            <div className="p-6 pt-0 flex flex-col items-center text-center relative font-sans">
+              {/* Avatar Image */}
+              <div className="w-20 h-20 -mt-10 bg-primary/20 rounded-3xl border-4 border-white dark:border-[#111] overflow-hidden shadow-md flex items-center justify-center text-primary text-2xl font-black">
+                {selectedPlayer.avatarUrl ? (
+                  <img src={selectedPlayer.avatarUrl} alt={selectedPlayer.name} className="w-full h-full object-cover" referrerpolicy="no-referrer" />
+                ) : (
+                  (selectedPlayer.name || 'P')[0].toUpperCase()
+                )}
+              </div>
+
+              {/* Identity & Rank */}
+              <h3 className="text-xl font-black text-black dark:text-white mt-4 italic font-sans">{selectedPlayer.name}</h3>
+              <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-extrabold uppercase tracking-widest mt-0.5 font-mono">@{selectedPlayer.username || 'rahee_player'}</p>
+
+              {/* Status Section */}
+              <div className="my-6 w-full grid grid-cols-2 gap-2 bg-black/[0.02] dark:bg-white/[0.02] p-4 rounded-2xl border border-black/5 dark:border-white/5">
+                <div className="text-center">
+                  <span className="block text-2xl font-black text-primary leading-none">{selectedPlayer.xp ?? 0}</span>
+                  <span className="text-[8px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Total Points</span>
+                </div>
+                <div className="text-center border-l border-zinc-200 dark:border-zinc-800">
+                  <span className="block text-2xl font-black text-primary leading-none">LVL {selectedPlayer.rank ?? 0}</span>
+                  <span className="text-[8px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest text-[8px]">Level</span>
+                </div>
+              </div>
+
+              {/* Interactivity Section: Friend Request Actions */}
+              <div className="w-full pt-1">
+                {requestStatus === 'friends' && (
+                  <div className="w-full py-4 bg-green-500/10 text-green-600 dark:text-green-400 font-black text-xs uppercase tracking-widest rounded-2xl border border-green-500/10 flex items-center justify-center gap-2">
+                    <Check size={14} />
+                    Already Friends
+                  </div>
+                )}
+                {requestStatus === 'pending_outgoing' && (
+                  <div className="w-full py-4 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 font-black text-xs uppercase tracking-widest rounded-2xl border border-yellow-500/10 flex items-center justify-center gap-2">
+                    <Clock size={14} className="animate-pulse" />
+                    Request Pending
+                  </div>
+                )}
+                {requestStatus === 'pending_incoming' && (
+                  <button
+                    disabled={sendingRequestId !== null}
+                    onClick={() => acceptLeaderboardFriendRequest(selectedPlayer.id)}
+                    className="w-full py-4 bg-primary text-black font-black text-xs uppercase tracking-widest rounded-2xl hover:bg-opacity-90 active:scale-95 transition-all shadow-lg shadow-primary/15 flex items-center justify-center gap-2"
+                  >
+                    {sendingRequestId ? 'Accepting...' : 'Accept Friend Request'}
+                  </button>
+                )}
+                {requestStatus === 'send' && (
+                  <button
+                    disabled={sendingRequestId !== null}
+                    onClick={() => sendLeaderboardFriendRequest(selectedPlayer.id, selectedPlayer.name)}
+                    className="w-full py-4 bg-[#32befa] text-black font-black text-xs uppercase tracking-widest rounded-2xl hover:bg-opacity-90 active:scale-95 transition-all shadow-lg shadow-[#32befa]/15 flex items-center justify-center gap-2"
+                  >
+                    <UserPlus size={14} />
+                    {sendingRequestId ? 'Sending...' : 'Send Friend Request'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
       <div className="flex items-center justify-between mb-2">
          <h2 className="text-3xl font-black uppercase tracking-tighter italic text-black dark:text-white">Global Arena</h2>
          <Trophy className="text-primary" size={32} />
@@ -299,16 +518,22 @@ export default function Leaderboard() {
              ))}
            </>
          ) : (
-            filteredPlayers.map((player, idx) => (
+            filteredPlayers.map((player, idx) => {
+              const canClick = player.id !== currentUser?.id && player.privacyEnabled === false;
+              return (
               <motion.div
                 key={`leaderboard-row-${player.id || idx}-${idx}`}
                 initial={{ x: -20, opacity: 0 }}
                 animate={{ x: 0, opacity: 1 }}
                 transition={{ delay: idx * 0.05 }}
+                onClick={() => {
+                  if (canClick) handlePlayerClick(player);
+                }}
                 className={cn(
-                  "p-4 rounded-2xl flex items-center justify-between border transition-all",
+                  "p-4 rounded-2xl flex items-center justify-between border transition-all duration-150",
                   player.id === currentUser?.id ? "ring-2 ring-primary bg-primary/5 border-primary/20 shadow-lg shadow-primary/10" : 
-                  "bg-white dark:bg-[#111] border-black/10 dark:border-white/10 shadow-sm dark:shadow-md"
+                  "bg-white dark:bg-[#111] border-black/10 dark:border-white/10 shadow-sm dark:shadow-md",
+                  canClick && "cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 active:scale-[0.99]"
                 )}
               >
                  <div className="flex items-center gap-4 min-w-0">
@@ -431,7 +656,8 @@ export default function Leaderboard() {
                     )}
                  </div>
               </motion.div>
-            ))
+            );
+           })
           )}
       </div>
     </div>

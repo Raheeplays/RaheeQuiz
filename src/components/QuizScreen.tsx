@@ -16,6 +16,7 @@ import History from './History';
 import Feedback from './Feedback';
 
 import { Skeleton } from './ui/Skeleton';
+import { logAdminNotification } from '../activityService';
 
 export default function QuizScreen({ onClose, language: initialLanguage = 'en', eventId, topicIds: propTopicIds }: { onClose: () => void, language?: 'en' | 'hi', eventId?: string, topicIds?: string[] }) {
   const { currentUser, settings } = useUser();
@@ -101,6 +102,82 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
   const [showSpecialChat, setShowSpecialChat] = useState(false);
   const [specialMessage, setSpecialMessage] = useState('');
   const [mySpecialMessages, setMySpecialMessages] = useState<any[]>([]);
+  const hasNotifiedPlay = useRef(false);
+
+  // Back-end dynamic pre-fetching queue & console logs
+  const [backgroundLogs, setBackgroundLogs] = useState<string[]>(["[Engine] Starting seamless prefetching network..."]);
+  const [leaderboardLoaded, setLeaderboardLoaded] = useState(false);
+  const [leaderboardScores, setLeaderboardScores] = useState<any[]>([]);
+  const [tempQuizzesPool, setTempQuizzesPool] = useState<Quiz[]>([]); // Full sorted quizzes pool from RTDB
+
+  // 1. Fetch leaderboard scores at game start
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    
+    setBackgroundLogs(prev => [...prev, "[Engine] Loading leaderboard scores in background..."]);
+    
+    const fetchLeaderboard = async () => {
+      try {
+        const [usersSnap, botsSnap] = await Promise.all([
+          get(ref(db, 'users')),
+          get(ref(db, 'bots'))
+        ]);
+        
+        let usersData = {};
+        if (usersSnap.exists()) usersData = usersSnap.val();
+        
+        let botsData = {};
+        if (botsSnap.exists()) botsData = botsSnap.val();
+        
+        const realPlayersList = Object.entries(usersData)
+          .filter(([_, val]) => val !== null)
+          .map(([key, val]: [string, any]) => ({ ...val, id: key, isBot: false }));
+          
+        const botsList = Object.entries(botsData)
+          .filter(([_, val]) => val !== null)
+          .map(([key, val]: [string, any]) => ({ ...val, id: key, isBot: true }));
+          
+        const combined = [...realPlayersList, ...botsList].sort((a, b) => (b.xp || 0) - (a.xp || 0));
+        setLeaderboardScores(combined);
+        setLeaderboardLoaded(true);
+        setBackgroundLogs(prev => [...prev, `[Engine] Latency check: OK. Handshaked & Loaded ${combined.length} leaderboard scores successfully.`]);
+      } catch (err) {
+        console.error("Engine failed to prefetch leaderboard", err);
+        setBackgroundLogs(prev => [...prev, "[Engine] Warning: Leaderboard latency spike, continuing..."]);
+      }
+    };
+    
+    fetchLeaderboard();
+  }, [currentUser?.id]);
+
+  // 2. Add sliding-window pre-fetching effect
+  useEffect(() => {
+    const solvedCount = history.length;
+    if (solvedCount > 0 && tempQuizzesPool.length > 0) {
+      const upNextIndex = solvedCount + 9; // Since index is 0-based and we start with 10 questions (indices 0 to 9)
+      if (upNextIndex < tempQuizzesPool.length) {
+        const nextQuizToAdd = tempQuizzesPool[upNextIndex];
+        // Check if we already have it in quizzes array
+        if (!quizzes.some(q => q.id === nextQuizToAdd.id)) {
+          setBackgroundLogs(prev => [
+            ...prev,
+            `[Engine] User answered ${solvedCount} ${solvedCount === 1 ? 'quiz' : 'quizzes'}. Prefetching upnext #${upNextIndex + 1} Quiz [ID: ${nextQuizToAdd.id}]...`
+          ]);
+          // Add it seamlessly to active playable list
+          setQuizzes(prev => {
+            if (prev.some(q => q.id === nextQuizToAdd.id)) return prev;
+            return [...prev, nextQuizToAdd];
+          });
+          setTimeout(() => {
+            setBackgroundLogs(prev => [
+              ...prev,
+              `[Engine] Active buffer: ${upNextIndex + 1} quizzes preloaded. Play seamless!`
+            ]);
+          }, 350);
+        }
+      }
+    }
+  }, [history.length, tempQuizzesPool]);
 
   useEffect(() => {
     if (currentUser?.id) {
@@ -162,8 +239,11 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
     isDark
   ]);
   
-  const targetTopicIdsRaw = eventId ? (propTopicIds || []) : (propTopicIds || (currentUser?.selectedTopicIds || (currentUser?.selectedNicheId ? [currentUser.selectedNicheId] : (currentUser?.selectedTopicId ? [currentUser.selectedTopicId] : []))));
+  const targetTopicIdsRaw = eventId 
+    ? (eventData?.topicIds || (eventData?.topicId ? (eventData.topicId.includes(',') ? eventData.topicId.split(',').map((s: any) => s.trim()) : [eventData.topicId]) : (propTopicIds || [])))
+    : (propTopicIds || (currentUser?.selectedTopicIds || (currentUser?.selectedNicheId ? [currentUser.selectedNicheId] : (currentUser?.selectedTopicId ? [currentUser.selectedTopicId] : []))));
   const targetTopicIdsStr = JSON.stringify(targetTopicIdsRaw);
+  const savedRoundQuizIdsStr = JSON.stringify(currentUser?.currentRoundQuizzes || []);
   const targetTopicIds = React.useMemo(() => {
     try {
       return JSON.parse(targetTopicIdsStr);
@@ -226,6 +306,8 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
       let combined: Quiz[] = [];
       const ids = Array.isArray(targetTopicIds) ? targetTopicIds : [targetTopicIds];
       
+      setBackgroundLogs(prev => [...prev, `[Engine] Prefetching quizzes for topic(s): ${ids.join(', ')}`]);
+      
       for (const tid of ids) {
         const quizzesRef = ref(db, `topicQuizzes/${tid}`);
         const snap = await get(quizzesRef);
@@ -235,30 +317,115 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
       }
 
       if (combined.length > 0) {
+        let sorted: Quiz[] = [];
         if (questionOrder === 'random') {
           const seed = currentUser?.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) || 0;
-          const shuffled = [...combined].sort((a, b) => {
+          sorted = [...combined].sort((a, b) => {
             const pseudoRandomA = Math.sin(seed + a.id.length) * 10000;
             const pseudoRandomB = Math.sin(seed + b.id.length) * 10000;
             return (pseudoRandomA - Math.floor(pseudoRandomA)) - (pseudoRandomB - Math.floor(pseudoRandomB));
           });
-          setQuizzes(shuffled);
         } else {
-          setQuizzes([...combined].sort((a, b) => a.id.localeCompare(b.id)));
+          sorted = [...combined].sort((a, b) => a.id.localeCompare(b.id));
+        }
+        
+        // Apply Event Challenge difficulty filter
+        if (eventId && eventData && eventData.difficultyFilter && eventData.difficultyFilter !== 'all') {
+          const targetDiff = parseInt(eventData.difficultyFilter, 10);
+          if (!isNaN(targetDiff)) {
+            sorted = sorted.filter(q => (q.difficulty || 3) === targetDiff);
+          }
+        }
+
+        // Apply Admin custom range selection of questions for event
+        if (eventId && eventData) {
+          const startRange = eventData.questionStartRange !== undefined ? parseInt(eventData.questionStartRange, 10) : 0;
+          const endRange = eventData.questionEndRange !== undefined ? parseInt(eventData.questionEndRange, 10) : 0;
+          if (!isNaN(startRange) && startRange > 0) {
+            const sIdx = Math.max(0, startRange - 1);
+            if (!isNaN(endRange) && endRange >= startRange) {
+              sorted = sorted.slice(sIdx, endRange);
+            } else {
+              sorted = sorted.slice(sIdx);
+            }
+          } else if (!isNaN(endRange) && endRange > 0) {
+            sorted = sorted.slice(0, endRange);
+          }
+        }
+
+        // Save full pool for sliding window prefetching
+        setTempQuizzesPool(sorted);
+        
+        if (eventId) {
+          // Event mode behavior remains unchanged
+          const QUESTIONS_PER_ROUND = 10;
+          const userAbsIdx = ((currentUser?.currentRound || 1) - 1) * QUESTIONS_PER_ROUND + (currentUser?.currentQuizIndex || 0);
+          const bufferSize = Math.max(10, userAbsIdx + 10);
+          const initialBuffer = sorted.slice(0, bufferSize);
+          setQuizzes(initialBuffer);
+          setBackgroundLogs(prev => [...prev, `[Engine] Event Mode: Loaded ${initialBuffer.length} quizzes.`]);
+        } else if (currentUser) {
+          // Standard gameplay: filter out solved quizzes first
+          const unsolvedSorted = sorted.filter(q => !currentUser.solvedQuizzes?.[q.id]);
+          const savedRoundQuizIds = currentUser.currentRoundQuizzes;
+
+          if (savedRoundQuizIds && savedRoundQuizIds.length > 0) {
+            // Map saved round quiz IDs to the actual Quiz objects
+            const mappedQuizzes = savedRoundQuizIds
+              .map(id => sorted.find(q => q.id === id))
+              .filter((q): q is Quiz => !!q);
+            
+            if (mappedQuizzes.length > 0) {
+              setQuizzes(mappedQuizzes);
+              setBackgroundLogs(prev => [...prev, `[Engine] Resumed round with ${mappedQuizzes.length} locked quizzes.`]);
+            } else {
+              // Lock list invalid, generate fresh
+              const freshRoundQuizzes = unsolvedSorted.slice(0, 10);
+              if (freshRoundQuizzes.length > 0) {
+                const freshIds = freshRoundQuizzes.map(q => q.id);
+                await update(ref(db, `users/${currentUser.id}`), {
+                  currentRoundQuizzes: freshIds,
+                  currentQuizIndex: 0
+                });
+                setQuizzes(freshRoundQuizzes);
+                setBackgroundLogs(prev => [...prev, `[Engine] Lock list was empty/invalid. Recreated fresh round with ${freshRoundQuizzes.length} quizzes.`]);
+              } else {
+                setQuizzes([]);
+              }
+            }
+          } else {
+            // Parse first 10 unsolved questions
+            const freshRoundQuizzes = unsolvedSorted.slice(0, 10);
+            if (freshRoundQuizzes.length > 0) {
+              const freshIds = freshRoundQuizzes.map(q => q.id);
+              await update(ref(db, `users/${currentUser.id}`), {
+                currentRoundQuizzes: freshIds,
+                currentQuizIndex: 0
+              });
+              setQuizzes(freshRoundQuizzes);
+              setBackgroundLogs(prev => [...prev, `[Engine] Generated & locked new round of ${freshRoundQuizzes.length} unsolved quizzes.`]);
+            } else {
+              setQuizzes([]);
+              setBackgroundLogs(prev => [...prev, `[Engine] No unsolved quizzes left for selected topic.`]);
+            }
+          }
         }
       } else {
         setQuizzes([]);
+        setTempQuizzesPool([]);
+        setBackgroundLogs(prev => [...prev, `[Engine] Warning: No quizzes loaded. Topic is empty.`]);
       }
       setLoading(false);
     };
 
     fetchAllQuizzes();
-  }, [targetTopicIdsStr, questionOrder]);
+  }, [targetTopicIdsStr, questionOrder, eventData, currentUser?.currentRound, savedRoundQuizIdsStr]);
 
   // Send admin notification that a player is playing a quiz
   useEffect(() => {
-    if (loading || quizzes.length === 0 || !currentUser) return;
+    if (loading || quizzes.length === 0 || !currentUser || hasNotifiedPlay.current) return;
 
+    hasNotifiedPlay.current = true;
     const notifyAdmin = async () => {
       try {
         const settingsSnap = await get(ref(db, 'settings'));
@@ -278,14 +445,8 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
             }
           }
 
-          const alertRef = push(ref(db, 'admin_notifications'));
-          await set(alertRef, {
-            id: alertRef.key,
-            type: 'play',
-            message: `${currentUser.name} (@${currentUser.username}) started playing topic "${topicName}".`,
-            timestamp: Date.now(),
-            read: false
-          });
+          // Log play event which also triggers the backend FCM delivery
+          await logAdminNotification('play', currentUser.name || currentUser.username || 'Player', `${topicName} in solomode`);
         }
       } catch (err) {
         console.error("Failed to push play alert:", err);
@@ -296,7 +457,9 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
   }, [loading, quizzes.length, currentUser?.id]);
 
   const QUESTIONS_PER_ROUND = 10;
-  const absoluteIndex = ((currentUser?.currentRound || 1) - 1) * QUESTIONS_PER_ROUND + currentIndex + skippedCount;
+  const absoluteIndex = eventId 
+    ? ((currentUser?.currentRound || 1) - 1) * QUESTIONS_PER_ROUND + currentIndex + skippedCount
+    : currentIndex;
 
   const livesActive = settings?.livesEnabledForAll && currentUser?.lives?.enabled;
 
@@ -410,7 +573,9 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
       isCorrect,
       timestamp: Date.now(),
       language: language,
-      theme: isDark ? 'dark' : 'light'
+      theme: isDark ? 'dark' : 'light',
+      round: currentUser?.currentRound || 1,
+      questionNumber: currentIndex + 1
     };
     setHistory(prev => [...prev, historyEntry]);
 
@@ -443,6 +608,7 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
         timestamp: Date.now(),
         language: language,
         theme: isDark ? 'dark' : 'light',
+        round: currentUser?.currentRound || 1,
         answers: [...history, historyEntry].map(h => ({
           quizId: h.quizId,
           userAnswerIndex: h.userAnswerIndex,
@@ -481,6 +647,15 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
       bonusCoins = 100;
     }
 
+    const quizCoinReward = settings?.correctQuizCoinValue !== undefined ? settings.correctQuizCoinValue : 10;
+    const earnedQuizCoins = isCorrect ? quizCoinReward : 0;
+    const currentQuizCoins = currentUser.quizCoins || 0;
+    const currentRaheeCoins = currentUser.raheeCoins || 0;
+    const totalQuizCoins = currentQuizCoins + earnedQuizCoins;
+    const raheeCoinsFromRollover = Math.floor(totalQuizCoins / 100);
+    const finalQuizCoins = totalQuizCoins % 100;
+    const finalRaheeCoins = currentRaheeCoins + raheeCoinsFromRollover + bonusCoins;
+
     // Lives deduction
     let newLives = currentUser.lives;
     if (livesActive && !isCorrect && index !== -1) {
@@ -491,6 +666,7 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
       };
     }
 
+    const currentQuiz = quizzes[absoluteIndex];
     const updates: Partial<User> = {
       xp: newXp,
       dailyXP: newDailyXp,
@@ -505,7 +681,8 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
       playedDates: Array.from(new Set([...(currentUser.playedDates || []), today])),
       lives: newLives,
       currentQuizIndex: newIndex,
-      raheeCoins: (currentUser.raheeCoins || 0) + bonusCoins,
+      raheeCoins: finalRaheeCoins,
+      quizCoins: finalQuizCoins,
       stats: {
         totalAttempted: (currentUser.stats?.totalAttempted || 0) + 1,
         correctAnswers: (currentUser.stats?.correctAnswers || 0) + (isCorrect ? 1 : 0),
@@ -522,10 +699,18 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
       }
     };
 
-    if (newIndex >= (eventId ? quizzes.length : QUESTIONS_PER_ROUND)) {
+    if (!eventId && currentQuiz) {
+      updates.solvedQuizzes = {
+        ...(currentUser.solvedQuizzes || {}),
+        [currentQuiz.id]: true
+      };
+    }
+
+    if (newIndex >= (eventId ? quizzes.length : Math.min(QUESTIONS_PER_ROUND, quizzes.length))) {
       if (!eventId) {
         updates.currentQuizIndex = 0;
         updates.currentRound = (currentUser.currentRound || 1) + 1;
+        updates.currentRoundQuizzes = null;
       }
       
       await saveSession();
@@ -625,9 +810,29 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
   const useChangeQuiz = async () => {
     if (!currentUser || isAnswered || (currentUser.lifelines?.changeQuiz || 0) <= 0) return;
 
-    // We skip current and jump forward in the shuffled list
-    // Or just increment a skipped counter to pick next from pool without advancing progress index
-    setSkippedCount(prev => prev + 1);
+    if (!eventId) {
+      // Find a replacement quiz among tempQuizzesPool that isn't solved and isn't currently in quizzes
+      const activeIds = quizzes.map(q => q.id);
+      const replacement = tempQuizzesPool.find(q => !currentUser.solvedQuizzes?.[q.id] && !activeIds.includes(q.id));
+      
+      if (replacement) {
+        const updatedQuizzes = [...quizzes];
+        updatedQuizzes[currentIndex] = replacement;
+        setQuizzes(updatedQuizzes);
+
+        // Persist replacement in the database lock
+        const updatedIds = updatedQuizzes.map(q => q.id);
+        await update(ref(db, `users/${currentUser.id}`), {
+          currentRoundQuizzes: updatedIds
+        });
+        setBackgroundLogs(prev => [...prev, `[Engine] Swapped question using Change Quiz lifeline.`]);
+      } else {
+        setBackgroundLogs(prev => [...prev, `[Engine] Lifeline: No alternative unsolved quizzes available to swap.`]);
+      }
+    } else {
+      setSkippedCount(prev => prev + 1);
+    }
+
     setSelectedOption(null);
     setHiddenOptions([]);
 
@@ -710,6 +915,8 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
                   if (verified) {
                     await set(ref(db, `users/${currentUser.id}/currentRound`), 1);
                     await set(ref(db, `users/${currentUser.id}/currentQuizIndex`), 0);
+                    await set(ref(db, `users/${currentUser.id}/solvedQuizzes`), null);
+                    await set(ref(db, `users/${currentUser.id}/currentRoundQuizzes`), null);
                     setCurrentIndex(0);
                     setIsAnswered(false);
                     setSelectedOption(null);
@@ -1015,6 +1222,34 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
                    </div>
                  </motion.div>
               )}
+
+              {/* Seamless Pre-fetching Engine Console */}
+              {false && (
+                <div className="mt-8 mb-4 p-4 rounded-3xl bg-black/10 dark:bg-white/[0.02] border border-black/5 dark:border-white/5 font-mono text-[10px] text-[#32befa]/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 font-black uppercase tracking-wider text-black/60 dark:text-white/60 text-[9px]">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse inline-block" />
+                      Seamless Quiz Prefetcher
+                    </span>
+                    <span className="bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 px-2.5 py-0.5 rounded-lg text-[8px] uppercase font-black text-black/40 dark:text-white/40">
+                      Buffer: {quizzes.length - currentIndex} Active / 10 Target
+                    </span>
+                  </div>
+                  <div className="bg-white/50 dark:bg-black/30 p-3 rounded-2xl border border-black/5 dark:border-white/5 text-[9px] text-black/60 dark:text-zinc-400 max-h-[85px] overflow-y-auto space-y-1 scrollbar-none">
+                    {backgroundLogs.slice(-3).map((log, lIdx) => (
+                      <div key={lIdx} className="flex gap-2">
+                        <span className="text-black/20 dark:text-white/20">{(lIdx + 1).toString().padStart(2, '0')}</span>
+                        <span className="text-[#32befa] font-bold">&#10020;</span>
+                        <span className="text-black/80 dark:text-zinc-300 leading-normal">{log}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between text-[8px] uppercase tracking-wider text-black/40 dark:text-zinc-500 pt-2 border-t border-black/5 dark:border-white/5 font-bold">
+                    <span>Memory Cache: {tempQuizzesPool.length} Loaded</span>
+                    <span>Active Leaderboard Status: {leaderboardLoaded ? "Synced (ONLINE)" : "Syncing..."}</span>
+                  </div>
+                </div>
+              )}
             </motion.div>
           </div>
 
@@ -1024,7 +1259,7 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
                disabled={!currentUser || isAnswered || (currentUser.lifelines?.fiftyFifty || 0) <= 0 || hiddenOptions.length > 0}
                className="flex flex-col items-center gap-2 group disabled:opacity-30"
              >
-                <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center text-[#facc15] group-hover:bg-[#facc15]/10 group-hover:border-[#facc15]/20 group-hover:scale-110 transition-all">
+                <div className="w-12 h-12 md:w-14 md:h-14 aspect-square rounded-[33%] bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center text-[#facc15] group-hover:bg-[#facc15]/10 group-hover:border-[#facc15]/20 group-hover:scale-110 transition-all">
                    <Zap size={20} />
                 </div>
                 <div className="flex flex-col items-center">
@@ -1038,7 +1273,7 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
                disabled={!currentUser || isAnswered || (currentUser.lifelines?.audiencePoll || 0) <= 0 || !!pollResults}
                className="flex flex-col items-center gap-2 group disabled:opacity-30"
              >
-                <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center text-green-500 group-hover:bg-green-500/10 group-hover:border-green-500/20 group-hover:scale-110 transition-all">
+                <div className="w-12 h-12 md:w-14 md:h-14 aspect-square rounded-[33%] bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center text-green-500 group-hover:bg-green-500/10 group-hover:border-green-500/20 group-hover:scale-110 transition-all">
                    <Users size={20} />
                 </div>
                 <div className="flex flex-col items-center">
@@ -1052,7 +1287,7 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
                disabled={!currentUser || isAnswered || (currentUser.lifelines?.hint || 0) <= 0 || showHint}
                className="flex flex-col items-center gap-2 group disabled:opacity-30"
              >
-                <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center text-primary group-hover:bg-primary/10 group-hover:border-primary/20 group-hover:scale-110 transition-all">
+                <div className="w-12 h-12 md:w-14 md:h-14 aspect-square rounded-[33%] bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center text-primary group-hover:bg-primary/10 group-hover:border-primary/20 group-hover:scale-110 transition-all">
                    <Lightbulb size={20} />
                 </div>
                 <div className="flex flex-col items-center">
@@ -1066,11 +1301,11 @@ export default function QuizScreen({ onClose, language: initialLanguage = 'en', 
                disabled={!currentUser || isAnswered || (currentUser.lifelines?.changeQuiz || 0) <= 0}
                className="flex flex-col items-center gap-2 group disabled:opacity-30"
              >
-                <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center text-red-500 group-hover:bg-red-500/10 group-hover:border-red-500/20 group-hover:scale-110 transition-all">
+                <div className="w-12 h-12 md:w-14 md:h-14 aspect-square rounded-[33%] bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center text-red-500 group-hover:bg-red-500/10 group-hover:border-red-500/20 group-hover:scale-110 transition-all">
                    <RefreshCw size={20} />
                 </div>
                 <div className="flex flex-col items-center">
-                  <span className="text-[9px] font-black uppercase tracking-tight text-black/40 dark:text-white/40 group-hover:text-red-500">{language === 'en' ? 'Skip' : 'छोड़ें'}</span>
+                  <span className="text-[9px] font-black uppercase tracking-tight text-black/40 dark:text-white/40 group-hover:text-red-500">Skip</span>
                   <span className="text-[7px] font-bold text-black/20 dark:text-white/20">{currentUser?.lifelines?.changeQuiz || 0} left</span>
                 </div>
              </button>

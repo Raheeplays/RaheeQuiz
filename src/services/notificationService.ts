@@ -1,4 +1,6 @@
 import * as jose from 'jose';
+import { ref, push, set } from 'firebase/database';
+import { db } from '../firebase/config';
 
 export interface FCMMessage {
   token?: string;
@@ -81,6 +83,38 @@ export class NotificationService {
           ...message.android
         }
       };
+
+      // Try tracing the notification to RTDB
+      try {
+        let sender = 'game';
+        const actionType = message.data?.action_type;
+        if (actionType === 'friend_request') {
+          sender = 'friend_request_sender';
+        } else if (actionType === 'challenge' || actionType === 'reply_accepted' || actionType === 'reply_rejected') {
+          sender = 'friend';
+        } else if (message.data?.senderName) {
+          sender = message.data.senderName;
+        } else if (message.data?.senderId || message.data?.initiatorId) {
+          sender = `user (${message.data.senderId || message.data.initiatorId})`;
+        } else if (message.notification?.title?.toLowerCase().includes('friend') || message.data?.title?.toLowerCase().includes('friend')) {
+          sender = 'user';
+        }
+
+        const traceRef = ref(db, 'fcmNotificationTrace');
+        const newTrace = push(traceRef);
+        await set(newTrace, {
+          title: message.notification?.title || message.data?.title || "",
+          body: message.notification?.body || message.data?.body || "",
+          image: message.notification?.image || message.data?.image || "",
+          token: message.token || "",
+          topic: message.topic || "",
+          sender: sender,
+          actionType: actionType || "",
+          timestamp: new Date().toISOString()
+        });
+      } catch (traceErr) {
+        console.error('Failed to log notification trace to RTDB:', traceErr);
+      }
 
       const response = await fetch(url, {
         method: 'POST',

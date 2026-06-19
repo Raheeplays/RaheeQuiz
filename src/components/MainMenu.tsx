@@ -5,7 +5,7 @@ import {
   Trophy, Grid, Star, LogOut, Shield, Swords, Zap, RefreshCw, 
   MessageSquare, ChevronRight, Moon, Sun, Coins, HelpCircle, Heart,
   History as HistoryIcon, Clock, X, XCircle, Check, Camera, Upload, Image as ImageIcon, ChevronDown, ChevronUp, Loader2,
-  Gift, Calendar, AlertTriangle, Activity
+  Gift, Calendar, AlertTriangle, Activity, Share2, Copy, Download, QrCode
 } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -46,7 +46,7 @@ const DEFAULT_AVATARS = [
 
 export default function MainMenu() {
   const { currentUser, setCurrentUser, settings, isImpersonating, stopImpersonating } = useUser();
-  const { isDark, setIsDark } = useTheme();
+  const { isDark, setIsDark, layoutTheme } = useTheme();
   const { alert } = useDialog();
   const [activeTab, setActiveTab] = useState<'home' | 'leaderboard' | 'shop' | 'friends' | 'admin' | 'event' | 'tracking'>('home');
   const [showQuiz, setShowQuiz] = useState(false);
@@ -60,6 +60,297 @@ export default function MainMenu() {
   const [showFeedback, setShowFeedback] = useState(false);
   const [showMultiplayerHub, setShowMultiplayerHub] = useState(false);
   const [multiRoomId, setMultiRoomId] = useState<string | null>(null);
+
+  // Automated Game Note modal state
+  const [showGameNote, setShowGameNote] = useState(false);
+  const [gameNoteData, setGameNoteData] = useState<{ title: string; body: string } | null>(null);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const noteRef = ref(db, 'gameNote');
+    const unsubscribe = onValue(noteRef, (snapshot) => {
+      if (!currentUser) return;
+      if (snapshot.exists()) {
+        const val = snapshot.val();
+        if (val.active) {
+          const targetStr = (val.targetUserIds || '').toLowerCase();
+          const usernameLower = (currentUser.username || '').toLowerCase();
+          const userIdLower = (currentUser.id || '').toLowerCase();
+          
+          // Check if user is targeted
+          const isTargeted = !targetStr || 
+                             targetStr === 'all' || 
+                             targetStr.includes(usernameLower) || 
+                             targetStr.includes(userIdLower);
+                             
+          if (isTargeted) {
+            // Check if seen before
+            const noteKey = `${val.title}_${val.body}`;
+            const alreadySeen = localStorage.getItem('seen_game_note') === noteKey;
+            
+            if (!alreadySeen && val.title && val.body) {
+              // Replace placeholder
+              const formattedTitle = val.title
+                .replace(/\{name\}/g, currentUser.name || '')
+                .replace(/\[name\]/g, currentUser.name || '')
+                .replace(/\{username\}/g, currentUser.username || '')
+                .replace(/\[username\]/g, currentUser.username || '');
+                
+              const formattedBody = val.body
+                .replace(/\{name\}/g, currentUser.name || '')
+                .replace(/\[name\]/g, currentUser.name || '')
+                .replace(/\{username\}/g, currentUser.username || '')
+                .replace(/\[username\]/g, currentUser.username || '');
+                
+              setGameNoteData({ title: formattedTitle, body: formattedBody });
+              setShowGameNote(true);
+            }
+          }
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [currentUser]);
+
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareImageUrl, setShareImageUrl] = useState<string>('');
+  const [isGeneratingShare, setIsGeneratingShare] = useState(false);
+  const [shareText, setShareText] = useState('');
+  const [shareRatio, setShareRatio] = useState<'16:9' | '9:16' | '1:1' | '4:3'>('1:1');
+
+  // Sync share ratio with DB settings
+  useEffect(() => {
+    if (settings?.shareImageRatio) {
+      setShareRatio(settings.shareImageRatio as any);
+    }
+  }, [settings?.shareImageRatio]);
+
+  // Regenerate image when ratio or modal triggers
+  useEffect(() => {
+    if (showShareModal && currentUser) {
+      const renderProgressCard = async () => {
+        setIsGeneratingShare(true);
+        const url = await generateProgressImage(shareRatio);
+        setShareImageUrl(url);
+        
+        // Generate nice accompanying sharing text
+        const verificationCode = 'RQ-' + currentUser.id.slice(0, 5).toUpperCase();
+        const text = `🏆 Check out my quiz milestones on Rahee Quiz!\n🔥 Streak: ${currentUser.streak || 0} days | Points: ${currentUser.xp || 0} XP!\n🛡️ Verified Player Code: ${verificationCode}\nJoin now and challenge me as friends!`;
+        setShareText(text);
+        setIsGeneratingShare(false);
+      };
+      renderProgressCard();
+    }
+  }, [showShareModal, shareRatio, currentUser]);
+
+  const generateProgressImage = async (ratio: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx || !currentUser) {
+        resolve('');
+        return;
+      }
+
+      // Determine size
+      let width = 600;
+      let height = 600;
+      if (ratio === '16:9') {
+        width = 800;
+        height = 450;
+      } else if (ratio === '9:16') {
+        width = 450;
+        height = 800;
+      } else if (ratio === '4:3') {
+        width = 600;
+        height = 450;
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+
+      // Draw beautiful premium gradient background
+      const grad = ctx.createLinearGradient(0, 0, width, height);
+      grad.addColorStop(0, '#090d16'); 
+      grad.addColorStop(0.5, '#0d1321'); 
+      grad.addColorStop(1, '#05070a');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, width, height);
+
+      // Add cool radial gradient background glow
+      const glow = ctx.createRadialGradient(width / 2, height / 2, 10, width / 2, height / 2, Math.max(width, height) / 1.2);
+      glow.addColorStop(0, 'rgba(50, 190, 250, 0.18)');
+      glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, width, height);
+
+      // Draw cyber matrix tech grid accents
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.02)';
+      ctx.lineWidth = 1;
+      const gridSize = 40;
+      for (let x = 0; x < width; x += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      for (let y = 0; y < height; y += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+
+      // Border bounds outline
+      ctx.strokeStyle = 'rgba(50, 190, 250, 0.35)';
+      ctx.lineWidth = 6;
+      ctx.strokeRect(10, 10, width - 20, height - 20);
+
+      // App Title Logo styling
+      ctx.fillStyle = '#32befa'; 
+      ctx.font = '900 italic 30px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('RAHEE QUIZ', 36, 58);
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('OFFICIAL DIGITAL SCORECARD & PROGRESS VERIFICATION', 36, 74);
+
+      // Separator stroke
+      ctx.strokeStyle = 'rgba(50, 190, 250, 0.15)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(36, 90);
+      ctx.lineTo(width - 36, 90);
+      ctx.stroke();
+
+      // Set up verification data payload
+      const verificationCode = 'RQ-' + currentUser.id.slice(0, 5).toUpperCase() + '-' + Math.floor(Math.random() * 90000 + 10000);
+      const qrData = `VERIFIED_PLAYER: App=Rahee Quiz | Username=${currentUser.username || currentUser.name} | ID=${currentUser.id} | Code=${verificationCode}`;
+
+      // Initialize QR Code Image from local server wrapper
+      const qrImg = new Image();
+      qrImg.crossOrigin = 'anonymous';
+      qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrData)}`;
+
+      const drawDetailsOnCompletion = () => {
+        // Player Identity Header
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '900 36px sans-serif';
+        ctx.textAlign = 'left';
+        
+        const cardX = 36;
+        const nameY = ratio === '9:16' ? 190 : 150;
+        ctx.fillText(currentUser.name || 'Rank Player', cardX, nameY);
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+        ctx.font = 'bold 14px monospace';
+        ctx.fillText(`@${currentUser.username || 'rahee_player'} (P-ID: ${currentUser.id.slice(0, 10)})`, cardX, nameY + 22);
+
+        // Grid stats drawing
+        const statsY = ratio === '9:16' ? 260 : 210;
+        const spacingX = ratio === '16:9' ? 180 : 150;
+
+        // Block 1: Points / XP
+        ctx.fillStyle = '#32befa';
+        ctx.font = '900 28px sans-serif';
+        ctx.fillText(`${currentUser.xp || 0}`, cardX, statsY);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText('TOTAL POINTS', cardX, statsY + 16);
+
+        // Block 2: Coins
+        ctx.fillStyle = '#eab308';
+        ctx.font = '900 28px sans-serif';
+        ctx.fillText(`${currentUser.raheeCoins || 0}`, cardX + spacingX, statsY);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText('RAHEE COINS', cardX + spacingX, statsY + 16);
+
+        // Block 3: Streak
+        ctx.fillStyle = '#f97316';
+        ctx.font = '900 28px sans-serif';
+        ctx.fillText(`${currentUser.streak || 0} Days`, cardX + spacingX * 2, statsY);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText('DAILY STREAK', cardX + spacingX * 2, statsY + 16);
+
+        // Draw QR Image Code
+        const qrSize = ratio === '9:16' ? 180 : 140;
+        const qrX = ratio === '9:16' ? (width - qrSize) / 2 : width - qrSize - 36;
+        const qrY = ratio === '9:16' ? height - qrSize - 130 : height - qrSize - 45;
+
+        // Solid background white wrap to draw QR code clearly
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(qrX - 8, qrY - 8, qrSize + 16, qrSize + 16);
+        try {
+          ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
+        } catch (e) {
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(qrX, qrY, qrSize, qrSize);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 12px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('SCAN SECURE', qrX + qrSize/2, qrY + qrSize/2);
+        }
+
+        // Subtext under QR
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+        ctx.font = 'bold italic 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('SCAN SECURE SCAN', qrX + qrSize / 2, qrY + qrSize + 22);
+
+        // Draw Metadata string label at the bottom
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+        ctx.font = '700 8.5px monospace';
+        ctx.textAlign = 'left';
+        
+        const footerText = `VERIFIED METADATA: APP=Rahee Quiz | USER=@${currentUser.username || 'rahee_player'} | ID=${currentUser.id} | CODE=${verificationCode} | RTDB-SIGNATURE`;
+        const footerY = height - 24;
+        ctx.fillText(footerText, 36, footerY);
+
+        resolve(canvas.toDataURL('image/png'));
+      };
+
+      qrImg.onload = () => {
+        drawDetailsOnCompletion();
+      };
+      qrImg.onerror = () => {
+        drawDetailsOnCompletion();
+      };
+    });
+  };
+
+  const handleShareToSocials = async () => {
+    if (!shareImageUrl) return;
+    try {
+      if (navigator.share) {
+        const response = await fetch(shareImageUrl);
+        const blob = await response.blob();
+        const file = new File([blob], 'rahee-progress.png', { type: 'image/png' });
+        
+        await navigator.share({
+          title: 'Rahee Quiz Performance Verified',
+          text: shareText,
+          files: [file]
+        });
+      } else {
+        await navigator.clipboard.writeText(shareText);
+        alert({
+          title: 'Text Copied!',
+          description: 'Accompanying text copied to clipboard! You can paste it when sharing.',
+          type: 'success'
+        });
+        
+        const link = document.createElement('a');
+        link.download = `rahee-quiz-progress-${currentUser?.id.slice(0, 5)}.png`;
+        link.href = shareImageUrl;
+        link.click();
+      }
+    } catch (e) {
+      console.error('Sharing failed:', e);
+    }
+  };
   const [selectedTopicIds, setSelectedTopicIds] = useState<string[]>([]);
   const [isBotMatch, setIsBotMatch] = useState(false);
   const [isMatchMinimized, setIsMatchMinimized] = useState(false);
@@ -394,11 +685,7 @@ export default function MainMenu() {
     }
   }, [isImpersonating]);
 
-  useEffect(() => {
-    if (showQuiz && currentUser) {
-      logAdminNotification('play', currentUser.name || currentUser.username || 'Player', 'Solo Quiz Game');
-    }
-  }, [showQuiz, currentUser?.id]);
+
 
   // Automatically redirect to active match if one exists in status 'accepted' or 'playing'
   useEffect(() => {
@@ -487,7 +774,8 @@ export default function MainMenu() {
         selectedTopicIds: targetIds,
         selectedTopicId: targetIds[0],
         currentQuizIndex: 0,
-        currentRound: 1
+        currentRound: 1,
+        currentRoundQuizzes: null
       });
       setSelectedTopicIds([]);
       setShowTopicSelect(false);
@@ -526,7 +814,8 @@ export default function MainMenu() {
         selectedTopicId: topicId,
         currentQuizIndex: 0,
         currentRound: 1,
-        extraTriesAllowed: false
+        extraTriesAllowed: false,
+        currentRoundQuizzes: null
       });
       setShowHistory(false);
       setShowQuiz(true);
@@ -937,7 +1226,12 @@ export default function MainMenu() {
            initial={{ scale: 0.9, y: 20, opacity: 0 }} 
            animate={{ scale: 1, y: 0, opacity: 1 }} 
            exit={{ scale: 0.9, y: 20, opacity: 0 }}
-           className="relative bg-white dark:bg-[#0c0c0c] w-full max-w-md rounded-[3rem] border border-black/5 dark:border-white/10 p-6 md:p-8 text-center my-auto transition-all shadow-2xl overflow-hidden"
+           className={cn(
+              "relative w-full max-w-md rounded-[3rem] border p-6 md:p-8 text-center my-auto transition-all shadow-2xl overflow-hidden",
+              (layoutTheme === 'glass' || layoutTheme === 'rahee-edition')
+                ? "bg-white/10 dark:bg-black/40 backdrop-blur-xl border-white/20 dark:border-white/10 shadow-purple-500/10 text-white"
+                : "bg-white dark:bg-[#0c0c0c] border-black/5 dark:border-white/10"
+            )}
          >
             {/* Close Button */}
             <button 
@@ -952,7 +1246,7 @@ export default function MainMenu() {
                <div className="w-14 h-14 bg-purple-500/10 dark:bg-purple-500/20 text-purple-500 rounded-[1.5rem] flex items-center justify-center mx-auto mb-2 animate-bounce">
                   <Gift size={28} />
                </div>
-               <h3 className="text-2xl font-black text-black dark:text-white uppercase tracking-tighter">Rewards center</h3>
+               <h3 className={cn("text-2xl font-black uppercase tracking-tighter", (layoutTheme === 'glass' || layoutTheme === 'rahee-edition') ? "text-white" : "text-black dark:text-white")}>Rewards center</h3>
                <p className="text-black/40 dark:text-white/40 font-bold text-[9px] uppercase tracking-widest leading-none">
                   Get free coins, booster hearts, and lifelines!
                </p>
@@ -1030,10 +1324,14 @@ export default function MainMenu() {
                            className={cn(
                               "relative p-3 rounded-2xl flex flex-col items-center justify-center border transition-all text-center group/card",
                               isClaimed 
-                                 ? "bg-black/5 dark:bg-white/5 border-transparent opacity-45 line-through"
+                                 ? (layoutTheme === 'glass' || layoutTheme === 'rahee-edition')
+                                    ? "bg-white/[0.02] border-white/5 text-white/30 opacity-45 line-through"
+                                    : "bg-black/5 dark:bg-white/5 border-transparent opacity-45 line-through"
                                  : isCurrent
-                                    ? "bg-purple-500/10 border-purple-500/40 text-purple-500 shadow-md scale-105"
-                                    : "bg-black/5 dark:bg-white/5 border-transparent text-black dark:text-white"
+                                    ? "bg-purple-500/20 border-purple-500/40 text-purple-300 shadow-md scale-105"
+                                    : (layoutTheme === 'glass' || layoutTheme === 'rahee-edition')
+                                       ? "bg-white/5 border-white/10 text-white hover:bg-white/10"
+                                       : "bg-black/5 dark:bg-white/5 border-transparent text-black dark:text-white"
                            )}
                          >
                             {isClaimed && (
@@ -1075,10 +1373,14 @@ export default function MainMenu() {
                            className={cn(
                               "col-span-3 relative p-3 rounded-[1.8rem] flex items-center justify-between border transition-all text-left",
                               isClaimed 
-                                 ? "bg-black/5 dark:bg-white/5 border-transparent opacity-45 line-through"
+                                 ? (layoutTheme === 'glass' || layoutTheme === 'rahee-edition')
+                                    ? "bg-white/[0.02] border-white/5 text-white/30 opacity-45 line-through"
+                                    : "bg-black/5 dark:bg-white/5 border-transparent opacity-45 line-through"
                                  : isCurrent
-                                    ? "bg-gradient-to-r from-yellow-500/10 to-purple-500/10 border-purple-400 text-purple-500 shadow-lg scale-[1.02]"
-                                    : "bg-black/5 dark:bg-white/5 border-transparent text-black dark:text-white"
+                                    ? "bg-gradient-to-r from-yellow-500/20 to-purple-500/20 border-purple-400 text-purple-300 shadow-lg scale-[1.02]"
+                                    : (layoutTheme === 'glass' || layoutTheme === 'rahee-edition')
+                                       ? "bg-white/5 border-white/10 text-white hover:bg-white/10"
+                                       : "bg-black/5 dark:bg-white/5 border-transparent text-black dark:text-white"
                            )}
                          >
                             <div className="flex items-center gap-3">
@@ -1257,8 +1559,12 @@ export default function MainMenu() {
                           className={cn(
                             "p-3 rounded-2xl flex flex-col justify-between border text-left relative overflow-hidden transition-all",
                             isClaimed
-                              ? "bg-black/5 dark:bg-white/5 border-transparent opacity-40 line-through"
-                              : "bg-black/5 dark:bg-white/5 border-black/5 dark:border-white/5 hover:border-purple-500/50 hover:scale-[1.01] cursor-pointer"
+                              ? (layoutTheme === 'glass' || layoutTheme === 'rahee-edition')
+                                 ? "bg-white/[0.02] border-white/5 text-white/30 opacity-40 line-through"
+                                 : "bg-black/5 dark:bg-white/5 border-transparent opacity-40 line-through"
+                              : (layoutTheme === 'glass' || layoutTheme === 'rahee-edition')
+                                 ? "bg-white/5 border-white/10 text-white hover:border-purple-500/50 hover:scale-[1.01] cursor-pointer"
+                                 : "bg-black/5 dark:bg-white/5 border-black/5 dark:border-white/5 hover:border-purple-500/50 hover:scale-[1.01] cursor-pointer"
                           )}
                           onClick={() => !isClaimed && startWatchAd(tierNum)}
                         >
@@ -1474,10 +1780,19 @@ export default function MainMenu() {
             )}
             <button 
               onClick={(e) => { e.stopPropagation(); setActiveTab('shop'); }}
-              className="flex items-center gap-2 px-3 h-10 bg-black/5 dark:bg-[#1a1a1a] rounded-xl border border-black/5 dark:border-white/5 shrink-0"
+              className="flex items-center gap-2.5 px-3 h-10 bg-black/5 dark:bg-[#1a1a1a] rounded-xl border border-black/5 dark:border-white/5 shrink-0"
             >
-               <Coins size={14} className="text-primary italic" />
-               <span className="text-sm font-black text-primary">{currentUser?.raheeCoins || 0}</span>
+               <div className="flex items-center gap-1">
+                  <Coins size={14} className="text-[#32befa] italic" />
+                  <span className="text-[9px] font-black text-[#32befa]/50 uppercase font-mono">Rahee Coins</span>
+                  <span className="text-sm font-black text-[#32befa]">{currentUser?.raheeCoins || 0}</span>
+               </div>
+               <div className="w-[1px] h-3 bg-black/10 dark:bg-white/10" />
+               <div className="flex items-center gap-1">
+                  <Coins size={14} className="text-yellow-500 italic animate-pulse" />
+                  <span className="text-[9px] font-black text-yellow-500/50 uppercase font-mono">Quiz Coins</span>
+                  <span className="text-sm font-black text-yellow-500">{currentUser?.quizCoins || 0}</span>
+               </div>
             </button>
             <button 
               onClick={(e) => { e.stopPropagation(); setShowHistory(true); }}
@@ -1753,9 +2068,19 @@ export default function MainMenu() {
              />
              <motion.div 
                initial={{ scale: 0.9, y: 20, opacity: 0 }} animate={{ scale: 1, y: 0, opacity: 1 }} exit={{ scale: 0.9, y: 20, opacity: 0 }}
-               className="relative bg-white dark:bg-[#050505] w-full max-w-sm rounded-[3rem] overflow-hidden border border-black/5 dark:border-white/5 mb-20"
+               className={cn(
+                 "relative w-full max-w-sm rounded-[3rem] overflow-hidden border mb-20",
+                 (layoutTheme === 'glass' || layoutTheme === 'rahee-edition')
+                   ? "bg-white/10 dark:bg-black/40 backdrop-blur-xl border-white/20 dark:border-white/10 shadow-2xl text-white" 
+                   : "bg-white dark:bg-[#050505] border-black/5 dark:border-white/5"
+               )}
              >
-                 <div className="bg-primary p-8 pt-12 text-black relative">
+                 <div className={cn(
+                    "p-8 pt-12 relative text-black",
+                    (layoutTheme === 'glass' || layoutTheme === 'rahee-edition') 
+                      ? "bg-gradient-to-b from-primary/30 to-transparent dark:from-primary/20 backdrop-blur-md text-white border-b border-white/10" 
+                      : "bg-primary"
+                  )}>
                     <button 
                       onClick={() => setShowRaheePass(false)}
                       className="absolute top-6 right-6 p-2 bg-black/10 rounded-full hover:bg-black/20 transition-all active:scale-90"
@@ -1763,16 +2088,16 @@ export default function MainMenu() {
                       <X size={20} />
                     </button>
                     <div className="space-y-1 mb-8">
-                       <h2 className="text-black font-black text-4xl uppercase tracking-tighter leading-none">{t.raheePass}</h2>
-                       <p className="text-black/60 font-black text-sm uppercase tracking-widest">{currentUser?.name}</p>
+                       <h2 className={cn("font-black text-4xl uppercase tracking-tighter leading-none", (layoutTheme === 'glass' || layoutTheme === 'rahee-edition') ? "text-white drop-shadow-md text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-white to-pink-300" : "text-black")}>{t.raheePass}</h2>
+                       <p className={cn("font-black text-sm uppercase tracking-widest", (layoutTheme === 'glass' || layoutTheme === 'rahee-edition') ? "text-white/60" : "text-black/60")}>{currentUser?.name}</p>
                     </div>
-                    <div className="bg-white dark:bg-black p-6 rounded-3xl shadow-xl border border-black/5 dark:border-white/5">
+                    <div className={cn("p-6 rounded-3xl shadow-xl border", (layoutTheme === 'glass' || layoutTheme === 'rahee-edition') ? "bg-white/10 dark:bg-black/40 border-white/10" : "bg-white dark:bg-black border-black/5 dark:border-white/5")}>
                        <div className="flex justify-between items-center mb-1">
                           <span className="text-black/40 dark:text-white/40 text-[8px] font-black uppercase tracking-widest">Total XP</span>
                           <div className="bg-yellow-500 text-black px-2 py-0.5 rounded text-[8px] font-black uppercase">Active</div>
                        </div>
                        <div className="flex items-baseline gap-2">
-                          <span className="text-5xl font-black text-black dark:text-white">{currentUser?.xp}</span>
+                          <span className={cn("text-5xl font-black", (layoutTheme === 'glass' || layoutTheme === 'rahee-edition') ? "text-white drop-shadow" : "text-black dark:text-white")}>{currentUser?.xp}</span>
                        </div>
                     </div>
                  </div>
@@ -1895,11 +2220,7 @@ export default function MainMenu() {
                                             Remove
                                          </button>
                                       )}
-                                      <label className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-primary cursor-pointer hover:underline transition-all">
-                                         <Upload size={14} />
-                                         Upload Custom
-                                         <input type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
-                                      </label>
+
                                    </div>
                                 </div>
                                 <div className="grid grid-cols-4 gap-3">
@@ -1931,9 +2252,10 @@ export default function MainMenu() {
                        <p className="text-black/30 dark:text-white/30 text-[8px] font-black uppercase tracking-widest mb-1">Rank</p>
                        <p className="text-xl font-black text-black dark:text-white">#{getUserRank(currentUser?.id || '')}</p>
                     </div>
-                    <div className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl text-center border border-black/5 dark:border-white/5">
-                       <p className="text-black/30 dark:text-white/30 text-[8px] font-black uppercase tracking-widest mb-1">Coins</p>
-                       <p className="text-xl font-black text-yellow-500">{currentUser?.raheeCoins || 0}</p>
+                    <div className="bg-black/5 dark:bg-white/5 p-4 rounded-3xl text-center border border-black/5 dark:border-white/5 flex flex-col justify-center min-h-[5.5rem]">
+                       <p className="text-black/30 dark:text-white/30 text-[8px] font-black uppercase tracking-widest mb-1">Balance</p>
+                       <p className="text-xs font-black text-[#32befa] leading-none mb-1.5">{currentUser?.raheeCoins || 0} Rahee Coins</p>
+                       <p className="text-xs font-black text-yellow-500 leading-none">{currentUser?.quizCoins || 0} Quiz Coins</p>
                     </div>
                  </div>
 
@@ -2206,6 +2528,180 @@ export default function MainMenu() {
           />
         )}
         {showFeedback && <Feedback onClose={() => setShowFeedback(false)} />}
+
+        {/* Customizable Player Appreciation / One-Time Game Note Modal */}
+        {showGameNote && gameNoteData && (
+          <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 180 }}
+              className="w-full max-w-lg bg-white dark:bg-[#0c0f16] border border-primary/20 dark:border-primary/25 rounded-[2.5rem] shadow-[0_0_50px_rgba(50,190,250,0.15)] overflow-hidden flex flex-col p-8 text-center relative"
+            >
+              {/* Top Right Close Cross Icon */}
+              <button
+                onClick={() => {
+                  if (gameNoteData) {
+                    const noteKey = `${gameNoteData.title}_${gameNoteData.body}`;
+                    localStorage.setItem('seen_game_note', noteKey);
+                    setShowGameNote(false);
+                  }
+                }}
+                className="absolute top-6 right-6 p-2 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-black/50 dark:text-gray-400 rounded-full transition-all cursor-pointer border border-black/10 dark:border-white/10 flex items-center justify-center"
+                title="Close"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="w-20 h-20 bg-primary/10 text-primary border border-primary/20 rounded-full flex items-center justify-center mx-auto mb-6 relative">
+                <Heart size={36} className="text-primary animate-pulse" fill="currentColor" />
+              </div>
+
+              {currentUser && (
+                <div id="game-note-recipient-badge" className="inline-flex items-center gap-1.5 bg-primary/10 border border-primary/20 px-4 py-1.5 rounded-full text-xs font-black text-primary mx-auto mb-4 tracking-wider uppercase font-mono">
+                  Message to: {currentUser.name || currentUser.username}
+                </div>
+              )}
+
+              <h2 className="text-2xl md:text-3xl font-black uppercase tracking-tight text-black dark:text-white mb-4 leading-tight">
+                {gameNoteData.title}
+              </h2>
+
+              <p className="text-sm md:text-base text-black/70 dark:text-gray-350 leading-relaxed font-semibold font-sans mb-3 select-none whitespace-pre-line">
+                {gameNoteData.body}
+              </p>
+            </motion.div>
+          </div>
+        )}
+
+        {showShareModal && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm overflow-y-auto">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="w-full max-w-lg bg-white dark:bg-[#111] border border-black/10 dark:border-white/10 rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col"
+            >
+              <div className="p-6 border-b border-black/5 dark:border-white/5 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                    <QrCode size={18} />
+                   </div>
+                   <div>
+                     <h3 className="font-black text-black dark:text-white uppercase tracking-tighter italic">Share Progress</h3>
+                     <p className="text-[9px] text-black/40 dark:text-white/40 font-bold uppercase tracking-widest font-mono">Verified Rahee Quiz Record</p>
+                   </div>
+                </div>
+                <button
+                  onClick={() => setShowShareModal(false)}
+                  className="p-1.5 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-black/50 dark:text-white/60 rounded-full transition-all"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-6 flex-1 overflow-y-auto max-h-[70vh]">
+                {/* Visual Card Preview */}
+                <div className="flex flex-col items-center justify-center bg-black/5 dark:bg-[#090d16] p-4 rounded-3xl border border-black/5 dark:border-white/5 relative min-h-[300px]">
+                  {isGeneratingShare ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <Loader2 className="animate-spin text-primary" size={24} />
+                      <span className="text-[10px] font-black uppercase tracking-widest text-primary font-mono">Generating Card...</span>
+                    </div>
+                  ) : shareImageUrl ? (
+                    <img 
+                      src={shareImageUrl} 
+                      alt="Share Progress" 
+                      className={cn(
+                        "rounded-2xl shadow-lg border border-white/10 max-h-[320px] object-contain",
+                        shareRatio === '9:16' ? 'aspect-[9/16]' :
+                        shareRatio === '16:9' ? 'aspect-[16/9]' :
+                        shareRatio === '4:3' ? 'aspect-[4/3]' : 'aspect-square'
+                      )}
+                    />
+                  ) : (
+                    <p className="text-xs font-bold text-black/40 dark:text-white/40">Failed to render card preview.</p>
+                  )}
+                </div>
+
+                {/* Ratio Selection Overrides */}
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-black/40 dark:text-white/40 mb-2 block font-mono">Aspect Ratio overrides</label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {(['1a:1', '16a:9', '9a:16', '4a:3'] as any[]).map((temp) => {
+                      const displayRatio = temp.replace('a', '');
+                      const actualRatio = temp.replace('a', ':');
+                      return (
+                        <button
+                          key={actualRatio}
+                          onClick={() => setShareRatio(actualRatio as any)}
+                          className={cn(
+                            "py-2 text-[10px] font-black uppercase tracking-widest rounded-xl border transition-all active:scale-95",
+                            shareRatio === actualRatio 
+                              ? "bg-primary text-black border-transparent shadow-lg shadow-primary/10" 
+                              : "bg-black/5 dark:bg-white/5 text-black/60 dark:text-white/60 border-black/5 dark:border-white/5 hover:border-primary/20"
+                          )}
+                        >
+                          {displayRatio}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Copy Text Input */}
+                <div className="space-y-1.5 text-left">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-black/40 dark:text-white/40 block font-mono">Share Text Caption</label>
+                  <div className="flex gap-2">
+                    <textarea
+                      readOnly
+                      value={shareText}
+                      className="flex-1 p-3 bg-black/5 dark:bg-zinc-900/50 border border-black/5 dark:border-white/5 rounded-2xl text-xs text-black/70 dark:text-white/70 font-sans focus:outline-none focus:ring-1 focus:ring-primary h-20 resize-none"
+                    />
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(shareText);
+                        alert({
+                          title: 'Caption Copied!',
+                          description: 'Text caption has been copied to your clipboard.',
+                          type: 'success'
+                        });
+                      }}
+                      className="px-3 bg-black/5 dark:bg-[#1a1a1a] hover:bg-black/10 dark:hover:bg-white/5 border border-black/5 dark:border-white/5 rounded-2xl flex items-center justify-center shrink-0 text-black/50 dark:text-white/50 hover:text-primary transition-colors active:scale-95"
+                      title="Copy Caption Only"
+                    >
+                      <Copy size={16} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Footer */}
+              <div className="p-6 border-t border-black/5 dark:border-white/5 grid grid-cols-2 gap-3 bg-black/[0.01]">
+                <button
+                  disabled={isGeneratingShare || !shareImageUrl}
+                  onClick={() => {
+                    const link = document.createElement('a');
+                    link.download = `rahee-quiz-progress-${currentUser?.id.slice(0, 5)}.png`;
+                    link.href = shareImageUrl;
+                    link.click();
+                  }}
+                  className="py-4 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-black dark:text-white font-black text-xs uppercase tracking-widest rounded-2xl transition-all border border-black/5 dark:border-white/5 active:scale-95 flex items-center justify-center gap-2"
+                >
+                  <Download size={14} />
+                  Download PNG
+                </button>
+                <button
+                  disabled={isGeneratingShare || !shareImageUrl}
+                  onClick={handleShareToSocials}
+                  className="py-4 bg-primary text-black font-black text-xs uppercase tracking-widest rounded-2xl hover:bg-opacity-95 active:scale-95 transition-all shadow-lg shadow-primary/10 flex items-center justify-center gap-2"
+                >
+                  <Share2 size={14} />
+                  Share Card
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
         
         {/* Lives Refill Modal */}
         <AnimatePresence>
@@ -2449,7 +2945,13 @@ export default function MainMenu() {
             onPlayAgain={(topicId) => {
               checkGameStart(() => {
                 setShowHistory(false);
-                const updates: any = { selectedTopicIds: [topicId] };
+                const updates: any = { 
+                  selectedTopicIds: [topicId],
+                  selectedTopicId: topicId,
+                  currentQuizIndex: 0,
+                  currentRound: 1,
+                  currentRoundQuizzes: null
+                };
                 if (currentUser?.extraTriesAllowed) {
                   updates.extraTriesAllowed = false;
                 }
@@ -2464,12 +2966,30 @@ export default function MainMenu() {
             onClose={() => setShowMultiplayerHub(false)} 
             allUsers={allUsers}
             onStartMatch={(roomId, isBot) => {
-              checkGameStart(() => {
+              checkGameStart(async () => {
                 setMultiRoomId(roomId);
                 setIsBotMatch(isBot);
                 setShowMultiplayerHub(false);
                 if (currentUser) {
-                  logAdminNotification('play', currentUser.name || currentUser.username || 'Player', 'Multiplayer Match');
+                  let topicName = 'General';
+                  try {
+                    const matchSnap = await get(ref(db, `matches/${roomId}`));
+                    if (matchSnap.exists()) {
+                      const mData = matchSnap.val();
+                      const tId = mData.topicId || 'general';
+                      if (tId !== 'general') {
+                        const tSnap = await get(ref(db, `topics/${tId}`));
+                        if (tSnap.exists()) {
+                          topicName = tSnap.val().name || tId;
+                        } else {
+                          topicName = tId;
+                        }
+                      }
+                    }
+                  } catch (e) {
+                    console.error("Error reading match topic:", e);
+                  }
+                  logAdminNotification('play', currentUser.name || currentUser.username || 'Player', `${topicName} in multiplayermode`);
                 }
               });
             }}

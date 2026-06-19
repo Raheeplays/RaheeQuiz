@@ -148,6 +148,25 @@ export default function NotificationManager() {
     return () => unsubscribe();
   }, [currentUser?.id]);
 
+  const [liveAlerts, setLiveAlerts] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const alertRef = ref(db, `users/${currentUser.id}/liveAlerts`);
+    const unsubscribe = onValue(alertRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const pending = Object.entries(data)
+          .map(([id, val]: [string, any]) => ({ id, ...val }))
+          .sort((a, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
+        setLiveAlerts(pending);
+      } else {
+        setLiveAlerts([]);
+      }
+    });
+    return () => unsubscribe();
+  }, [currentUser?.id]);
+
   useEffect(() => {
     if (challengeReplies.length > 0 && !activeReply) {
       const next = challengeReplies.find(r => r.status === 'rejected' || !postponedReplies[r.id]);
@@ -1060,7 +1079,7 @@ export default function NotificationManager() {
         )}
       </AnimatePresence>
 
-      {/* Floating Action Badge for Postponed Match / Challenge */}
+       {/* Floating Action Badge for Postponed Match / Challenge */}
       <AnimatePresence>
         {(challengeReplies.find(r => r.status === 'accepted' && postponedReplies[r.id]) || (acceptedMatch && postponedAcceptedMatches[acceptedMatch.id])) && (
           (() => {
@@ -1103,7 +1122,7 @@ export default function NotificationManager() {
                         onClick={async () => {
                           const verified = await confirm({
                             title: 'Cancel Match?',
-                            description: `Are you sure you want to cancel the match challenge with ${opponentName}?`,
+                            description: `Are you sure you want to cancel the match challenge with {opponentName}?`,
                             type: 'error'
                           });
                           if (!verified) return;
@@ -1131,6 +1150,42 @@ export default function NotificationManager() {
               </motion.div>
             );
           })()
+        )}
+      </AnimatePresence>
+
+      {/* Live Active Multiplayer Battle Alerts (In-game notification style) */}
+      <AnimatePresence>
+        {liveAlerts.length > 0 && (
+          <motion.div
+            initial={{ y: -100, x: "-50%", opacity: 0 }}
+            animate={{ y: 0, x: "-50%", opacity: 1 }}
+            exit={{ y: -100, x: "-50%", opacity: 0 }}
+            className="fixed top-24 left-1/2 z-[300] w-[90%] max-w-sm"
+          >
+            <div className="bg-gradient-to-r from-primary to-black p-[2px] rounded-3xl shadow-[0_0_30px_rgba(251,191,36,0.3)]">
+              <div className="bg-[#0c0c0c] p-4 rounded-[1.7rem] flex items-center gap-4">
+                <div className="w-10 h-10 bg-primary/10 rounded-2xl flex items-center justify-center text-primary relative animate-pulse border border-primary/20 shrink-0">
+                  <Swords size={20} />
+                </div>
+                <div className="text-left flex-1 min-w-0">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-primary">{liveAlerts[0].title || 'Battle Alert!'}</p>
+                  <p className="text-xs font-bold text-white leading-normal">
+                    {liveAlerts[0].body}
+                  </p>
+                </div>
+                <button
+                  onClick={async () => {
+                    if (currentUser) {
+                      await remove(ref(db, `users/${currentUser.id}/liveAlerts/${liveAlerts[0].id}`));
+                    }
+                  }}
+                  className="p-1.5 rounded-full hover:bg-white/10 text-white/50 hover:text-white transition-colors shrink-0"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </>

@@ -13,6 +13,8 @@ interface ThemeContextType {
   activeSkin: keyof typeof SKINS;
   customization: Settings['customization'] | undefined;
   lastThemeChangedAt: number | null;
+  layoutTheme: 'classic' | 'glass' | 'rahee-edition';
+  setLayoutTheme: (theme: 'classic' | 'glass' | 'rahee-edition') => void;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
@@ -46,6 +48,28 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   });
   
   const [activeSkin, setActiveSkin] = useState<keyof typeof SKINS>('rahee');
+
+  const [layoutTheme, setLayoutThemeState] = useState<'classic' | 'glass' | 'rahee-edition'>(() => {
+    const saved = localStorage.getItem('rahee_layout_theme');
+    if (saved === 'cosmic' || saved === 'glass') return 'glass';
+    if (saved === 'rahee-edition') return 'rahee-edition';
+    return 'classic';
+  });
+
+  const setLayoutTheme = (theme: 'classic' | 'glass' | 'rahee-edition') => {
+    setLayoutThemeState(theme);
+    localStorage.setItem('rahee_layout_theme', theme);
+  };
+
+  useEffect(() => {
+    // Remove any previous theme layout classes from DOM
+    document.documentElement.classList.remove('theme-layout-classic', 'theme-layout-cyberpunk', 'theme-layout-warm', 'theme-layout-cosmic', 'theme-layout-glass', 'theme-layout-rahee-edition');
+    document.body.classList.remove('theme-layout-classic', 'theme-layout-cyberpunk', 'theme-layout-warm', 'theme-layout-cosmic', 'theme-layout-glass', 'theme-layout-rahee-edition');
+
+    // Add selected layout theme class
+    document.documentElement.classList.add(`theme-layout-${layoutTheme}`);
+    document.body.classList.add(`theme-layout-${layoutTheme}`);
+  }, [layoutTheme]);
 
   useEffect(() => {
     const custRef = ref(db, 'settings/customization');
@@ -89,12 +113,21 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   // Inject CSS variables for the skin + customization overrides
   useEffect(() => {
     const skin = SKINS[activeSkin] || SKINS['rahee'];
-    const p = customization?.primaryColor || skin.primary;
-    const a = customization?.accentColor || skin.accent;
+    let p = customization?.primaryColor || skin.primary;
+    let a = customization?.accentColor || skin.accent;
     
+    // Theme-wise layout dynamic color override defaults
+    if (layoutTheme === 'glass') {
+      p = '#8b5cf6';
+      a = '#ec4899';
+    } else if (layoutTheme === 'rahee-edition') {
+      p = '#02f2ff';
+      a = '#ff00a0';
+    }
+
     document.documentElement.style.setProperty('--primary-color', p);
     document.documentElement.style.setProperty('--accent-color', a);
-  }, [activeSkin, customization]);
+  }, [activeSkin, customization, layoutTheme]);
 
   return (
     <ThemeContext.Provider value={{ 
@@ -106,9 +139,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       setVibrationEnabled, 
       activeSkin,
       customization,
-      lastThemeChangedAt
+      lastThemeChangedAt,
+      layoutTheme,
+      setLayoutTheme
     }}>
-      <div className={activeSkin}>
+      <div className={`${activeSkin} theme-layout-${layoutTheme} min-h-screen flex flex-col`}>
         {children}
       </div>
     </ThemeContext.Provider>

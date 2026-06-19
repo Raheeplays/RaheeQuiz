@@ -11,7 +11,7 @@ import { logAdminNotification } from '../activityService';
 
 export default function Auth() {
   const { setCurrentUser, login } = useUser();
-  const [isLogin, setIsLogin] = useState(true);
+  const [isLogin, setIsLogin] = useState(false);
   const [name, setName] = useState('');
   const [usernameInput, setUsernameInput] = useState('');
   const [emailInput, setEmailInput] = useState('');
@@ -21,13 +21,33 @@ export default function Auth() {
   const [loading, setLoading] = useState(false);
   const [showOtp, setShowOtp] = useState(false);
   const [otpInput, setOtpInput] = useState('');
+  const [otpTimeLeft, setOtpTimeLeft] = useState(16);
   const [tempUserMatch, setTempUserMatch] = useState<{ uid: string, user: User } | null>(null);
+
+  React.useEffect(() => {
+    if (!showOtp) {
+      setOtpTimeLeft(16);
+      return;
+    }
+    if (otpTimeLeft <= 0) return;
+
+    const timer = setTimeout(() => {
+      setOtpTimeLeft(prev => prev - 1);
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [showOtp, otpTimeLeft]);
+
   const lang = 'en'; 
   const t = translations[lang];
 
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tempUserMatch) return;
+    if (otpTimeLeft <= 0) {
+      setError('Time expired! Please refresh the page to try again.');
+      return;
+    }
     
     if (otpInput === '181855') {
       setError('');
@@ -192,25 +212,24 @@ export default function Auth() {
           const usersRef = ref(db, 'users');
           const snapshot = await get(usersRef);
           
+          let finalUsername = cleanUsername;
+          let fbUid = cleanUsername;
+          
           if (snapshot.exists()) {
             const usersData = snapshot.val();
-            const inputNameLower = name.trim().toLowerCase();
-            for (const uid of Object.keys(usersData)) {
-              const u = usersData[uid];
-              if (
-                (u.username && u.username.toLowerCase() === cleanUsername) ||
-                (u.name && u.name.toLowerCase() === inputNameLower)
-              ) {
-                setError('Name / Username already taken. Choose another.');
-                setLoading(false);
-                return;
-              }
+            let suffix = 1;
+            while (
+              Object.keys(usersData).some(uid => uid.toLowerCase() === fbUid.toLowerCase()) ||
+              Object.values(usersData).some((u: any) => u.username?.toLowerCase() === finalUsername.toLowerCase())
+            ) {
+              finalUsername = `${cleanUsername}_${suffix}`;
+              fbUid = `${cleanUsername}_${suffix}`;
+              suffix++;
             }
           }
 
-          const fbUid = `user_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-          const email = `${cleanUsername}@Rahee.in`;
-          await completeSignup(fbUid, email, cleanUsername);
+          const email = `${finalUsername}@Rahee.in`;
+          await completeSignup(fbUid, email, finalUsername);
         } catch (err: any) {
           setError('Signup failed: ' + err.message);
         }
@@ -248,7 +267,8 @@ export default function Auth() {
         'audiencePoll': 1,
         'hint': 1
       },
-      scores: {}
+      scores: {},
+      createdAt: Date.now()
     };
 
     await set(ref(db, `users/${fbUid}`), newUser);
@@ -284,18 +304,40 @@ export default function Auth() {
             <form onSubmit={handleVerifyOtp} className="space-y-6">
               <div className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-white/40 uppercase mb-2 ml-1 text-center">
-                    Enter Admin OTP Verification Code
-                  </label>
+                  <div className="flex justify-center items-center mb-4 mx-1">
+                    <label className="block text-xs font-bold text-white/40 uppercase tracking-wider">
+                      Enter Admin OTP Verification Code
+                    </label>
+                  </div>
                   <input
                     type="password"
                     maxLength={6}
                     value={otpInput}
                     onChange={(e) => setOtpInput(e.target.value)}
-                    className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white text-center text-3xl tracking-[0.5em] focus:border-primary outline-none transition-all font-black font-mono"
-                    placeholder="000000"
+                    disabled={otpTimeLeft <= 0}
+                    className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white text-center text-3xl tracking-[0.5em] focus:border-primary outline-none transition-all font-black font-mono disabled:opacity-50"
+                    placeholder="OTP"
                   />
-                  <p className="text-[9px] font-bold text-white/20 uppercase tracking-widest text-center mt-3">Enter the 6-digit administrative safety security PIN (OTP)</p>
+                  
+                  {/* Styled central button timer */}
+                  <div className="flex justify-center mt-5">
+                    <div className={`px-5 py-2.5 rounded-full border text-[11px] font-black uppercase tracking-widest flex items-center gap-2 select-none font-mono transition-all ${
+                      otpTimeLeft <= 5 
+                        ? 'bg-red-500/15 border-red-500/30 text-red-500 animate-pulse' 
+                        : 'bg-primary/10 border-primary/25 text-primary shadow-lg shadow-primary/5'
+                    }`}>
+                      <span className={`w-2 h-2 rounded-full ${otpTimeLeft <= 5 ? 'bg-red-500' : 'bg-primary'} animate-pulse`} />
+                      Timer: {otpTimeLeft > 0 ? `${otpTimeLeft} Sec` : 'Expired'}
+                    </div>
+                  </div>
+
+                  {otpTimeLeft <= 0 ? (
+                    <div className="text-red-500 text-[10px] font-black uppercase tracking-wider text-center mt-4">
+                      ⚠️ Access Locked: Please Refresh Page!
+                    </div>
+                  ) : (
+                    <p className="text-[9px] font-bold text-white/20 uppercase tracking-widest text-center mt-4">Enter the 6-digit administrative safety security PIN (OTP)</p>
+                  )}
                 </div>
               </div>
 
@@ -310,7 +352,7 @@ export default function Auth() {
               )}
 
               <button
-                disabled={loading}
+                disabled={loading || otpTimeLeft <= 0}
                 className="w-full bg-primary text-black font-black p-5 rounded-2xl flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 shadow-lg shadow-primary/20 uppercase tracking-widest text-xs"
               >
                 Verify & Log In
@@ -371,7 +413,7 @@ export default function Auth() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white focus:border-primary outline-none transition-all font-bold"
-                    placeholder="••••••••"
+                    placeholder="Password"
                   />
                 </div>
               </div>

@@ -5,7 +5,7 @@ import { db, firebaseConfig } from '../firebase/config';
 import { ref, onValue, set, push, remove, get, update, query, orderByChild, equalTo } from 'firebase/database';
 import { User, Topic, Quiz, Feedback, QuizHistory, SpecialMessage, Ad } from '../types';
 import ScoreCard from './ScoreCard';
-import { Database, Folder, Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2, Coins, TrendingUp, Calendar, Sun, Moon, Star, Settings as SettingsIcon, Bell, Send, Share2, Image as ImageIcon, Search, Volume2, Play, RotateCcw, Zap, ChevronUp, ChevronDown, CornerDownRight, Download, Tv, Activity } from 'lucide-react';
+import { Database, Folder, Shield, Users, HelpCircle, FileText, Bot, Plus, Trash2, CheckCircle, XCircle, Upload, MessageSquare, Info, Palette, ChevronRight, History as HistoryIcon, Clock, AlertTriangle, Menu, X as CloseIcon, Edit2, Coins, TrendingUp, Calendar, Sun, Moon, Star, Settings as SettingsIcon, Bell, Send, Share2, Image as ImageIcon, Search, Volume2, Play, RotateCcw, Zap, ChevronUp, ChevronDown, CornerDownRight, Download, Tv, Activity, Maximize2, Heart } from 'lucide-react';
 import { NotificationService, ServiceAccount } from '../services/notificationService';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -50,15 +50,75 @@ export default function AdminPanel() {
   const [feedback, setFeedback] = useState<Feedback[]>([]);
   const [reports, setReports] = useState<any[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
+  const getTopicName = (tid: string): string => {
+    if (!tid) return 'General';
+    const findInArrayOrTree = (list: any[], tId: string): string | null => {
+      for (const item of list) {
+        if (item.id === tId) return item.name;
+        if (item.children) {
+          const res = findInArrayOrTree(Object.values(item.children), tId);
+          if (res) return res;
+        }
+      }
+      return null;
+    };
+    return findInArrayOrTree(topics, tid) || tid;
+  };
   const [specialMessages, setSpecialMessages] = useState<SpecialMessage[]>([]);
   const [currentSkin, setCurrentSkin] = useState('rahee');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [fullscreenDashboardUser, setFullscreenDashboardUser] = useState<User | null>(null);
+  const [historyFullscreenUser, setHistoryFullscreenUser] = useState<User | null>(null);
+  const [fullscreenHistorySearch, setFullscreenHistorySearch] = useState('');
+  const [fullscreenHistoryTypeFilter, setFullscreenHistoryTypeFilter] = useState<'all' | 'correct' | 'incorrect'>('all');
+  const [fullscreenHistoryTopicFilter, setFullscreenHistoryTopicFilter] = useState<string>('all');
   const [deviceUidInput, setDeviceUidInput] = useState('');
   const [userLuxThresholdInput, setUserLuxThresholdInput] = useState('');
   const [editingReportId, setEditingReportId] = useState<string | null>(null);
   const [reportFilter, setReportFilter] = useState<'all' | 'pending' | 'resolved' | 'dismissed'>('pending');
   const [editReportForm, setEditReportForm] = useState<any>(null);
+
+  // Appreciation Note Admin configuration states
+  const [userNoteTitle, setUserNoteTitle] = useState('');
+  const [userNoteBody, setUserNoteBody] = useState('');
+  const [userNoteActive, setUserNoteActive] = useState(false);
+  const [userNoteTarget, setUserNoteTarget] = useState('');
+
+  useEffect(() => {
+    const noteRef = ref(db, 'gameNote');
+    const unsubscribe = onValue(noteRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const val = snapshot.val();
+        setUserNoteTitle(val.title || '');
+        setUserNoteBody(val.body || '');
+        setUserNoteActive(!!val.active);
+        setUserNoteTarget(val.targetUserIds || '');
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const saveGameNote = async () => {
+    try {
+      await set(ref(db, 'gameNote'), {
+        title: userNoteTitle,
+        body: userNoteBody,
+        active: userNoteActive,
+        targetUserIds: userNoteTarget,
+      });
+      await alert({
+        title: 'Appreciation Note Saved',
+        description: 'The player note screen settings have been successfully updated.',
+        type: 'success'
+      });
+    } catch (err: any) {
+      await alert({
+        title: 'Error Saving Note',
+        description: err.message,
+        type: 'error'
+      });
+    }
+  };
 
   // RTDB Visual Custom Node Grid state declarations
   const [gridCustomConfigs, setGridCustomConfigs] = useState<any[]>([]);
@@ -164,6 +224,7 @@ export default function AdminPanel() {
     targetUserId: ''
   });
   const [dbExplorerPath, setDbExplorerPath] = useState<string[]>([]);
+  const [forceLoadRoot, setForceLoadRoot] = useState(false);
   const [isRtdbReplicaLayout, setIsRtdbReplicaLayout] = useState(false);
   const [rtdbExpandedPaths, setRtdbExpandedPaths] = useState<Record<string, boolean>>({});
   const [dbExplorerData, setDbExplorerData] = useState<any>(null);
@@ -179,16 +240,18 @@ export default function AdminPanel() {
   const [localUpdateUrl, setLocalUpdateUrl] = useState('');
   const [localUpdateMessage, setLocalUpdateMessage] = useState('');
   const [testFcmToken, setTestFcmToken] = useState('');
+  const [adminFcmInput, setAdminFcmInput] = useState<string | null>(null);
+  const [fcmSavedFeedback, setFcmSavedFeedback] = useState(false);
 
   const [globalUpdateCode, setGlobalUpdateCode] = useState('');
   const [globalUpdateUrl, setGlobalUpdateUrl] = useState('');
   const [globalUpdateMessage, setGlobalUpdateMessage] = useState('');
-  const [globalCheckedPathPattern, setGlobalCheckedPathPattern] = useState('users/{userId}/AppCode');
+  const [globalCheckedPathPattern, setGlobalCheckedPathPattern] = useState('UserDevices/{deviceUid}/User/UserCode');
   const [globalUpdateHelpMessage, setGlobalUpdateHelpMessage] = useState('Please Contact Developer Or Admin For More Info');
 
   // Database AppCode path transference tool states
   const [transferenceSourcePath, setTransferenceSourcePath] = useState('users/{userId}/AppCode');
-  const [transferenceTargetPath, setTransferenceTargetPath] = useState('UserDevices/{userId}/appCode');
+  const [transferenceTargetPath, setTransferenceTargetPath] = useState('UserDevices/{deviceUid}/User/UserCode');
   const [isTransferring, setIsTransferring] = useState(false);
 
   useEffect(() => {
@@ -199,7 +262,7 @@ export default function AdminPanel() {
         setGlobalUpdateCode(val.Code !== undefined ? String(val.Code) : '');
         setGlobalUpdateUrl(val.Url || '');
         setGlobalUpdateMessage(val.Message || '');
-        setGlobalCheckedPathPattern(val.CheckedPathPattern || 'users/{userId}/AppCode');
+        setGlobalCheckedPathPattern(val.CheckedPathPattern || 'UserDevices/{deviceUid}/User/UserCode');
         setGlobalUpdateHelpMessage(val.HelpMessage || 'Please Contact Developer Or Admin For More Info');
       }
     });
@@ -244,7 +307,12 @@ export default function AdminPanel() {
   const [examTestTimer, setExamTestTimer] = useState<number | null>(null);
   const [scheduleTime, setScheduleTime] = useState('');
   const [searchTokenUser, setSearchTokenUser] = useState('');
-  const [certPreviewData, setCertPreviewData] = useState<any>(null);
+  const [certPreviewData, setCertPreviewData] = useState<any>({
+    name: 'Rohit Sharma',
+    topic: 'General Knowledge',
+    score: 18,
+    total: 20
+  });
   const [newAdTitle, setNewAdTitle] = useState('');
   const [newAdMediaType, setNewAdMediaType] = useState<'video' | 'image' | 'text'>('video');
   const [newAdMediaUrl, setNewAdMediaUrl] = useState('');
@@ -407,11 +475,26 @@ export default function AdminPanel() {
   }, []);
 
   useEffect(() => {
-    const dbRef = ref(db, dbExplorerPath.join('/') || '/');
+    const currentPath = dbExplorerPath.join('/');
+    if (!currentPath && !forceLoadRoot) {
+      setDbExplorerData({
+        settings: "[Object/Collection] App operational configurations",
+        users: "[Object/Collection] Complete user profile records",
+        rooms: "[Object/Collection] Active and legacy play rooms",
+        questions: "[Object/Collection] Multi-category trivia sets",
+        activityLogs: "[Object/Collection] Trace records of admin actions",
+        coupons: "[Object/Collection] Store redeem validation vouchers",
+        referrals: "[Object/Collection] User invitation tracking trees",
+        _FORCE_LOAD_ENTIRE_DATABASE: "ATTENTION: Pulling the entire database raw will download multi-megabyte payloads. Choose only if needed."
+      });
+      return;
+    }
+
+    const dbRef = ref(db, currentPath || '/');
     return onValue(dbRef, (snapshot) => {
       setDbExplorerData(snapshot.exists() ? snapshot.val() : null);
     });
-  }, [dbExplorerPath]);
+  }, [dbExplorerPath, forceLoadRoot]);
 
   const handleServiceAccountUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -928,22 +1011,38 @@ export default function AdminPanel() {
 
     try {
       const updates: any = {};
-      for (let i = 0; i < count; i++) {
-        let code = newCouponForm.code;
-        if (!code || count > 1) {
-          code = Math.random().toString(36).substring(2, 8).toUpperCase();
-        }
-        
-        updates[`coupons/${code}`] = {
-          code,
+      const customCode = newCouponForm.code ? newCouponForm.code.trim().toUpperCase() : '';
+
+      if (customCode) {
+        const secretLinkedCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+        updates[`coupons/${customCode}`] = {
+          code: customCode,
           value,
           isUsed: false,
           createdAt: timestamp,
-          createdBy
+          createdBy,
+          maxUses: count,
+          usesCount: 0,
+          secretLinkedCode
         };
+        await update(ref(db), updates);
+        await alert({ title: 'Success', description: `Generated custom coupon "${customCode}" with limit of ${count} redemptions. (Secret linked: ${secretLinkedCode})`, type: 'success' });
+      } else {
+        for (let i = 0; i < count; i++) {
+          const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+          updates[`coupons/${code}`] = {
+            code,
+            value,
+            isUsed: false,
+            createdAt: timestamp,
+            createdBy,
+            maxUses: 1,
+            usesCount: 0
+          };
+        }
+        await update(ref(db), updates);
+        await alert({ title: 'Success', description: `Generated ${count} random coupon(s) of value ${value} coins.`, type: 'success' });
       }
-      await update(ref(db), updates);
-      await alert({ title: 'Success', description: `Generated ${count} coupon(s) of value ${value} coins.`, type: 'success' });
       setNewCouponForm({ code: '', value: 100, count: 1 });
     } catch (err: any) {
       await alert({ title: 'Error', description: err.message, type: 'error' });
@@ -1000,6 +1099,10 @@ export default function AdminPanel() {
     title: '',
     description: '',
     topicId: '',
+    topicIds: [] as string[],
+    questionStartRange: '',
+    questionEndRange: '',
+    difficultyFilter: 'all',
     startTime: '',
     durationHours: '1',
     durationMinutes: '0',
@@ -1035,11 +1138,126 @@ export default function AdminPanel() {
     opt3En: '', opt3Hi: '',
     opt4En: '', opt4Hi: '',
     correct: 1, topicId: '', 
+    difficulty: 3,
     explanationEn: '', explanationHi: '',
     hintEn: '', hintHi: '',
     questionImage: '',
     opt1Image: '', opt2Image: '', opt3Image: '', opt4Image: ''
   });
+
+  const [selectedFilterTopicId, setSelectedFilterTopicId] = useState<string>('all');
+  const [selectedFilterDifficulty, setSelectedFilterDifficulty] = useState<string>('all');
+
+  const [pendingCsvRows, setPendingCsvRows] = useState<any[] | null>(null);
+  const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
+  const [csvTopicLinkMode, setCsvTopicLinkMode] = useState<'csv' | 'select'>('csv');
+  const [selectedCsvTopicId, setSelectedCsvTopicId] = useState<string>('');
+
+  const [recentlyAddedQuizzes, setRecentlyAddedQuizzes] = useState<{ id: string, topicId: string }[]>(() => {
+    try {
+      const saved = localStorage.getItem('rahee_recently_added_quizzes');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const updateRecentlyAddedQuizzes = (lst: { id: string, topicId: string }[]) => {
+    setRecentlyAddedQuizzes(lst);
+    try {
+      localStorage.setItem('rahee_recently_added_quizzes', JSON.stringify(lst));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const deleteRecentlyAddedQuizzes = async () => {
+    if (recentlyAddedQuizzes.length === 0) {
+      await alert({
+        title: "No Recent Imports",
+        description: "You haven't imported or added any quizzes in this batch yet, or they have already been deleted.",
+        type: 'info'
+      });
+      return;
+    }
+
+    const verified = await confirm({
+      title: "Undo Import/Additions",
+      description: `Are you sure you want to delete the recently imported/added batch of ${recentlyAddedQuizzes.length} quizzes in one click? This cannot be undone.`,
+      type: 'error'
+    });
+
+    if (verified) {
+      try {
+        for (const item of recentlyAddedQuizzes) {
+          await remove(ref(db, `topicQuizzes/${item.topicId}/${item.id}`));
+        }
+        await alert({
+          title: "Undo Successful",
+          description: `All ${recentlyAddedQuizzes.length} recently added quizzes have been deleted successfully.`,
+          type: 'success'
+        });
+        updateRecentlyAddedQuizzes([]);
+      } catch (err: any) {
+        await alert({
+          title: "Error occurred",
+          description: err.message,
+          type: 'error'
+        });
+      }
+    }
+  };
+
+  const deleteSingleRecentQuiz = async (topicId: string, id: string) => {
+    try {
+      await remove(ref(db, `topicQuizzes/${topicId}/${id}`));
+      updateRecentlyAddedQuizzes(recentlyAddedQuizzes.filter(item => !(item.id === id && item.topicId === topicId)));
+      await alert({
+        title: "Quiz Deleted",
+        description: `Successfully deleted recently added quiz #${id} from ${topicId}!`,
+        type: 'success'
+      });
+    } catch (err: any) {
+      await alert({
+        title: "Error",
+        description: err.message,
+        type: 'error'
+      });
+    }
+  };
+
+  const displayedQuizzes = useMemo(() => {
+    return quizzes.filter(q => {
+      const matchesTopic = selectedFilterTopicId === 'all' || q.topicId === selectedFilterTopicId;
+      const matchesDiff = selectedFilterDifficulty === 'all' || String(q.difficulty ?? 3) === selectedFilterDifficulty;
+      return matchesTopic && matchesDiff;
+    });
+  }, [quizzes, selectedFilterTopicId, selectedFilterDifficulty]);
+
+  const displayedFullscreenHistory = useMemo(() => {
+    if (!historyFullscreenUser) return [];
+    
+    return userHistory.filter(h => {
+      const quiz = quizzes.find(q => q.id === h.quizId);
+      if (!quiz) return false;
+      
+      const matchesTopic = fullscreenHistoryTopicFilter === 'all' || quiz.topicId === fullscreenHistoryTopicFilter;
+      const matchesType = fullscreenHistoryTypeFilter === 'all' || 
+                          (fullscreenHistoryTypeFilter === 'correct' && h.isCorrect) ||
+                          (fullscreenHistoryTypeFilter === 'incorrect' && !h.isCorrect);
+      
+      const qTextEn = quiz?.question?.en || '';
+      const qTextHi = quiz?.question?.hi || '';
+      const searchLower = fullscreenHistorySearch.toLowerCase();
+      
+      const matchesSearch = !fullscreenHistorySearch || 
+                            qTextEn.toLowerCase().includes(searchLower) ||
+                            qTextHi.toLowerCase().includes(searchLower) ||
+                            quiz.id.includes(searchLower);
+                            
+      return matchesTopic && matchesType && matchesSearch;
+    });
+  }, [userHistory, quizzes, historyFullscreenUser, fullscreenHistorySearch, fullscreenHistoryTypeFilter, fullscreenHistoryTopicFilter]);
 
     // Player creation state
     const [isAddingUser, setIsAddingUser] = useState(false);
@@ -1059,7 +1277,7 @@ export default function AdminPanel() {
     let usersList: User[] = [];
     let botsList: User[] = [];
 
-    const unsubscribeUsers = onValue(ref(db, 'users'), s => {
+    get(ref(db, 'users')).then(s => {
       if (s.exists()) {
         usersList = Object.entries(s.val())
           .filter(([_, val]) => val !== null)
@@ -1067,10 +1285,15 @@ export default function AdminPanel() {
       } else {
         usersList = [];
       }
-      setUsers([...usersList, ...botsList]);
+      setUsers(prev => {
+        const bots = prev.filter(u => u.isBot);
+        return [...usersList, ...bots];
+      });
+    }).catch(err => {
+      console.error("Failed to load users:", err);
     });
 
-    const unsubscribeBots = onValue(ref(db, 'bots'), s => {
+    get(ref(db, 'bots')).then(s => {
       if (s.exists()) {
         botsList = Object.entries(s.val())
           .filter(([_, val]) => val !== null)
@@ -1078,7 +1301,12 @@ export default function AdminPanel() {
       } else {
         botsList = [];
       }
-      setUsers([...usersList, ...botsList]);
+      setUsers(prev => {
+        const rUsers = prev.filter(u => !u.isBot);
+        return [...rUsers, ...botsList];
+      });
+    }).catch(err => {
+      console.error("Failed to load bots:", err);
     });
 
     onValue(ref(db, 'topics'), s => {
@@ -1107,6 +1335,8 @@ export default function AdminPanel() {
           flatQuizzes = [...flatQuizzes, ...quizzesWithId];
         });
         setQuizzes(flatQuizzes);
+      } else {
+        setQuizzes([]);
       }
     });
 
@@ -1150,8 +1380,9 @@ export default function AdminPanel() {
   };
   
   useEffect(() => {
-    if (selectedUser) {
-      setAdminPlayerUsernameInput(selectedUser.username || '');
+    const targetUser = selectedUser || historyFullscreenUser;
+    if (targetUser) {
+      setAdminPlayerUsernameInput(targetUser.username || '');
       const historyRef = ref(db, 'history');
       const unsubscribe = onValue(historyRef, (snapshot) => {
         const data = snapshot.val();
@@ -1159,7 +1390,7 @@ export default function AdminPanel() {
           const mapped = Object.entries(data)
             .filter(([_, val]) => val !== null)
             .map(([key, val]: [string, any]) => ({ ...val, id: key }))
-            .filter((h: any) => h.userId === selectedUser.id);
+            .filter((h: any) => h.userId === targetUser.id);
           setUserHistory(mapped.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0)));
         } else {
           setUserHistory([]);
@@ -1169,7 +1400,7 @@ export default function AdminPanel() {
     } else {
       setUserHistory([]);
     }
-  }, [selectedUser]);
+  }, [selectedUser, historyFullscreenUser]);
 
   const deleteHistoryItem = async (historyId: string) => {
     if (!historyId) return;
@@ -1384,23 +1615,29 @@ export default function AdminPanel() {
     }
 
     const cleanUsername = newPlayerUsername.toLowerCase().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_]/g, '');
-    const finalEmail = `${cleanUsername}@Rahee.in`;
     
     setIsCreatingUser(true);
     try {
-      // 1. Proactive check if username exists in RTDB
       const usersRef = ref(db, 'users');
-      const usernameQuery = query(usersRef, orderByChild('username'), equalTo(cleanUsername));
-      const nameCheck = await get(usernameQuery);
+      const snapshot = await get(usersRef);
       
-      if (nameCheck.exists()) {
-        await alert({ title: 'Error', description: 'Username already taken', type: 'error' });
-        setIsCreatingUser(false);
-        return;
+      let finalUsername = cleanUsername;
+      let uid = cleanUsername;
+
+      if (snapshot.exists()) {
+        const usersData = snapshot.val();
+        let suffix = 1;
+        while (
+          Object.keys(usersData).some(id => id.toLowerCase() === uid.toLowerCase()) ||
+          Object.values(usersData).some((u: any) => u.username?.toLowerCase() === finalUsername.toLowerCase())
+        ) {
+          finalUsername = `${cleanUsername}_${suffix}`;
+          uid = `${cleanUsername}_${suffix}`;
+          suffix++;
+        }
       }
 
-      // 2. Generate custom UID
-      const uid = `user_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      const finalEmail = `${finalUsername}@Rahee.in`;
 
       // 3. Create DB User profile
       const userRef = ref(db, `users/${uid}`);
@@ -1408,7 +1645,7 @@ export default function AdminPanel() {
         id: uid,
         name: newPlayerName,
         email: finalEmail,
-        username: cleanUsername,
+        username: finalUsername,
         password: newPlayerPassword,
         role: 'user',
         status: 'pending', // Manual admin creation also starts as pending
@@ -1741,6 +1978,7 @@ export default function AdminPanel() {
         hi: [newQuiz.opt1Hi || newQuiz.opt1En, newQuiz.opt2Hi || newQuiz.opt2En, newQuiz.opt3Hi || newQuiz.opt3En, newQuiz.opt4Hi || newQuiz.opt4En].filter(o => o)
       },
       correctAnswerIndex: newQuiz.correct - 1,
+      difficulty: newQuiz.difficulty || 3,
       explanation: { en: newQuiz.explanationEn, hi: newQuiz.explanationHi || newQuiz.explanationEn },
       hint: { en: newQuiz.hintEn, hi: newQuiz.hintHi || newQuiz.hintEn },
       questionImage: newQuiz.questionImage || '',
@@ -1748,6 +1986,7 @@ export default function AdminPanel() {
     };
 
     await set(ref(db, `topicQuizzes/${quiz.topicId}/${quizId}`), quiz);
+    updateRecentlyAddedQuizzes([{ id: quizId, topicId: quiz.topicId }]);
     setNewQuiz({
       questionEn: '', questionHi: '',
       opt1En: '', opt1Hi: '',
@@ -1755,6 +1994,7 @@ export default function AdminPanel() {
       opt3En: '', opt3Hi: '',
       opt4En: '', opt4Hi: '',
       correct: 1, topicId: '', 
+      difficulty: 3,
       explanationEn: '', explanationHi: '',
       hintEn: '', hintHi: '',
       questionImage: '',
@@ -1784,6 +2024,7 @@ export default function AdminPanel() {
       opt4Hi: q.options?.hi?.[3] || '',
       correct: q.correctAnswerIndex + 1,
       topicId: q.topicId,
+      difficulty: q.difficulty || 3,
       explanationEn: q.explanation?.en || '',
       explanationHi: q.explanation?.hi || '',
       hintEn: q.hint?.en || '',
@@ -1815,6 +2056,7 @@ export default function AdminPanel() {
         q.options?.hi?.[3] || '',
         q.correctAnswerIndex + 1,
         q.topicId,
+        q.difficulty || 3,
         q.explanation?.en || '',
         q.explanation?.hi || '',
         q.hint?.en || '',
@@ -1830,7 +2072,7 @@ export default function AdminPanel() {
     setBulkText(csvContent);
     await alert({
       title: "Data Loaded",
-      description: 'Loaded all quizzes. Format: ID, Q_EN, Q_HI, O1_EN, O1_HI, O2_EN, O2_HI, O3_EN, O3_HI, O4_EN, O4_HI, Correct, Topic, Exp_EN, Exp_HI, HINT_EN, HINT_HI, Q_IMG, O1_IMG, O2_IMG, O3_IMG, O4_IMG',
+      description: 'Loaded all quizzes. Format: ID, Q_EN, Q_HI, O1_EN, O1_HI, O2_EN, O2_HI, O3_EN, O3_HI, O4_EN, O4_HI, Correct, Topic, Difficulty, Exp_EN, Exp_HI, HINT_EN, HINT_HI, Q_IMG, O1_IMG, O2_IMG, O3_IMG, O4_IMG',
       type: 'info'
     });
   };
@@ -1846,20 +2088,22 @@ export default function AdminPanel() {
       .filter(id => !isNaN(id))
       .reduce((max, id) => Math.max(max, id), 0);
 
+    const bulkAdded: { id: string, topicId: string }[] = [];
+
     for (const line of lines) {
       if (!line.trim()) continue;
       const parts = line.split(',').map(p => p.trim());
       
-      if (parts.length >= 10) {
-        let id, qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, expEn, expHi, hEn, hHi, qImg, o1Img, o2Img, o3Img, o4Img;
+      if (parts.length >= 11) {
+        let id, qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, diff, expEn, expHi, hEn, hHi, qImg, o1Img, o2Img, o3Img, o4Img;
         
         // Check if first part is a numeric ID or looks like a question
         const isFirstPartId = !isNaN(parseInt(parts[0])) && parts[0].length < 10;
         
         if (isFirstPartId) {
-          [id, qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, expEn, expHi, hEn, hHi, qImg, o1Img, o2Img, o3Img, o4Img] = parts;
+          [id, qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, diff, expEn, expHi, hEn, hHi, qImg, o1Img, o2Img, o3Img, o4Img] = parts;
         } else {
-          [qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, expEn, expHi, hEn, hHi, qImg, o1Img, o2Img, o3Img, o4Img] = parts;
+          [qEn, qHi, o1En, o1Hi, o2En, o2Hi, o3En, o3Hi, o4En, o4Hi, corr, topic, diff, expEn, expHi, hEn, hHi, qImg, o1Img, o2Img, o3Img, o4Img] = parts;
           lastIdNum++;
           id = lastIdNum.toString();
         }
@@ -1873,6 +2117,7 @@ export default function AdminPanel() {
           },
           correctAnswerIndex: (parseInt(corr) || 1) - 1,
           topicId: topic || topics[0]?.id || 'general',
+          difficulty: parseInt(diff, 10) || 3,
           explanation: { 
             en: expEn || '', 
             hi: expHi || expEn || '' 
@@ -1885,15 +2130,187 @@ export default function AdminPanel() {
           optionImages: [o1Img || '', o2Img || '', o3Img || '', o4Img || '']
         };
         await set(ref(db, `topicQuizzes/${quiz.topicId}/${id}`), quiz);
+        bulkAdded.push({ id: id.toString(), topicId: quiz.topicId });
         count++;
       }
     }
+    updateRecentlyAddedQuizzes(bulkAdded);
     setBulkText('');
     await alert({
       title: "Bulk Process Complete",
       description: `Successfully processed ${count} quizzes!`,
       type: 'success'
     });
+  };
+
+  const processPendingCsvQuizzes = async () => {
+    if (!pendingCsvRows) return;
+
+    try {
+      // Build maps tracking all quiz IDs currently in use inside each topic
+      const topicToIdsMap: { [topicId: string]: Set<string> } = {};
+      quizzes.forEach(q => {
+        const tId = q.topicId || 'general';
+        if (!topicToIdsMap[tId]) {
+          topicToIdsMap[tId] = new Set();
+        }
+        topicToIdsMap[tId].add(q.id.toString());
+      });
+
+      // Find highest overall numeric ID to safely fall back to avoiding collisions
+      let nextIdNum = quizzes
+        .map(q => parseInt(q.id))
+        .filter(id => !isNaN(id))
+        .reduce((max, id) => Math.max(max, id), 0);
+
+      const csvAdded: { id: string; topicId: string }[] = [];
+      let skippedCount = 0;
+
+      for (const row of pendingCsvRows) {
+        if (!row.questionEn && !row.QuestionEn && !row.question && !row.Question) continue;
+
+        let finalTopicId = 'general';
+        if (csvTopicLinkMode === 'csv') {
+          finalTopicId = row.topicId || row.TopicId || (topics[0]?.id || 'general');
+        } else {
+          finalTopicId = selectedCsvTopicId || (topics[0]?.id || 'general');
+        }
+
+        const qEn = (row.questionEn || row.QuestionEn || row.question || row.Question || '').toString().trim();
+        const qHi = (row.questionHi || row.QuestionHi || row.questionEn || row.QuestionEn || row.question || row.Question || '').toString().trim();
+
+        const optEn = [
+          row.opt1En || row.Opt1En || row.option1 || row.Option1, 
+          row.opt2En || row.Opt2En || row.option2 || row.Option2, 
+          row.opt3En || row.Opt3En || row.option3 || row.Option3, 
+          row.opt4En || row.Opt4En || row.option4 || row.Option4
+        ].filter((o: any) => o !== undefined && o !== null && o !== '').map((o: any) => o.toString().trim());
+
+        const optHi = [
+          row.opt1Hi || row.Opt1Hi || row.opt1En || row.Opt1En || row.option1 || row.Option1, 
+          row.opt2Hi || row.Opt2Hi || row.opt2En || row.Opt2En || row.option2 || row.Option2, 
+          row.opt3Hi || row.Opt3Hi || row.opt3En || row.Opt3En || row.option3 || row.Option3, 
+          row.opt4Hi || row.Opt4Hi || row.opt4En || row.Opt4En || row.option4 || row.Option4
+        ].filter((o: any) => o !== undefined && o !== null && o !== '').map((o: any) => o.toString().trim());
+
+        const expEn = (row.explanationEn || row.ExplanationEn || row.explanation || row.Explanation || row.expEn || row.ExpEn || row.exp || row.Exp || '').toString().trim();
+        const expHi = (row.explanationHi || row.ExplanationHi || row.explanation || row.Explanation || row.expHi || row.ExpHi || row.exp || row.Exp || '').toString().trim();
+
+        // Check if there is an existing quiz matching this content and topic
+        const isDuplicateQuiz = quizzes.some(existing => {
+          if ((existing.topicId || 'general') !== finalTopicId) return false;
+
+          const exQEn = (existing.question?.en || '').toString().trim();
+          const exQHi = (existing.question?.hi || '').toString().trim();
+          if (exQEn.toLowerCase() !== qEn.toLowerCase()) return false;
+          if (exQHi.toLowerCase() !== qHi.toLowerCase()) return false;
+
+          const exExpEn = (existing.explanation?.en || '').toString().trim();
+          const exExpHi = (existing.explanation?.hi || '').toString().trim();
+          if (exExpEn.toLowerCase() !== expEn.toLowerCase()) return false;
+          if (exExpHi.toLowerCase() !== expHi.toLowerCase()) return false;
+
+          const exOptEn = (existing.options?.en || []).map((o: any) => o.toString().trim());
+          const exOptHi = (existing.options?.hi || []).map((o: any) => o.toString().trim());
+
+          if (exOptEn.length !== optEn.length) return false;
+          if (exOptHi.length !== optHi.length) return false;
+
+          for (let i = 0; i < optEn.length; i++) {
+            if (exOptEn[i].toLowerCase() !== optEn[i].toLowerCase()) return false;
+          }
+          for (let i = 0; i < optHi.length; i++) {
+            if (exOptHi[i].toLowerCase() !== optHi[i].toLowerCase()) return false;
+          }
+
+          return true;
+        });
+
+        if (isDuplicateQuiz) {
+          skippedCount++;
+          continue;
+        }
+
+        if (!topicToIdsMap[finalTopicId]) {
+          topicToIdsMap[finalTopicId] = new Set();
+        }
+
+        let proposedId = row.id ? row.id.toString().trim() : '';
+
+        // If no ID is specified, or if proposedId already exists in this topic, we generate a fresh, unique numeric ID
+        if (!proposedId || topicToIdsMap[finalTopicId].has(proposedId)) {
+          nextIdNum++;
+          proposedId = nextIdNum.toString();
+          // Keep incrementing if there's somehow still a collision under this topic
+          while (topicToIdsMap[finalTopicId].has(proposedId)) {
+            nextIdNum++;
+            proposedId = nextIdNum.toString();
+          }
+        }
+
+        // Track that this proposedId is now database-bound in this topic to handle matches sequentially
+        topicToIdsMap[finalTopicId].add(proposedId);
+
+        const quiz: any = {
+          id: proposedId,
+          topicId: finalTopicId,
+          question: { 
+            en: row.questionEn || row.QuestionEn || row.question || row.Question || '', 
+            hi: row.questionHi || row.QuestionHi || row.questionEn || row.QuestionEn || row.question || row.Question || '' 
+          },
+          difficulty: parseInt(row.difficulty || row.Difficulty || row.diff || row.Diff || row.DIFF || '3', 10) || 3,
+          options: {
+            en: [
+              row.opt1En || row.Opt1En || row.option1 || row.Option1, 
+              row.opt2En || row.Opt2En || row.option2 || row.Option2, 
+              row.opt3En || row.Opt3En || row.option3 || row.Option3, 
+              row.opt4En || row.Opt4En || row.option4 || row.Option4
+            ].filter((o: any) => o),
+            hi: [
+              row.opt1Hi || row.Opt1Hi || row.opt1En || row.Opt1En || row.option1 || row.Option1, 
+              row.opt2Hi || row.Opt2Hi || row.opt2En || row.Opt2En || row.option2 || row.Option2, 
+              row.opt3Hi || row.Opt3Hi || row.opt3En || row.Opt3En || row.option3 || row.Option3, 
+              row.opt4Hi || row.Opt4Hi || row.opt4En || row.Opt4En || row.option4 || row.Option4
+            ].filter((o: any) => o)
+          },
+          correctAnswerIndex: (parseInt(row.correct || row.Correct || row.answer || row.Answer) || 1) - 1,
+          explanation: { 
+            en: row.explanationEn || row.ExplanationEn || row.explanation || row.Explanation || row.expEn || row.ExpEn || row.exp || row.Exp || '', 
+            hi: row.explanationHi || row.ExplanationHi || row.explanation || row.Explanation || row.expHi || row.ExpHi || row.exp || row.Exp || '' 
+          },
+          hint: {
+            en: row.hintEn || row.HintEn || row.hint || row.Hint || '',
+            hi: row.hintHi || row.HintHi || row.hint || row.Hint || ''
+          },
+          questionImage: row.questionImage || row.QuestionImage || row.qImage || row.QImage || '',
+          optionImages: [
+            row.opt1Image || row.Opt1Image || row.o1Image || row.O1Image || '',
+            row.opt2Image || row.Opt2Image || row.o2Image || row.O2Image || '',
+            row.opt3Image || row.Opt3Image || row.o3Image || row.O3Image || '',
+            row.opt4Image || row.Opt4Image || row.o4Image || row.O4Image || ''
+          ]
+        };
+
+        await set(ref(db, `topicQuizzes/${quiz.topicId}/${proposedId}`), quiz);
+        csvAdded.push({ id: proposedId, topicId: quiz.topicId });
+      }
+
+      updateRecentlyAddedQuizzes(csvAdded);
+      setIsCsvModalOpen(false);
+      setPendingCsvRows(null);
+
+      await alert({
+        title: "Success",
+        description: `Successfully imported ${csvAdded.length} new quizzes to the database.${skippedCount > 0 ? ` (${skippedCount} duplicate quizzes were skipped)` : ''}`,
+        type: 'success'
+      });
+    } catch (err: any) {
+      await alert({
+        title: "Import Failed",
+        description: err.message || "An error occurred while importing your quizzes from the CSV file.",
+        type: 'error'
+      });
+    }
   };
 
   const handleCsvUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'quizzes' | 'bots') => {
@@ -1904,60 +2321,15 @@ export default function AdminPanel() {
       header: true,
       complete: async (results) => {
         if (type === 'quizzes') {
-          let lastIdNum = quizzes
-            .map(q => parseInt(q.id))
-            .filter(id => !isNaN(id))
-            .reduce((max, id) => Math.max(max, id), 0);
-
-          for (const row of results.data as any[]) {
-             if (!row.questionEn && !row.QuestionEn && !row.question && !row.Question) continue;
-             let id;
-             if (row.id) {
-               id = row.id;
-             } else {
-               lastIdNum++;
-               id = lastIdNum.toString();
-             }
-             const quiz: any = {
-               id,
-               topicId: row.topicId || row.TopicId || (topics[0]?.id || 'general'),
-               question: { 
-                 en: row.questionEn || row.QuestionEn || row.question || row.Question || '', 
-                 hi: row.questionHi || row.QuestionHi || row.questionEn || row.QuestionEn || row.question || row.Question || '' 
-               },
-               options: {
-                en: [
-                  row.opt1En || row.Opt1En || row.option1 || row.Option1, 
-                  row.opt2En || row.Opt2En || row.option2 || row.Option2, 
-                  row.opt3En || row.Opt3En || row.option3 || row.Option3, 
-                  row.opt4En || row.Opt4En || row.option4 || row.Option4
-                ].filter(o => o),
-                hi: [
-                  row.opt1Hi || row.Opt1Hi || row.opt1En || row.Opt1En || row.option1 || row.Option1, 
-                  row.opt2Hi || row.Opt2Hi || row.opt2En || row.Opt2En || row.option2 || row.Option2, 
-                  row.opt3Hi || row.Opt3Hi || row.opt3En || row.Opt3En || row.option3 || row.Option3, 
-                  row.opt4Hi || row.Opt4Hi || row.opt4En || row.Opt4En || row.option4 || row.Option4
-                ].filter(o => o)
-               },
-               correctAnswerIndex: (parseInt(row.correct || row.Correct || row.answer || row.Answer) || 1) - 1,
-               explanation: { 
-                 en: row.explanationEn || row.ExplanationEn || row.explanation || row.Explanation || row.expEn || row.ExpEn || row.exp || row.Exp || '', 
-                 hi: row.explanationHi || row.ExplanationHi || row.explanation || row.Explanation || row.expHi || row.ExpHi || row.exp || row.Exp || '' 
-               },
-               hint: {
-                 en: row.hintEn || row.HintEn || row.hint || row.Hint || '',
-                 hi: row.hintHi || row.HintHi || row.hint || row.Hint || ''
-               },
-               questionImage: row.questionImage || row.QuestionImage || row.qImage || row.QImage || '',
-               optionImages: [
-                 row.opt1Image || row.Opt1Image || row.o1Image || row.O1Image || '',
-                 row.opt2Image || row.Opt2Image || row.o2Image || row.O2Image || '',
-                 row.opt3Image || row.Opt3Image || row.o3Image || row.O3Image || '',
-                 row.opt4Image || row.Opt4Image || row.o4Image || row.O4Image || ''
-               ]
-             };
-             await set(ref(db, `topicQuizzes/${quiz.topicId}/${id}`), quiz);
+          setPendingCsvRows(results.data as any[]);
+          setIsCsvModalOpen(true);
+          setCsvTopicLinkMode('csv');
+          if (topics && topics.length > 0) {
+            setSelectedCsvTopicId(topics[0].id);
+          } else {
+            setSelectedCsvTopicId('general');
           }
+          e.target.value = '';
         } else {
           for (const row of results.data as any[]) {
             if (!row.name) continue;
@@ -1987,12 +2359,13 @@ export default function AdminPanel() {
             };
             await set(bRef, bot);
           }
+          await alert({
+            title: "Import Complete",
+            description: `Imported ${results.data.length} Bots`,
+            type: 'success'
+          });
+          e.target.value = '';
         }
-        await alert({
-          title: "Import Complete",
-          description: `Imported ${results.data.length} items`,
-          type: 'success'
-        });
       }
     });
   };
@@ -2090,6 +2463,7 @@ export default function AdminPanel() {
       opt4Hi: 'Option 4 Hindi',
       correct: '1',
       topicId: newQuiz.topicId || (topics[0]?.id || 'general'),
+      difficulty: '3',
       explanationEn: 'Explanation in English',
       explanationHi: 'Explanation in Hindi',
       hintEn: 'Hint in English',
@@ -2137,6 +2511,7 @@ export default function AdminPanel() {
       opt4Hi: q.options?.hi?.[3] || '',
       correct: q.correctAnswerIndex + 1,
       topicId: q.topicId,
+      difficulty: q.difficulty || 3,
       explanationEn: q.explanation?.en || '',
       explanationHi: q.explanation?.hi || '',
       hintEn: q.hint?.en || '',
@@ -2633,14 +3008,26 @@ export default function AdminPanel() {
            </div>
            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {coupons.slice().reverse().slice(0, 24).map(c => (
-                 <div key={c.code} className="bg-black/5 dark:bg-[#111] p-4 rounded-2xl border border-black/5 dark:border-white/5 relative group">
-                    <div className="flex justify-between items-start mb-2">
-                       <span className="text-[10px] font-black tracking-widest text-[#32befa] bg-[#32befa]/5 px-2 py-0.5 rounded">{c.value} CR</span>
-                       <button onClick={() => deleteCoupon(c.code)} className="opacity-0 group-hover:opacity-100 p-1 text-red-500/30 hover:text-red-500 transition-all">
-                          <Trash2 size={12} />
-                       </button>
+                 <div key={c.code} className="bg-black/5 dark:bg-[#111] p-4 rounded-2xl border border-black/5 dark:border-white/5 relative group flex flex-col justify-between min-h-[9rem]">
+                    <div>
+                      <div className="flex justify-between items-start mb-2">
+                         <span className="text-[10px] font-black tracking-widest text-[#32befa] bg-[#32befa]/5 px-2 py-0.5 rounded">{c.value} CR</span>
+                         <button onClick={() => deleteCoupon(c.code)} className="opacity-0 group-hover:opacity-100 p-1 text-red-500/30 hover:text-red-500 transition-all">
+                            <Trash2 size={12} />
+                         </button>
+                      </div>
+                      <code className="block text-sm font-black text-black dark:text-white mb-1 font-mono truncate select-all">{c.code}</code>
+                      {c.secretLinkedCode && (
+                        <p className="text-[9px] font-black font-mono text-purple-500 mb-2 truncate select-all">
+                          Secret: {c.secretLinkedCode}
+                        </p>
+                      )}
+                      {c.maxUses && c.maxUses > 1 && (
+                        <p className="text-[9px] font-bold text-neutral-500 uppercase tracking-wider mb-2">
+                          Uses: {c.usesCount || 0} / {c.maxUses}
+                        </p>
+                      )}
                     </div>
-                    <code className="block text-sm font-black text-black dark:text-white mb-2 font-mono truncate select-all">{c.code}</code>
                     <div className="flex items-center justify-between">
                        <span className={cn(
                           "text-[8px] font-black uppercase px-2 py-0.5 rounded",
@@ -2677,7 +3064,7 @@ export default function AdminPanel() {
                        </thead>
                        <tbody className="divide-y divide-black/5 dark:divide-white/5">
                           {couponLogs.map((log, i) => (
-                             <tr key={i} className="hover:bg-black/5 dark:hover:bg-white/5 transition-all">
+                             <tr key={`coupon-log-${log.timestamp || i}-${i}`} className="hover:bg-black/5 dark:hover:bg-white/5 transition-all">
                                 <td className="p-4">
                                    <p className="text-[10px] font-black text-black dark:text-white">{log.userName}</p>
                                    <p className="text-[8px] font-bold text-black/30 dark:text-white/30 truncate max-w-[80px]">@{log.userId}</p>
@@ -2721,7 +3108,7 @@ export default function AdminPanel() {
                        </thead>
                        <tbody className="divide-y divide-black/5 dark:divide-white/5">
                           {referralLogs.map((log, i) => (
-                             <tr key={i} className="hover:bg-black/5 dark:hover:bg-white/5 transition-all">
+                             <tr key={`referral-log-${log.referrerId || log.timestamp || i}-${i}`} className="hover:bg-black/5 dark:hover:bg-white/5 transition-all">
                                 <td className="p-4">
                                    <p className="text-[10px] font-black text-primary">{log.referrerName}</p>
                                 </td>
@@ -2987,6 +3374,188 @@ export default function AdminPanel() {
             ))}
           </div>
         )}
+      </div>
+    );
+  };
+
+  const renderFullscreenPlayerHistory = (user: User) => {
+    const userSpecificHistory = userHistory.filter(h => h.userId === user.id);
+    const totalAns = userSpecificHistory.length;
+    const correctCount = userSpecificHistory.filter(h => h.isCorrect).length;
+    const incorrectCount = totalAns - correctCount;
+    const correctRate = totalAns > 0 ? Math.round((correctCount / totalAns) * 100) : 0;
+    
+    return (
+      <div className="fixed inset-0 z-[200] bg-gray-100 dark:bg-[#070a0e] text-black dark:text-white flex flex-col p-6 md:p-12 overflow-hidden">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-black/5 dark:border-white/5 pb-6 mb-6 shrink-0">
+          <div>
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => setHistoryFullscreenUser(null)} 
+                className="flex items-center justify-center gap-2 px-3  py-1.5 bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 rounded-xl text-xs font-black uppercase text-black/60 dark:text-neutral-300 hover:bg-black/10 dark:hover:bg-white/10 transition-all hover:scale-105"
+              >
+                <ChevronRight className="rotate-180" size={16} />
+                Close Full Screen
+              </button>
+              <span className="text-[9px] font-black uppercase px-2.5 py-1 bg-primary/15 text-primary border border-primary/20 rounded-lg tracking-widest leading-none">
+                Enterprise History Visualizer
+              </span>
+            </div>
+            <h2 className="text-2xl md:text-3xl font-black uppercase tracking-tight text-black dark:text-white mt-3 flex items-center gap-3">
+              <HistoryIcon size={26} className="text-primary animate-pulse" />
+              {user.name}'s Complete Quiz History
+            </h2>
+            <p className="text-xs font-mono text-black/40 dark:text-neutral-400 mt-1 uppercase leading-none">
+              Registered Username: <span className="text-primary font-bold">@{user.username || 'user'}</span> • Player ID: {user.id}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="bg-emerald-500/10 border border-emerald-500/20 px-4 py-3 rounded-2xl text-center min-w-[80px]">
+              <span className="text-[9px] font-black uppercase text-emerald-500 block">Correct</span>
+              <span className="text-xl font-black block leading-none mt-1 text-emerald-500">{correctCount}</span>
+            </div>
+            <div className="bg-red-500/10 border border-red-500/20 px-4 py-3 rounded-2xl text-center min-w-[80px]">
+              <span className="text-[9px] font-black uppercase text-red-500 block">Incorrect</span>
+              <span className="text-xl font-black block leading-none mt-1 text-red-500">{incorrectCount}</span>
+            </div>
+            <div className="bg-primary/15 border border-primary/25 px-4 py-3 rounded-2xl text-center min-w-[100px]">
+              <span className="text-[9px] font-black uppercase text-primary block">Success Rate</span>
+              <span className="text-xl font-black block leading-none mt-1 text-primary">{correctRate}%</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Filters Panel */}
+        <div className="bg-white dark:bg-[#111] border border-black/5 dark:border-white/5 p-4 rounded-3xl mb-4 shrink-0 flex flex-col md:flex-row gap-4 items-center">
+          <div className="relative flex-1 w-full">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-black/40 dark:text-white/40" size={16} />
+            <input 
+              type="text"
+              value={fullscreenHistorySearch}
+              onChange={e => setFullscreenHistorySearch(e.target.value)}
+              placeholder="Search quiz question text or ID..."
+              className="w-full bg-black/5 dark:bg-black border border-black/5 dark:border-white/5 rounded-2xl pl-10 pr-4 py-3 text-xs font-bold font-mono outline-none focus:border-primary"
+            />
+          </div>
+          
+          <div className="flex gap-2 w-full md:w-auto flex-wrap">
+            <select
+              value={fullscreenHistoryTypeFilter}
+              onChange={e => setFullscreenHistoryTypeFilter(e.target.value as any)}
+              className="text-xs bg-black/5 dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl font-black uppercase text-black/60 dark:text-white/60 tracking-wider outline-none"
+            >
+              <option value="all">All Outcome Results</option>
+              <option value="correct">✓ Correct Only</option>
+              <option value="incorrect">✗ Incorrect Only</option>
+            </select>
+
+            <select
+              value={fullscreenHistoryTopicFilter}
+              onChange={e => setFullscreenHistoryTopicFilter(e.target.value)}
+              className="text-xs bg-black/5 dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl font-black uppercase text-black/60 dark:text-white/60 tracking-wider outline-none max-w-[180px] truncate"
+            >
+              <option value="all">All Topics</option>
+              {topics.map(t => <option key={`full-hist-topic-${t.id}`} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Scrollable list */}
+        <div className="flex-1 overflow-y-auto pr-2 space-y-4">
+          {displayedFullscreenHistory.length === 0 ? (
+            <div className="bg-white dark:bg-[#111] border border-black/5 dark:border-white/5 rounded-[2rem] p-16 text-center">
+              <HistoryIcon size={48} className="text-black/20 dark:text-white/20 mx-auto mb-4" />
+              <p className="text-lg font-black uppercase tracking-widest text-black/40 dark:text-white/40">No Matching Quiz History</p>
+              <p className="text-xs text-black/30 dark:text-white/30 uppercase mt-1">Try modifying your query or outcome filter presets</p>
+            </div>
+          ) : (
+            displayedFullscreenHistory.map((h, idx) => {
+              const quiz = quizzes.find(q => q.id === h.quizId);
+              if (!quiz) return null;
+              
+              const languageOfQuiz = h.language || 'en';
+              const questionToShowEn = quiz.question?.en;
+              const questionToShowHi = quiz.question?.hi;
+              const userSelectedOpt = h.userAnswerIndex !== -1 && quiz.options?.[languageOfQuiz]
+                ? quiz.options[languageOfQuiz][h.userAnswerIndex] || 'Unknown Option'
+                : 'Skipped';
+              const correctOpt = quiz.options?.[languageOfQuiz]?.[quiz.correctAnswerIndex] || '';
+              
+              const formattedDate = new Date(h.timestamp).toLocaleString();
+              
+              return (
+                <div 
+                  key={h.id || `${h.timestamp}-${idx}`} 
+                  className={`border p-6 rounded-[2rem] flex flex-col gap-4 hover:border-primary/20 transition-all ${
+                    h.isCorrect 
+                      ? 'bg-emerald-500/5 dark:bg-emerald-950/10 border-emerald-500/10' 
+                      : 'bg-red-500/5 dark:bg-red-950/10 border-red-500/10'
+                  }`}
+                >
+                  <div className="flex items-center justify-between border-b border-black/5 dark:border-white/5 pb-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full ${
+                        h.isCorrect 
+                          ? 'bg-emerald-500/20 text-emerald-500' 
+                          : 'bg-red-500/20 text-red-500'
+                      }`}>
+                        {h.isCorrect ? '✓ CORRECT' : '✗ INCORRECT'}
+                      </span>
+                      <span className="text-[9px] bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40 px-2.5 py-1 rounded-full font-mono">
+                        QUIZ ID: {quiz.id}
+                      </span>
+                      <span className="text-[9px] bg-yellow-500/10 text-yellow-500 px-2 py-0.5 rounded font-black uppercase tracking-widest ml-1">
+                        DIFF: {quiz.difficulty || 3}
+                      </span>
+                      <span className="text-[9px] bg-primary/10 text-primary px-2.5 py-1 rounded-full font-black uppercase tracking-widest">
+                        TOPIC: {getTopicName(quiz.topicId)}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-black/40 dark:text-white/40 font-bold uppercase tracking-wider">{formattedDate}</span>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-extrabold text-base text-black dark:text-white leading-relaxed">
+                      {questionToShowEn || 'Untitled Question'}
+                    </h4>
+                    {questionToShowHi && questionToShowHi !== questionToShowEn && (
+                      <p className="text-sm font-semibold text-black/60 dark:text-white/60 mt-2 leading-relaxed">
+                        {questionToShowHi}
+                      </p>
+                    )}
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+                    <div className="p-4 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/5 dark:border-white/5 relative">
+                      <span className="text-[8px] font-black uppercase text-black/30 dark:text-white/30 block mb-1">Player's Attempted Answer ({languageOfQuiz.toUpperCase()})</span>
+                      <p className={`font-black text-xs ${h.isCorrect ? 'text-emerald-500' : 'text-red-500'}`}>
+                        {userSelectedOpt}
+                      </p>
+                    </div>
+                    
+                    <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/15 relative">
+                      <span className="text-[8px] font-black uppercase text-emerald-500/40 block mb-1">Correct Answer ({languageOfQuiz.toUpperCase()})</span>
+                      <p className="font-black text-xs text-emerald-500">
+                        {correctOpt}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  {quiz.explanation?.[languageOfQuiz] && (
+                    <div className="p-4 rounded-2xl bg-black/5 dark:bg-black/20 border border-black/5 dark:border-white/5">
+                      <span className="text-[8px] font-black uppercase text-black/40 dark:text-white/40 block mb-1">Explanation</span>
+                      <p className="text-xs text-black/70 dark:text-white/70 leading-relaxed font-sans font-medium">
+                        {quiz.explanation[languageOfQuiz]}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
       </div>
     );
   };
@@ -3280,6 +3849,12 @@ export default function AdminPanel() {
                        <HistoryIcon size={18} className="text-primary" />
                        Quiz History
                     </h4>
+                    <button 
+                      onClick={() => setHistoryFullscreenUser(u)}
+                      className="flex items-center gap-1 bg-primary/10 hover:bg-primary border border-primary/20 text-primary hover:text-black font-black px-2.5 py-1.5 rounded-lg text-[9px] uppercase tracking-wider transition-all"
+                    >
+                      <Maximize2 size={12} /> Full Screen
+                    </button>
                     {userHistory.length > 0 && (
                       <button 
                         onClick={() => clearUserHistory(u.id)}
@@ -3536,7 +4111,11 @@ export default function AdminPanel() {
                           <div className="flex items-center justify-between p-4 bg-white dark:bg-black rounded-2xl border border-black/5 dark:border-white/5">
                              <span className="text-black/40 dark:text-white/40 text-[10px] font-black uppercase tracking-widest">Allow Topic Switch</span>
                              <button 
-                                onClick={() => update(ref(db, `users/${u.id}`), { canSwitchTopic: !u.canSwitchTopic })}
+                                onClick={async () => {
+                                    const nextVal = !u.canSwitchTopic;
+                                    await update(ref(db, `users/${u.id}`), { canSwitchTopic: nextVal });
+                                    setUsers(prev => prev.map(usr => usr.id === u.id ? { ...usr, canSwitchTopic: nextVal } : usr));
+                                 }}
                                 className={cn(
                                    "w-12 h-6 rounded-full transition-colors relative",
                                    u.canSwitchTopic ? "bg-green-500" : "bg-black/20 dark:bg-white/10"
@@ -3545,6 +4124,25 @@ export default function AdminPanel() {
                                 <div className={cn(
                                    "absolute top-1 w-4 h-4 rounded-full bg-white transition-all shadow-sm",
                                    u.canSwitchTopic ? "left-7" : "left-1"
+                                )} />
+                             </button>
+                          </div>
+                          <div className="flex items-center justify-between p-4 bg-white dark:bg-black rounded-2xl border border-black/5 dark:border-white/5">
+                             <span className="text-black/40 dark:text-white/40 text-[10px] font-black uppercase tracking-widest">Allow Theme Section</span>
+                             <button 
+                                onClick={async () => {
+                                    const nextVal = !u.themesDisabled;
+                                    await update(ref(db, `users/${u.id}`), { themesDisabled: nextVal });
+                                    setUsers(prev => prev.map(usr => usr.id === u.id ? { ...usr, themesDisabled: nextVal } : usr));
+                                 }}
+                                className={cn(
+                                   "w-12 h-6 rounded-full transition-colors relative",
+                                   !u.themesDisabled ? "bg-green-500" : "bg-black/20 dark:bg-white/10"
+                                )}
+                             >
+                                <div className={cn(
+                                   "absolute top-1 w-4 h-4 rounded-full bg-white transition-all shadow-sm",
+                                   !u.themesDisabled ? "left-7" : "left-1"
                                 )} />
                              </button>
                           </div>
@@ -3826,6 +4424,21 @@ export default function AdminPanel() {
                                  const val = parseInt(e.target.value);
                                  if (!isNaN(val) && val !== (u.raheeCoins ?? 0)) {
                                     await update(ref(db, `users/${u.id}`), { raheeCoins: val });
+                                 }
+                              }}
+                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
+                           />
+                        </div>
+                        <div className="space-y-2">
+                           <p className="text-[10px] font-bold text-black/20 dark:text-white/20 uppercase mb-1 ml-1">Quiz Coins</p>
+                           <input 
+                              type="number"
+                              defaultValue={u.quizCoins ?? 0}
+                              key={`quizcoins-${u.id}`}
+                              onBlur={async (e) => {
+                                 const val = parseInt(e.target.value);
+                                 if (!isNaN(val) && val !== (u.quizCoins ?? 0)) {
+                                    await update(ref(db, `users/${u.id}`), { quizCoins: val });
                                  }
                               }}
                               className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-primary font-black text-2xl outline-none focus:border-primary/50 transition-all font-mono"
@@ -5743,11 +6356,17 @@ export default function AdminPanel() {
                                 >
                                    <Trash2 size={14} />
                                 </button>
-                                {(isObject(value) || isArray(value)) && (
+                                {(isObject(value) || isArray(value) || dbExplorerPath.length === 0 || key === '_FORCE_LOAD_ENTIRE_DATABASE') && (
                                    <button 
-                                     onClick={() => setDbExplorerPath([...dbExplorerPath, key])}
-                                     className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors ml-2"
-                                     title="Open Folder"
+                                     onClick={() => {
+                                        if (key === '_FORCE_LOAD_ENTIRE_DATABASE') {
+                                          setForceLoadRoot(true);
+                                        } else {
+                                          setDbExplorerPath([...dbExplorerPath, key]);
+                                        }
+                                      }}
+                                      className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors ml-2"
+                                      title={key === '_FORCE_LOAD_ENTIRE_DATABASE' ? 'Force Load Tree' : 'Open Folder'}
                                    >
                                       <ChevronRight size={14} />
                                    </button>
@@ -7752,10 +8371,21 @@ export default function AdminPanel() {
                         >
                           <div className="text-left flex-1">
                             <div className="flex items-center justify-between">
-                              <p className="font-bold flex items-center gap-2 text-black dark:text-white text-sm truncate">
-                                {u.name}
-                                {u.status === 'pending' && <span className="text-[8px] bg-yellow-500/20 text-yellow-500 px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest">PENDING</span>}
-                                {u.extraTriesRequested && <span className="text-[8px] bg-primary/20 text-primary px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest">RESET REQ</span>}
+                              <p className="font-bold flex items-center gap-1.5 text-black dark:text-white text-sm truncate">
+                                <span className="truncate">{u.name}</span>
+                                {u.isOnline ? (
+                                  <span className="flex items-center gap-1 bg-emerald-500/15 text-emerald-500 dark:text-emerald-400 px-1.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest border border-emerald-500/10 shrink-0">
+                                    <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
+                                    ONLINE
+                                  </span>
+                                ) : (
+                                  <span className="flex items-center gap-1 bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40 px-1.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest border border-black/5 dark:border-white/5 shrink-0">
+                                    <span className="w-1 h-1 rounded-full bg-black/20 dark:bg-white/20" />
+                                    OFFLINE
+                                  </span>
+                                )}
+                                {u.status === 'pending' && <span className="text-[8px] bg-yellow-500/20 text-yellow-500 px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest shrink-0">PENDING</span>}
+                                {u.extraTriesRequested && <span className="text-[8px] bg-primary/20 text-primary px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest shrink-0">RESET REQ</span>}
                               </p>
                               <div className="flex items-center gap-2">
                                 <span className="text-[9px] font-black text-primary/60 dark:text-primary uppercase tracking-widest bg-primary/5 dark:bg-primary/10 px-2 py-0.5 rounded-full border border-primary/10">
@@ -8157,11 +8787,15 @@ export default function AdminPanel() {
           const totalDurationMs = (durationHours * 60 * 60 * 1000) + (durationMinutes * 60 * 1000);
           let endTime = newEvent.endTime ? new Date(newEvent.endTime).getTime() : (startTime + totalDurationMs);
           
-          const event: Event = {
+          const event = {
             id: eventId,
             title: newEvent.title,
             description: newEvent.description,
             topicId: newEvent.topicId,
+            topicIds: newEvent.topicIds || [],
+            questionStartRange: newEvent.questionStartRange || '',
+            questionEndRange: newEvent.questionEndRange || '',
+            difficultyFilter: newEvent.difficultyFilter || 'all',
             startTime,
             endTime,
             type: newEvent.type,
@@ -8248,7 +8882,7 @@ export default function AdminPanel() {
           }
 
           setNewEvent({ 
-            title: '', description: '', topicId: '', startTime: '', endTime: '', durationHours: '1', durationMinutes: '0', 
+            title: '', description: '', topicId: '', topicIds: [], questionStartRange: '', questionEndRange: '', difficultyFilter: 'all', startTime: '', endTime: '', durationHours: '1', durationMinutes: '0', 
             isTesting: false, selectedPlayers: [], type: 'test',
             hasTimer: false, timerDuration: '30', certificateTitle: 'CERTIFICATE OF ACHIEVEMENT',
             certificateSubtitle: 'This is to certify that', certificateFooter: 'Rahee Quiz Team',
@@ -8361,6 +8995,63 @@ export default function AdminPanel() {
                                   ));
                                 })()}
                             </div>
+
+                            {quizTopicPath.length > 0 && (
+                               <div className="pt-2 border-t border-black/5 dark:border-white/5 flex gap-2">
+                                 <button
+                                   type="button"
+                                   onClick={() => {
+                                     const currentTopic = quizTopicPath[quizTopicPath.length - 1];
+                                     if (currentTopic && currentTopic.id) {
+                                       const currentIds = newEvent.topicIds || [];
+                                       if (currentIds.includes(currentTopic.id)) {
+                                         setNewEvent({ ...newEvent, topicIds: currentIds.filter(id => id !== currentTopic.id) });
+                                       } else {
+                                         setNewEvent({ ...newEvent, topicIds: [...currentIds, currentTopic.id] });
+                                       }
+                                     }
+                                   }}
+                                   className="w-full py-2 px-3 bg-primary/20 border border-primary/20 hover:bg-primary hover:text-black hover:border-transparent text-[10px] font-black uppercase text-primary tracking-wider rounded-xl transition-all"
+                                 >
+                                   {newEvent.topicIds?.includes(quizTopicPath[quizTopicPath.length - 1]?.id) 
+                                     ? "✓ Topic Pool (Click to Remove)" 
+                                     : `+ Add "${quizTopicPath[quizTopicPath.length - 1]?.name}" to Topic Pool`}
+                                 </button>
+                               </div>
+                            )}
+
+                            {/* Live Selected Pool Topics */}
+                            <div className="space-y-1 pt-2 border-t border-black/5 dark:border-white/5">
+                               <label className="text-[9px] font-black uppercase text-black/40 dark:text-white/40 block">Event Quiz Pool Topics</label>
+                               <div className="flex flex-wrap gap-1 bg-black/5 dark:bg-white/5 p-2 rounded-xl min-h-[36px] items-center">
+                                 {(!newEvent.topicIds || newEvent.topicIds.length === 0) ? (
+                                   <span className="text-[9px] font-bold text-black/30 dark:text-white/30 italic px-1">
+                                     {quizTopicPath.length > 0 
+                                       ? `Single Topic Mode: ${quizTopicPath[quizTopicPath.length - 1].name}` 
+                                       : "No topics added. Please select topics."}
+                                   </span>
+                                 ) : (
+                                   newEvent.topicIds.map(tid => {
+                                     const name = getTopicName(tid);
+                                     return (
+                                       <div key={tid} className="flex items-center gap-1 bg-primary/20 border border-primary/20 text-primary px-2 py-0.5 rounded-full text-[9px] font-bold">
+                                         <span>{name}</span>
+                                         <button
+                                           type="button"
+                                           onClick={() => {
+                                             const updated = (newEvent.topicIds || []).filter(id => id !== tid);
+                                             setNewEvent({ ...newEvent, topicIds: updated });
+                                           }}
+                                           className="ml-1 text-[11px] leading-none text-primary hover:text-red-500 font-bold"
+                                         >
+                                           &times;
+                                         </button>
+                                       </div>
+                                     );
+                                   })
+                                 )}
+                               </div>
+                            </div>
                          </div>
                       </div>
                    </div>
@@ -8421,6 +9112,56 @@ export default function AdminPanel() {
                         </div>
                       </div>
 
+                      <div className="grid grid-cols-2 gap-4 border-t border-black/5 dark:border-white/5 pt-4">
+                         <div className="space-y-1 col-span-2">
+                            <span className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 block font-black">Question Range Filter (Optional)</span>
+                            <span className="text-[8px] text-black/40 dark:text-white/40 block">Select a custom subset range from the quiz pool. Leave empty to include all questions.</span>
+                         </div>
+                         <div className="space-y-1">
+                            <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">Start Question No.</label>
+                            <input 
+                              type="number"
+                              value={newEvent.questionStartRange || ''}
+                              onChange={e => setNewEvent({...newEvent, questionStartRange: e.target.value})}
+                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary"
+                              placeholder="e.g. 1"
+                              min="1"
+                            />
+                         </div>
+                         <div className="space-y-1">
+                            <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2">End Question No.</label>
+                            <input 
+                              type="number"
+                              value={newEvent.questionEndRange || ''}
+                              onChange={e => setNewEvent({...newEvent, questionEndRange: e.target.value})}
+                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary"
+                              placeholder="e.g. 10"
+                              min="1"
+                            />
+                         </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-4 border-t border-black/5 dark:border-white/5 pt-4">
+                         <div className="space-y-1">
+                            <span className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 block font-black">Challenge Difficulty Filter</span>
+                            <span className="text-[8px] text-black/40 dark:text-white/40 block">Select a specific item difficulty to allow in this event. Other difficulties will be automatically filtered out.</span>
+                         </div>
+                         <div className="space-y-1">
+                            <select 
+                              value={newEvent.difficultyFilter || 'all'}
+                              onChange={e => setNewEvent({...newEvent, difficultyFilter: e.target.value})}
+                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl p-4 text-black dark:text-white font-bold outline-none focus:border-primary text-xs"
+                            >
+                              <option value="all">Include All Difficulties (1-5)</option>
+                              <option value="1">Difficulty 1 (Easy Only)</option>
+                              <option value="2">Difficulty 2 (Medium-Easy Only)</option>
+                              <option value="3">Difficulty 3 (Normal Only)</option>
+                              <option value="4">Difficulty 4 (Hard Only)</option>
+                              <option value="5">Difficulty 5 (Extremely Hard Only)</option>
+                            </select>
+                         </div>
+                      </div>
+
                       {/* Timer & Certificate Settings */}
                       <div className="pt-4 border-t border-black/5 dark:border-white/5 space-y-4">
                         <div className="flex items-center justify-between px-2">
@@ -8443,9 +9184,9 @@ export default function AdminPanel() {
                                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-[#32befa]"></div>
                               </label>
                            </div>
-                           {newEvent.isTesting && (
+                           {true && (
                              <div className="space-y-2 bg-black/5 p-4 rounded-2xl border border-black/5 dark:border-white/5">
-                                <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2 block">Assign to Selected Players</label>
+                                <label className="text-[10px] font-black uppercase text-black/30 dark:text-white/30 ml-2 block font-black">Targeted Event Visibility (Optional)</label>
                                 <div className="max-h-40 overflow-y-auto space-y-1 border border-black/10 dark:border-white/10 rounded-xl p-2 bg-white dark:bg-black">
                                    {users.filter(u => !u.isBot).map(user => {
                                       const isSelected = newEvent.selectedPlayers?.includes(user.id) || false;
@@ -8470,8 +9211,8 @@ export default function AdminPanel() {
                                 </div>
                                 <p className="text-[8px] text-[#32befa] uppercase tracking-wider font-extrabold px-2">
                                   {(!newEvent.selectedPlayers || newEvent.selectedPlayers.length === 0) 
-                                    ? "⚠ No players selected: Only Admin can see notifications and test it" 
-                                    : `Selected: ${newEvent.selectedPlayers.length} custom receiver(s)`}
+                                    ? "✓ Public Mode: All registered players can see and join this event" 
+                                    : `Visibility Restricted: Visible only to Admin and ${newEvent.selectedPlayers.length} chosen user(s)`}
                                 </p>
                              </div>
                            )}
@@ -9035,12 +9776,22 @@ export default function AdminPanel() {
                     <input type="text" placeholder="Hint (HI)" value={newQuiz.hintHi} onChange={e => setNewQuiz({...newQuiz, hintHi: e.target.value})} className="bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl outline-none text-xs text-black dark:text-white" />
                   </div>
                   <div className="grid grid-cols-1 gap-3">
-                    <select value={newQuiz.correct} onChange={e => setNewQuiz({...newQuiz, correct: parseInt(e.target.value)})} className="flex-1 bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl text-xs font-bold text-black/60 dark:text-white/60">
-                      <option value={1}>Correct: Opt 1</option>
-                      <option value={2}>Correct: Opt 2</option>
-                      <option value={3}>Correct: Opt 3</option>
-                      <option value={4}>Correct: Opt 4</option>
-                    </select>
+                    <div className="grid grid-cols-2 gap-3">
+                      <select value={newQuiz.correct} onChange={e => setNewQuiz({...newQuiz, correct: parseInt(e.target.value)})} className="flex-1 bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl text-xs font-bold text-black/60 dark:text-white/60">
+                        <option value={1}>Correct: Opt 1</option>
+                        <option value={2}>Correct: Opt 2</option>
+                        <option value={3}>Correct: Opt 3</option>
+                        <option value={4}>Correct: Opt 4</option>
+                      </select>
+                      
+                      <select value={newQuiz.difficulty || 3} onChange={e => setNewQuiz({...newQuiz, difficulty: parseInt(e.target.value)})} className="flex-1 bg-white dark:bg-black border border-black/5 dark:border-white/5 p-3 rounded-xl text-xs font-bold text-black/60 dark:text-white/60">
+                        <option value={1}>Difficulty: 1 (Easy)</option>
+                        <option value={2}>Difficulty: 2 (Medium-Easy)</option>
+                        <option value={3}>Difficulty: 3 (Normal)</option>
+                        <option value={4}>Difficulty: 4 (Hard)</option>
+                        <option value={5}>Difficulty: 5 (Extremely Hard)</option>
+                      </select>
+                    </div>
                     
                     <div className="p-4 bg-white dark:bg-black border border-black/5 dark:border-white/5 rounded-xl space-y-3">
                       <div className="flex items-center justify-between">
@@ -9137,14 +9888,92 @@ export default function AdminPanel() {
                   placeholder="Format: ID, Q_EN, Q_HI, O1_EN, O1_HI, O2_EN, O2_HI, O3_EN, O3_HI, O4_EN, O4_HI, Correct, Topic, Exp_EN, Exp_HI"
                   className="w-full bg-white dark:bg-black border border-black/5 dark:border-white/5 p-4 rounded-2xl h-48 outline-none focus:border-[#32befa] transition-all text-[10px] font-mono leading-relaxed text-black dark:text-white opacity-60 focus:opacity-100"
                 />
-                <button onClick={addBulkQuizzes} className="w-full mt-4 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-black dark:text-white font-black p-4 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 transition-all">BATCH PROCESS</button>
+                <div className="flex flex-col sm:flex-row gap-2 mt-4">
+                  <button onClick={addBulkQuizzes} className="flex-1 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-black dark:text-white font-black p-4 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 transition-all">BATCH PROCESS</button>
+                  {recentlyAddedQuizzes.length > 0 && (
+                    <button 
+                      onClick={deleteRecentlyAddedQuizzes} 
+                      className="bg-red-500/10 hover:bg-red-500 border border-red-500/20 text-red-100 hover:text-white font-black p-4 rounded-xl transition-all flex items-center justify-center gap-2 text-xs uppercase"
+                    >
+                      <Trash2 size={16} /> Delete Last Batch ({recentlyAddedQuizzes.length})
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
             {/* List Section */}
             <div className="space-y-4">
+               {recentlyAddedQuizzes.length > 0 && (
+                 <div className="p-6 bg-[#32befa]/5 rounded-[2rem] border border-[#32befa]/20 space-y-4">
+                   <div className="flex items-center justify-between gap-4 flex-wrap">
+                     <div>
+                       <h4 className="font-black text-sm uppercase tracking-wider text-[#32befa] flex items-center gap-2">
+                         <span className="w-2.5 h-2.5 bg-[#32befa] rounded-full animate-ping" />
+                         Recently Added Quizzes ({recentlyAddedQuizzes.length})
+                       </h4>
+                       <p className="text-[10px] text-black/40 dark:text-white/40 font-bold uppercase">Quickly delete individual imported quizzes or undo the entire batch in one click</p>
+                     </div>
+                     <button
+                       onClick={deleteRecentlyAddedQuizzes}
+                       className="bg-red-500 hover:bg-red-600 text-white font-black px-4 py-2 rounded-xl text-[10px] uppercase tracking-wider transition-all shadow-md flex items-center gap-2 cursor-pointer"
+                     >
+                       <Trash2 size={12} /> Delete Entire Batch
+                     </button>
+                   </div>
+                   <div className="flex flex-wrap gap-2">
+                     {recentlyAddedQuizzes.map((item) => (
+                       <div key={`recent-badge-${item.topicId}-${item.id}`} className="flex items-center gap-1 bg-black/10 dark:bg-white/5 border border-black/10 dark:border-white/10 px-3 py-1.5 rounded-full text-[10.5px] font-black text-black/80 dark:text-white/80">
+                         <span>#{item.id} in "{item.topicId}"</span>
+                         <button
+                           onClick={() => deleteSingleRecentQuiz(item.topicId, item.id)}
+                           className="text-red-400 hover:text-red-600 ml-1.5 cursor-pointer bg-red-500/10 hover:bg-red-500/20 p-1 rounded-full transition-all flex items-center justify-center"
+                           title="Delete this quiz in one click"
+                         >
+                           <CloseIcon size={12} />
+                         </button>
+                       </div>
+                     ))}
+                   </div>
+                 </div>
+               )}
+               {/* Topic and Difficulty filter panel */}
+               <div className="p-5 bg-black/5 dark:bg-[#111] rounded-[2rem] border border-black/5 dark:border-white/5 space-y-4">
+                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                   <div>
+                     <h4 className="font-black text-sm uppercase tracking-widest text-[#32befa]">Topic &amp; Challenge Difficulty Filters</h4>
+                     <p className="text-[10px] text-black/40 dark:text-white/40 font-bold uppercase">Show quizzes only from selected topics or specific difficulty levels</p>
+                   </div>
+                   <div className="flex items-center gap-2 flex-wrap">
+                      <select 
+                        value={selectedFilterTopicId} 
+                        onChange={e => setSelectedFilterTopicId(e.target.value)}
+                        className="text-[10px] bg-white dark:bg-black border border-black/5 dark:border-white/5 p-2 rounded-xl text-xs font-black text-black/60 dark:text-white/60 outline-none focus:border-[#32befa] max-w-[200px] truncate"
+                      >
+                        <option value="all">View All Topics</option>
+                        {allFlattenedTopics.map((t, idx) => (
+                           <option key={`filter-t-${t.id || idx}-${idx}`} value={t.id}>{t.label}</option>
+                        ))}
+                      </select>
+
+                      <select 
+                        value={selectedFilterDifficulty} 
+                        onChange={e => setSelectedFilterDifficulty(e.target.value)}
+                        className="text-[10px] bg-white dark:bg-black border border-black/5 dark:border-white/5 p-2 rounded-xl text-xs font-black text-black/60 dark:text-white/60 outline-none focus:border-[#32befa]"
+                      >
+                        <option value="all">All Difficulties (1-5)</option>
+                        <option value="1">Difficulty 1 (Easy)</option>
+                        <option value="2">Difficulty 2 (Medium-Easy)</option>
+                        <option value="3">Difficulty 3 (Normal)</option>
+                        <option value="4">Difficulty 4 (Hard)</option>
+                        <option value="5">Difficulty 5 (Extremely Hard)</option>
+                      </select>
+                   </div>
+                 </div>
+               </div>
+
                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                 <h3 className="font-black text-sm uppercase tracking-widest text-black/40 dark:text-white/40">Registered Quizzes ({quizzes.length})</h3>
+                 <h3 className="font-black text-sm uppercase tracking-widest text-black/40 dark:text-white/40">Registered Quizzes ({displayedQuizzes.length === quizzes.length ? quizzes.length : `${displayedQuizzes.length} matches / ${quizzes.length}`})</h3>
                  <div className="flex items-center gap-2 flex-wrap">
                     <button 
                       onClick={() => {
@@ -9256,20 +10085,29 @@ export default function AdminPanel() {
                              type: 'error'
                            });
                            
-                           if (verified) {
-                             const promises = selectedQuizKeys.map(async (key) => {
-                               const [oldTopicId, id] = key.split('_');
-                               const q = quizzes.find(item => `${item.topicId}_${item.id}` === key);
-                               if (q) {
-                                 const updatedQuiz = { ...q, topicId: bulkTargetTopicId };
-                                 // 1. Set at the new topic location
-                                 await set(ref(db, `topicQuizzes/${bulkTargetTopicId}/${id}`), updatedQuiz);
-                                 // 2. Remove from the old topic location
-                                 await remove(ref(db, `topicQuizzes/${oldTopicId}/${id}`));
-                               }
-                             });
-                             await Promise.all(promises);
-                             setSelectedQuizKeys([]);
+                                                       if (verified) {
+                              const promises = selectedQuizKeys.map(async (key) => {
+                                const [oldTopicId, id] = key.split('_');
+                                const q = quizzes.find(item => `${item.topicId}_${item.id}` === key);
+                                if (q) {
+                                  const updatedQuiz = { ...q, topicId: bulkTargetTopicId };
+                                  // 1. Set at the new topic location
+                                  await set(ref(db, `topicQuizzes/${bulkTargetTopicId}/${id}`), updatedQuiz);
+                                  // 2. Remove from the old topic location
+                                  await remove(ref(db, `topicQuizzes/${oldTopicId}/${id}`));
+                                }
+                              });
+                              try {
+                                await Promise.all(promises);
+                              } catch (err: any) {
+                                await alert({
+                                  title: "Relocate Failed",
+                                  description: err.message || "Failed to relocate one or more quizzes.",
+                                  type: 'error'
+                                });
+                                return;
+                              }
+                              setSelectedQuizKeys([]);
                              setBulkTargetTopicId('');
                              await alert({
                                title: "Success",
@@ -9335,7 +10173,7 @@ export default function AdminPanel() {
                )}
 
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 {quizzes.slice().reverse().map((q, qIdx) => {
+                 {displayedQuizzes.slice().reverse().map((q, qIdx) => { const isRecentlyAdded = recentlyAddedQuizzes.some(item => item.id == q.id && item.topicId == q.topicId);
                    const compoundKey = `${q.topicId}_${q.id}`;
                    const isChecked = selectedQuizKeys.includes(compoundKey);
                    return (
@@ -9343,14 +10181,16 @@ export default function AdminPanel() {
                        "border p-5 rounded-[2rem] group relative overflow-hidden transition-all duration-200",
                        isChecked 
                          ? "bg-red-500/5 border-red-500/30" 
-                         : "bg-black/5 dark:bg-black/60 border-black/5 dark:border-white/5"
+                         : isRecentlyAdded
+                           ? "bg-[#32befa]/5 border-[#32befa]/30 border-dashed"
+                           : "bg-black/5 dark:bg-black/60 border-black/5 dark:border-white/5"
                      )}>
                         <div className={cn(
                           "absolute top-0 left-0 w-1 h-full bg-[#32befa] opacity-0 group-hover:opacity-100 transition-all",
                           isChecked && "bg-red-500 opacity-100"
                         )} />
-                        <div className="flex justify-between items-start mb-4">
-                          <div className="flex items-center gap-3">
+                        <div className="flex items-center justify-between gap-4 mb-4 overflow-x-auto scrollbar-hide py-1.5 -mx-2 px-2 border-b border-black/5 dark:border-white/5 pb-2">
+                          <div className="flex items-center gap-3 shrink-0">
                              <input 
                                type="checkbox" 
                                checked={isChecked}
@@ -9368,10 +10208,20 @@ export default function AdminPanel() {
                                    {q.id}
                                 </span>
                              )}
-                             <span className="text-[8px] bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40 px-2 py-0.5 rounded font-black uppercase tracking-widest">{q.topicId}</span>
+                             <span className="text-[8px] bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40 px-2 py-0.5 rounded font-black uppercase tracking-widest">{q.topicId}</span><span className="text-[8px] bg-yellow-500/10 text-yellow-500 px-2 py-0.5 rounded font-black uppercase tracking-widest ml-1">DIFF: {q.difficulty || 4}</span>{isRecentlyAdded && <span className="text-[8px] bg-[#32befa]/20 text-[#32befa] border border-[#32befa]/20 px-2 py-0.5 rounded font-black uppercase tracking-widest ml-1 animate-pulse">RECENTLY IMPORTED</span>}
                           </div>
                           <div className="flex gap-2">
-                             <button onClick={() => editQuizInForm(q)} className="text-black/10 dark:text-white/10 hover:text-primary transition-colors"><Edit2 size={16} /></button>
+
+                             {isRecentlyAdded && (
+                                <button
+                                  onClick={() => deleteSingleRecentQuiz(q.topicId, q.id)}
+                                  className="flex items-center gap-1 bg-red-500 hover:bg-red-650 text-white font-bold px-2.5 py-1 rounded-sm text-[8px] uppercase tracking-wider transition-all shadow-md cursor-pointer mr-2"
+                                  title="Delete imported quiz in one click"
+                                >
+                                  <Trash2 size={10} /> Delete Recent
+                                </button>
+                             )}
+                             <button onClick={() => editQuizInForm(q)} className="text-zinc-500 dark:text-zinc-400 hover:text-[#32befa] transition-all shrink-0" id={`edit-quiz-${q.id}`} style={{ opacity: 1 }}><Edit2 size={16} /></button>
                              <button onClick={async () => {
                                const verified = await confirm({
                                  title: "Delete Quiz",
@@ -9383,7 +10233,7 @@ export default function AdminPanel() {
                                  // Remove from selection if it was selected
                                  setSelectedQuizKeys(prev => prev.filter(k => k !== compoundKey));
                                }
-                             }} className="text-black/10 dark:text-white/10 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
+                             }} className="text-zinc-500 dark:text-zinc-400 hover:text-red-500 transition-all shrink-0" style={{ opacity: 1 }}><Trash2 size={16} /></button>
                           </div>
                         </div>
                         <h4 className="font-bold text-sm leading-tight mb-4 text-black dark:text-white">{q.question?.en || 'Untitled Question'}</h4>
@@ -9407,6 +10257,19 @@ export default function AdminPanel() {
         );
       case 'bots':
         const botPlayers = users.filter(u => u.isBot);
+        const botFriendRequests: Array<{ bot: User; sender: User }> = [];
+        users.forEach(u => {
+          if (u.isBot && u.pendingRequests) {
+            Object.entries(u.pendingRequests).forEach(([senderId, status]) => {
+              if (status === 'incoming') {
+                const sender = users.find(realUser => realUser.id === senderId);
+                if (sender && !sender.isBot) {
+                  botFriendRequests.push({ bot: u, sender });
+                }
+              }
+            });
+          }
+        });
         return (
           <div className="space-y-6 pb-32">
              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -9496,8 +10359,6 @@ export default function AdminPanel() {
                 </div>
              </div>
 
-             <div className="space-y-4">
-               <div className="flex items-center justify-between px-2">
              {/* Custom Bot Names Configuration Card */}
              <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5 space-y-4 mb-6">
                 <div className="flex items-center gap-3">
@@ -9538,9 +10399,119 @@ export default function AdminPanel() {
                 </div>
              </div>
 
-                 <h3 className="text-sm font-black text-black/20 dark:text-white/20 uppercase tracking-widest">Active Simulators ({botPlayers.length})</h3>
-                 <span className="text-[10px] font-black text-[#32befa] bg-[#32befa]/10 px-3 py-1 rounded-full uppercase tracking-tighter">Instance List</span>
-               </div>
+              {/* Bot Friend Requests Panel */}
+              <div className="bg-black/5 dark:bg-[#111] p-6 rounded-[2rem] border border-black/5 dark:border-white/5 space-y-4 mb-6">
+                <div className="flex items-center gap-3">
+                   <div className="w-10 h-10 bg-[#32befa]/10 rounded-xl flex items-center justify-center text-[#32befa]">
+                      <Users size={20} />
+                   </div>
+                   <div>
+                      <h3 className="text-sm font-black uppercase tracking-tighter text-black dark:text-white leading-none">Simulator Friend Requests</h3>
+                      <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest mt-1">Accept or reject pending requests sent by real players on behalf of bots.</p>
+                   </div>
+                </div>
+
+                {botFriendRequests.length === 0 ? (
+                  <div className="p-8 border border-dashed border-black/10 dark:border-white/10 rounded-2xl text-center">
+                    <p className="text-xs text-black/40 dark:text-white/40 font-bold uppercase tracking-widest">No pending bot friend requests</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {botFriendRequests.map(({ bot, sender }, idx) => (
+                      <div key={`bot-req-${bot.id}-${sender.id}-${idx}`} className="bg-white dark:bg-black/40 p-4 rounded-2xl border border-black/5 dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-xs bg-primary/20 text-primary px-2 py-0.5 rounded-md uppercase tracking-widest font-mono">Real Player</span>
+                            <p className="font-black text-sm text-black dark:text-white">{sender.name} (@{sender.username || sender.id})</p>
+                          </div>
+                          <p className="text-[10px] text-zinc-400 mt-1">
+                            is requesting to be friends with bot: <span className="text-[#32befa] font-bold">@{bot.username || bot.name}</span> ({bot.name})
+                          </p>
+                        </div>
+                        
+                        <div className="flex items-center gap-2 self-end sm:self-auto font-sans">
+                          <button
+                            onClick={async () => {
+                              const confirmAction = await confirm({
+                                title: "Accept Request",
+                                description: `Accept friend request from "${sender.name}" on behalf of "${bot.name}"?`,
+                                type: 'success'
+                              });
+                              if (!confirmAction) return;
+                              
+                              try {
+                                // Update friends lists
+                                await update(ref(db, `users/${sender.id}/friends`), { [bot.id]: true });
+                                await update(ref(db, `bots/${bot.id}/friends`), { [sender.id]: true });
+                                
+                                // Clear pending requests
+                                await set(ref(db, `users/${sender.id}/pendingRequests/${bot.id}`), null);
+                                await set(ref(db, `bots/${bot.id}/pendingRequests/${sender.id}`), null);
+                                
+                                // Send push notification to target device if enabled
+                                const svcAccountSnap = await get(ref(db, 'adminConfig/serviceAccount'));
+                                const settingsSnap = await get(ref(db, 'settings'));
+                                const sysNotifsEnabled = settingsSnap.exists() ? settingsSnap.val().pushNotificationsEnabled !== false : true;
+                                
+                                if (sysNotifsEnabled && svcAccountSnap.exists()) {
+                                  const serviceAccount = svcAccountSnap.val();
+                                  const tokensSnap = await get(ref(db, `fcmTokens/${sender.id}`));
+                                  if (tokensSnap.exists()) {
+                                    const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
+                                    const title = 'Friend Request Accepted';
+                                    const body = `${bot.name} accepted your friend request!`;
+                                    for (const token of tokens) {
+                                      await NotificationService.sendToToken(serviceAccount, token, title, body);
+                                    }
+                                  }
+                                }
+                                
+                                alert({ title: "Accepted", description: `Successfully linked ${sender.name} and ${bot.name} as friends!`, type: "success" });
+                              } catch (e: any) {
+                                console.error("Failed to accept bot request:", e);
+                                alert({ title: "Error", description: e.message || "Failed to complete transaction", type: "error" });
+                              }
+                            }}
+                            className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-all"
+                          >
+                            Accept
+                          </button>
+                          <button
+                            onClick={async () => {
+                              const confirmAction = await confirm({
+                                title: "Reject Request",
+                                description: `Reject friend request from "${sender.name}" on behalf of "${bot.name}"?`,
+                                type: 'error'
+                              });
+                              if (!confirmAction) return;
+                              
+                              try {
+                                // Clear pending requests
+                                await set(ref(db, `users/${sender.id}/pendingRequests/${bot.id}`), null);
+                                await set(ref(db, `bots/${bot.id}/pendingRequests/${sender.id}`), null);
+                                
+                                alert({ title: "Rejected", description: "Successfully dismissed the pending request.", type: "success" });
+                              } catch (e: any) {
+                                console.error("Failed to reject bot request:", e);
+                                alert({ title: "Error", description: e.message || "Failed to dismiss request", type: "error" });
+                              }
+                            }}
+                            className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-all"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+             <div className="space-y-4">
+                <div className="flex items-center justify-between px-2">
+                  <h3 className="text-sm font-black text-black/20 dark:text-white/20 uppercase tracking-widest">Active Simulators ({botPlayers.length})</h3>
+                  <span className="text-[10px] font-black text-[#32befa] bg-[#32befa]/10 px-3 py-1 rounded-full uppercase tracking-tighter">Instance List</span>
+                </div>
                
                {botPlayers.length === 0 ? (
                   <div className="bg-black/5 dark:bg-white/5 p-12 rounded-[2rem] border border-black/5 dark:border-white/5 text-center">
@@ -9559,7 +10530,21 @@ export default function AdminPanel() {
                                 <p className="text-[9px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">{b.xp} XP • LVL {b.rank}</p>
                              </div>
                           </div>
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-2">
+                             <button 
+                                onClick={async () => {
+                                   const currentPrivacy = b.privacyEnabled === true;
+                                   await update(ref(db, `bots/${b.id}`), { privacyEnabled: !currentPrivacy });
+                                }} 
+                                className={cn(
+                                  "px-2 py-1 text-[8px] font-black uppercase rounded-lg border tracking-widest transition-all",
+                                  b.privacyEnabled 
+                                    ? "bg-red-500/15 border-red-500/30 text-red-500 hover:bg-red-500 hover:text-white"
+                                    : "bg-green-500/15 border-green-500/30 text-green-500 hover:bg-green-500 hover:text-white"
+                                )}
+                             >
+                                {b.privacyEnabled ? "Privacy: ON" : "Privacy: OFF"}
+                             </button>
                              <button 
                                 onClick={async () => {
                                    const verified = await confirm({
@@ -9586,6 +10571,113 @@ export default function AdminPanel() {
           <div className="space-y-8">
             <h3 className="text-xl font-black uppercase tracking-tighter text-black dark:text-white">Global Configuration</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {/* Customizable Player Appreciation / One-Time Game Note Modal Controller */}
+              <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-pink-500/10 dark:border-pink-500/5 space-y-6">
+                <div className="flex items-center justify-between gap-4 mb-2">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-pink-500/10 flex items-center justify-center text-pink-500">
+                      <Heart size={24} fill="currentColor" />
+                    </div>
+                    <div>
+                      <h4 className="font-black uppercase tracking-tight">One-Time Guest Note</h4>
+                      <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest font-mono">Appreciation Pop Screen</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setUserNoteActive(!userNoteActive)}
+                    className={cn(
+                      "px-3 py-1.5 rounded-xl font-black uppercase tracking-widest text-[9px] border transition-all shadow-md cursor-pointer",
+                      userNoteActive
+                        ? "bg-emerald-500 text-white border-emerald-400"
+                        : "bg-red-500 text-white border-red-400"
+                    )}
+                  >
+                    {userNoteActive ? 'ACTIVE' : 'MUTED'}
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <p className="text-xs font-bold text-black/60 dark:text-gray-400 leading-relaxed">
+                    Set a dynamic feedback/appreciation note popup. Use <span className="font-mono text-primary font-black">{"{"}name{"}"}</span> or <span className="font-mono text-primary font-black">{"{"}username{"}"}</span> for personalized name greeting injection.
+                  </p>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black uppercase text-black/40 dark:text-white/40 ml-1">Note Title</label>
+                    <input
+                      type="text"
+                      value={userNoteTitle}
+                      onChange={(e) => setUserNoteTitle(e.target.value)}
+                      placeholder="e.g. Special Thanks, {name}!"
+                      className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary text-xs transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black uppercase text-black/40 dark:text-white/40 ml-1">Note Body Content</label>
+                    <textarea
+                      value={userNoteBody}
+                      onChange={(e) => setUserNoteBody(e.target.value)}
+                      placeholder="e.g. We appreciate your valuable play, {name}!"
+                      rows={3}
+                      className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-primary text-xs transition-all resize-none"
+                    />
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="text-[9px] font-black uppercase text-black/40 dark:text-white/40 ml-1">Target Players Range</label>
+                    <div className="grid grid-cols-2 gap-2 p-1.5 bg-black/10 dark:bg-black/40 rounded-2xl border border-black/5 dark:border-white/5">
+                      <button
+                        type="button"
+                        onClick={() => setUserNoteTarget('all')}
+                        className={cn(
+                          "py-3 rounded-xl font-black uppercase text-[10px] tracking-wider transition-all cursor-pointer",
+                          userNoteTarget === 'all' 
+                            ? "bg-[#32befa] text-white shadow-md border border-[#32befa]/20" 
+                            : "bg-transparent text-black/50 dark:text-white/40 hover:text-black/80 hover:dark:text-white/80"
+                        )}
+                      >
+                        All Players
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (userNoteTarget === 'all') {
+                            setUserNoteTarget('');
+                          }
+                        }}
+                        className={cn(
+                          "py-3 rounded-xl font-black uppercase text-[10px] tracking-wider transition-all cursor-pointer",
+                          userNoteTarget !== 'all' 
+                            ? "bg-[#32befa] text-white shadow-md border border-[#32befa]/20" 
+                            : "bg-transparent text-black/50 dark:text-white/40 hover:text-black/80 hover:dark:text-white/80"
+                        )}
+                      >
+                        Specific Player(s)
+                      </button>
+                    </div>
+
+                    {userNoteTarget !== 'all' && (
+                      <div className="space-y-1.5 animate-fadeIn">
+                        <label className="text-[9px] font-black uppercase text-black/40 dark:text-white/40 ml-1">Enter Target Usernames/IDs (Comma Separated)</label>
+                        <input
+                          type="text"
+                          value={userNoteTarget}
+                          onChange={(e) => setUserNoteTarget(e.target.value)}
+                          className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 rounded-2xl font-bold outline-none focus:border-[#32befa] text-xs transition-all font-mono"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={saveGameNote}
+                    className="w-full py-4 bg-[#32befa] hover:bg-[#32befa]/90 text-white font-black uppercase tracking-widest text-xs rounded-2xl transition-all shadow-md active:scale-95 cursor-pointer"
+                  >
+                    Save &amp; Inject note
+                  </button>
+                </div>
+              </div>
+
               <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
                 <div className="flex items-center gap-4 mb-2">
                   <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
@@ -9635,6 +10727,38 @@ export default function AdminPanel() {
                        {settings?.shopLivesEnabled ? 'SHOP LIVES ENABLED' : 'SHOP LIVES DISABLED'}
                      </button>
                    </div>
+                </div>
+              </div>
+
+              <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                    <Palette size={24} />
+                  </div>
+                  <div>
+                    <h4 className="font-black uppercase tracking-tight">Theme Customization</h4>
+                    <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest">Global Toggle</p>
+                  </div>
+                </div>
+                
+                <div className="space-y-4">
+                   <p className="text-sm font-bold text-black/60 dark:text-white/60 leading-relaxed font-sans">
+                     Control whether the theme customization section is shown in settings. When disabled, the theme settings section is hidden for all players.
+                   </p>
+                   <button 
+                     onClick={async () => {
+                       const newState = !settings?.themesDisabled;
+                       await update(ref(db, 'settings'), { themesDisabled: newState });
+                     }}
+                     className={cn(
+                       "w-full py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all border shadow-lg cursor-pointer",
+                       !settings?.themesDisabled 
+                         ? "bg-green-500 text-white border-green-400 shadow-green-500/20" 
+                         : "bg-red-500 text-white border-red-400 shadow-red-500/20"
+                     )}
+                   >
+                     {!settings?.themesDisabled ? 'THEMES ARE ENABLED GLOBALLY' : 'THEMES ARE DISABLED GLOBALLY'}
+                   </button>
                 </div>
               </div>
 
@@ -9706,6 +10830,61 @@ export default function AdminPanel() {
                            </button>
                         </div>
                       </div>
+                   </div>
+                </div>
+              </div>
+
+              {/* Quiz Coins Config */}
+              <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="w-12 h-12 rounded-2xl bg-yellow-500/10 flex items-center justify-center text-yellow-500">
+                    <Coins size={24} className="animate-pulse" strokeWidth={2.5} />
+                  </div>
+                  <div>
+                    <h4 className="font-black uppercase tracking-tight">Quiz Coins Reward</h4>
+                    <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest font-mono">Correct Answer Coin Value</p>
+                  </div>
+                </div>
+                
+                <div className="space-y-4">
+                   <p className="text-xs font-bold text-black/60 dark:text-gray-400 leading-relaxed">
+                     Set how many Quiz Coins are earned for every correct answer. 100 Quiz Coins auto-converts into 1 Rahee Coin.
+                   </p>
+                   <div className="bg-white/5 dark:bg-black/20 p-6 rounded-3xl border border-black/5 dark:border-white/5">
+                     <div className="flex items-center justify-between mb-4">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">Quiz Coin Reward Value</span>
+                        <span className="text-xl font-black text-yellow-500">{settings?.correctQuizCoinValue !== undefined ? settings.correctQuizCoinValue : 10} Quiz Coins</span>
+                     </div>
+                     <div className="flex gap-2">
+                        <button 
+                          onClick={async () => {
+                            const current = settings?.correctQuizCoinValue !== undefined ? settings.correctQuizCoinValue : 10;
+                            if (current <= 1) return;
+                            await update(ref(db, 'settings'), { correctQuizCoinValue: current - 1 });
+                          }}
+                          className="flex-1 py-4 bg-black/5 dark:bg-white/10 rounded-2xl flex items-center justify-center text-black dark:text-white hover:bg-yellow-500 hover:text-black transition-all"
+                        >
+                           <ChevronDown size={20} />
+                        </button>
+                        <button 
+                          onClick={async () => {
+                            await update(ref(db, 'settings'), { correctQuizCoinValue: 10 });
+                          }}
+                          className="px-6 py-4 bg-black/5 dark:bg-white/10 rounded-2xl flex items-center justify-center text-black/40 dark:text-white/40 hover:text-primary transition-all"
+                        >
+                           <RotateCcw size={16} />
+                        </button>
+                        <button 
+                          onClick={async () => {
+                            const current = settings?.correctQuizCoinValue !== undefined ? settings.correctQuizCoinValue : 10;
+                            if (current >= 100) return;
+                            await update(ref(db, 'settings'), { correctQuizCoinValue: current + 1 });
+                          }}
+                          className="flex-1 py-4 bg-black/5 dark:bg-white/10 rounded-2xl flex items-center justify-center text-black dark:text-white hover:bg-yellow-500 hover:text-black transition-all"
+                        >
+                           <ChevronUp size={20} />
+                        </button>
+                     </div>
                    </div>
                 </div>
               </div>
@@ -9804,6 +10983,113 @@ export default function AdminPanel() {
                     >
                       {(settings?.adminNotifyOnPlay !== false) ? 'PLAYER TRACKING IS ACTIVE' : 'PLAYER TRACKING IS SILENCED'}
                     </button>
+                 </div>
+               </div>
+
+                {/* Admin Master FCM Token Configuration */}
+               <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
+                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
+                   <div className="flex items-center gap-4">
+                     <div className="w-12 h-12 rounded-2xl bg-[#32befa]/10 flex items-center justify-center text-[#32befa]">
+                       <Bell size={24} />
+                     </div>
+                     <div>
+                       <h4 className="font-black uppercase tracking-tight">Admin Master FCM Token</h4>
+                       <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest font-mono">FCM Target Token</p>
+                     </div>
+                   </div>
+
+                   <button
+                     onClick={async () => {
+                       const currentVal = settings?.adminMasterFcmEnabled !== false;
+                       await update(ref(db, 'settings'), { adminMasterFcmEnabled: !currentVal });
+                     }}
+                     className={cn(
+                       "px-4 py-2.5 rounded-xl font-black uppercase tracking-widest text-[9px] border transition-all shadow-md cursor-pointer",
+                       settings?.adminMasterFcmEnabled !== false
+                         ? "bg-green-500 text-white border-green-400 shadow-green-500/10"
+                         : "bg-red-500 text-white border-red-400 shadow-red-500/10"
+                     )}
+                   >
+                     {settings?.adminMasterFcmEnabled !== false ? 'ACTIVE' : 'MUTED'}
+                   </button>
+                 </div>
+                 
+                 <div className="space-y-4">
+                    <p className="text-sm font-bold text-black/60 dark:text-white/60 leading-relaxed">
+                      Configure a direct FCM registry token to receive immediate system push notifications (including game starts, player logins, new signups, and simulator bot friend requests).
+                    </p>
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <div className="relative flex-1">
+                        <input 
+                          type="text"
+                          value={adminFcmInput !== null ? adminFcmInput : (settings?.adminConfigFcmToken || '')}
+                          onChange={(e) => {
+                            setAdminFcmInput(e.target.value);
+                          }}
+                          placeholder="Paste Admin FCM Token Here"
+                          className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 p-4 pr-12 rounded-2xl font-bold outline-none focus:border-primary text-xs transition-all font-mono"
+                        />
+                        <Bell className="absolute right-4 top-1/2 -translate-y-1/2 text-black/20 dark:text-white/20" size={20} />
+                      </div>
+                      <button
+                        onClick={async () => {
+                          const savedVal = (adminFcmInput !== null ? adminFcmInput : (settings?.adminConfigFcmToken || '')).trim();
+                          await update(ref(db, 'settings'), { adminConfigFcmToken: savedVal });
+                          setFcmSavedFeedback(true);
+                          setTimeout(() => {
+                            setFcmSavedFeedback(false);
+                          }, 2500);
+                        }}
+                        className={cn(
+                          "font-black uppercase tracking-wider text-[11px] px-6 py-4 rounded-2xl transition-all cursor-pointer shadow-md active:scale-95",
+                          fcmSavedFeedback 
+                            ? "bg-green-500 text-white shadow-green-500/20"
+                            : "bg-[#32befa] hover:bg-[#32befa]/90 text-white shadow-primary/25"
+                        )}
+                      >
+                        {fcmSavedFeedback ? 'Saved ✓' : 'Save Token'}
+                      </button>
+                    </div>
+                 </div>
+               </div>
+
+               {/* Share Image Ratio Configuration Settings */}
+               <div className="bg-black/5 dark:bg-[#111] p-8 rounded-[3rem] border border-black/5 dark:border-white/5 space-y-6">
+                 <div className="flex items-center gap-4 mb-2">
+                   <div className="w-12 h-12 rounded-2xl bg-[#32befa]/10 flex items-center justify-center text-[#32befa]">
+                     <ImageIcon size={24} />
+                   </div>
+                   <div>
+                     <h4 className="font-black uppercase tracking-tight">Progress Share Image Ratio</h4>
+                     <p className="text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-widest font-mono">Aspect Ratio Settings</p>
+                   </div>
+                 </div>
+                 
+                 <div className="space-y-4">
+                    <p className="text-sm font-bold text-black/60 dark:text-white/60 leading-relaxed">
+                      Configure the default canvas aspect ratio when players generate and share their visual scorecards and quiz progress certificates to socials.
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                       {['16:9', '9:16', '1:1', '4:3'].map((ratio) => (
+                          <button
+                            key={ratio}
+                            onClick={async () => {
+                               await update(ref(db, 'settings'), { shareImageRatio: ratio });
+                            }}
+                            className={cn(
+                               "py-3.5 px-4 rounded-xl text-xs font-black transition-all border",
+                               (settings?.shareImageRatio || '1:1') === ratio
+                                 ? "bg-[#32befa] text-black border-[#32befa] shadow-md shadow-[#32befa]/10"
+                                 : "bg-black/5 dark:bg-white/5 border-transparent text-black/60 dark:text-white/60 hover:bg-black/10 dark:hover:bg-white/10"
+                            )}
+                          >
+                             {ratio === '16:9' ? '16:9 Landscape' : 
+                              ratio === '9:16' ? '9:16 Vertical' : 
+                              ratio === '1:1' ? '1:1 Square' : '4:3 Standard'}
+                          </button>
+                       ))}
+                    </div>
                  </div>
                </div>
 
@@ -10168,6 +11454,60 @@ export default function AdminPanel() {
                      )}
 
                     <div className="space-y-2 pt-2 border-t border-black/5 dark:border-white/5">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-black/50 dark:text-white/50">BGM Audio Playback Strategy</label>
+                        <select 
+                          value={settings?.bgmMode || 'all'}
+                          onChange={async (e) => {
+                            const val = e.target.value;
+                            await update(ref(db, 'settings'), { bgmMode: val });
+                          }}
+                          className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-2xl px-4 py-3 text-xs font-bold text-black dark:text-white outline-none focus:border-primary cursor-pointer uppercase tracking-widest"
+                        >
+                          <option value="all">🌐 ALL SENSORS (Link sound if set, otherwise Synthesizer)</option>
+                          <option value="uploaded_only">💾 Local Root Audio (Rahee Quiz Final.mp3)</option>
+                          <option value="link_only">🔗 Link Sound Only (MP3 sound, silence if empty)</option>
+                          <option value="synth_only">🎹 Synthesizer Only (Offline sound, disable link sound)</option>
+                        </select>
+                        <p className="text-[8px] font-bold uppercase tracking-wide text-black/40 dark:text-white/40 leading-relaxed">
+                          Choose whether to force-enable the high fidelity MIDI Synthesizer system, restrict to stream audio links, or play the local custom 'Rahee Quiz Final.mp3' file stored directly in the game's root directory continuously offline.
+                        </p>
+                    </div>
+
+                    <div className="space-y-3 pt-3 border-t border-black/5 dark:border-white/5">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-black/50 dark:text-white/50 block">Local Audio Status & Clean Up</label>
+                        <div className="flex flex-col gap-2 p-4 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 rounded-2xl">
+                          <span className="text-[11px] font-bold text-black dark:text-white uppercase leading-normal">
+                            📂 Loading Source: <span className="font-mono text-primary font-black">/Music/Rahee Quiz Final.mp3</span>
+                          </span>
+                          <p className="text-[9px] font-bold text-black/50 dark:text-[#a0a0a0] uppercase leading-relaxed">
+                            Place your file named <span className="font-mono font-black text-black dark:text-white">"Rahee Quiz Final.mp3"</span> into the game's root <span className="font-mono text-black dark:text-white">/Music</span> directory to play it in loop during local custom play. Supports any size.
+                          </p>
+
+                          {(settings?.bgmBase64 || settings?.bgmFileName) && (
+                            <div className="mt-2 pt-2 border-t border-black/5 dark:border-white/5 flex flex-col gap-2">
+                              <span className="text-[9px] font-black text-red-500 uppercase">
+                                ⚠️ Deprecated base64 audio detected in Database
+                              </span>
+                              <button 
+                                type="button"
+                                onClick={async () => {
+                                  await update(ref(db, 'settings'), { bgmFileName: null, bgmBase64: null });
+                                  await alert({ 
+                                    title: 'Storage Cleared', 
+                                    description: 'Large Base64 audio cleared from Realtime Database. Your database is now lightweight and fast!', 
+                                    type: 'success' 
+                                  });
+                                }}
+                                className="w-full bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-all"
+                              >
+                                Reclaim RTDB Space (Delete Old Base64 Audio)
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                    </div>
+
+                    <div className="space-y-2 pt-2 border-t border-black/5 dark:border-white/5">
                         <label className="text-[10px] font-black uppercase tracking-widest text-black/50 dark:text-white/50">Custom Audio BGM URL</label>
                         <input 
                           type="text"
@@ -10317,9 +11657,9 @@ export default function AdminPanel() {
                   <div className="pt-1.5 flex flex-wrap gap-1.5">
                     <span className="text-[9px] font-black uppercase text-black/30 dark:text-white/30 mr-1 self-center">Presets:</span>
                     {[
-                      { name: 'Users AppCode (Default)', val: 'users/{userId}/AppCode' },
-                      { name: 'Devices Path', val: 'UserDevices/{userId}/appCode' },
-                      { name: 'Device-User UserCode', val: 'UserDevices/{deviceUid}/Users/UserCode' },
+                      { name: 'OneLink Device UserCode', val: 'UserDevices/{deviceUid}/User/UserCode' },
+                      { name: 'Users AppCode (Legacy)', val: 'users/{userId}/AppCode' },
+                      { name: 'Device-Users Plural Path', val: 'UserDevices/{deviceUid}/Users/UserCode' },
                       { name: 'Custom Node Check', val: 'appCodes/{userId}' },
                       { name: 'Direct Root Node', val: '{userId}/AppCode' }
                     ].map((ps) => (
@@ -10912,6 +12252,9 @@ export default function AdminPanel() {
        {/* Fullscreen Player Dashboard Overlay */}
        {fullscreenDashboardUser && renderFullscreenPlayerDashboard(fullscreenDashboardUser)}
 
+       {/* Fullscreen Player Quiz History Overlay */}
+       {historyFullscreenUser && renderFullscreenPlayerHistory(historyFullscreenUser)}
+
        {/* Mobile Menu Toggle */}
        <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-white dark:bg-[#050505] border-b border-black/5 dark:border-white/5 flex items-center justify-between px-6 z-[160] transition-colors duration-300">
           <div className="flex items-center gap-2">
@@ -11024,6 +12367,154 @@ export default function AdminPanel() {
             </motion.div>
           </AnimatePresence>
        </div>
+
+        {/* CSV Import Topic Link Modal */}
+        <AnimatePresence>
+          {isCsvModalOpen && pendingCsvRows && (
+            <div className="fixed inset-0 z-[300] flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => {
+                  setIsCsvModalOpen(false);
+                  setPendingCsvRows(null);
+                }}
+                className="absolute inset-0 bg-black/60 backdrop-blur-sm shadow-xl"
+              />
+
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                className="bg-white dark:bg-[#0c0f16] border border-black/10 dark:border-white/10 rounded-[2.5rem] w-full max-w-md p-8 shadow-2xl relative z-10 text-left space-y-5 text-black dark:text-white"
+              >
+                <div className="flex items-center justify-between border-b border-black/5 dark:border-white/5 pb-3.5">
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-[#32befa] tracking-widest block font-sans">
+                      CSV Upload Wizard
+                    </span>
+                    <h3 className="text-lg font-black uppercase tracking-tight text-neutral-900 dark:text-neutral-50 mt-0.5 font-sans font-black">
+                      Link Quizzes to Topic / Node
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCsvModalOpen(false);
+                      setPendingCsvRows(null);
+                    }}
+                    className="p-1.5 hover:bg-black/5 dark:hover:bg-white/5 text-neutral-400 hover:text-red-500 rounded-full transition-all cursor-pointer"
+                  >
+                    <CloseIcon size={16} />
+                  </button>
+                </div>
+
+                <div className="space-y-4 font-sans">
+                  <div className="text-xs text-black/60 dark:text-gray-300 font-medium leading-relaxed">
+                    You parsed <span className="font-extrabold text-[#32befa]">{pendingCsvRows.length}</span> rows from the CSV file. How should they be linked?
+                  </div>
+
+                  {/* Mode Selector Option Cards */}
+                  <div className="space-y-3">
+                    {/* Auto Map Card */}
+                    <div
+                      onClick={() => setCsvTopicLinkMode('csv')}
+                      className={cn(
+                        "p-4 rounded-2xl border transition-all cursor-pointer flex flex-col gap-1 text-left relative overflow-hidden",
+                        csvTopicLinkMode === 'csv'
+                          ? "bg-[#32befa]/15 border-[#32befa]/40 shadow-sm"
+                          : "bg-black/5 dark:bg-white/5 border-transparent hover:border-black/10 dark:hover:border-white/10"
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className={cn(
+                          "w-4 h-4 rounded-full border-2 flex items-center justify-center transition-all",
+                          csvTopicLinkMode === 'csv' ? "border-[#32befa]" : "border-black/30 dark:border-white/30"
+                        )}>
+                          {csvTopicLinkMode === 'csv' && <div className="w-2 h-2 rounded-full bg-[#32befa]" />}
+                        </div>
+                        <span className="text-xs font-black uppercase tracking-wider text-black dark:text-white">
+                          Use Topic ID from CSV Code
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-semibold text-black/50 dark:text-gray-400 ml-6">
+                        Auto-link using the <code>topicId</code> sheet columns dynamically.
+                      </span>
+                    </div>
+
+                    {/* Single Topic Mapping Card */}
+                    <div
+                      onClick={() => setCsvTopicLinkMode('select')}
+                      className={cn(
+                        "p-4 rounded-2xl border transition-all cursor-pointer flex flex-col gap-1 text-left relative overflow-hidden",
+                        csvTopicLinkMode === 'select'
+                          ? "bg-[#32befa]/15 border-[#32befa]/40 shadow-sm"
+                          : "bg-black/5 dark:bg-white/5 border-transparent hover:border-black/10 dark:hover:border-white/10"
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className={cn(
+                          "w-4 h-4 rounded-full border-2 flex items-center justify-center transition-all",
+                          csvTopicLinkMode === 'select' ? "border-[#32befa]" : "border-black/30 dark:border-white/30"
+                        )}>
+                          {csvTopicLinkMode === 'select' && <div className="w-2 h-2 rounded-full bg-[#32befa]" />}
+                        </div>
+                        <span className="text-xs font-black uppercase tracking-wider text-black dark:text-white">
+                          Link All to a Single Topic Node
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-semibold text-black/50 dark:text-gray-400 ml-6">
+                        Map all imported quiz items into one of your existing game topics.
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Dropdown Selector if single topic mapping */}
+                  {csvTopicLinkMode === 'select' && (
+                    <div className="space-y-1.5 animate-fadeIn">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-[#32befa] block ml-1 font-mono">
+                        Select Game Topic / Node
+                      </label>
+                      <select
+                        value={selectedCsvTopicId}
+                        onChange={(e) => setSelectedCsvTopicId(e.target.value)}
+                        className="w-full bg-neutral-100 dark:bg-black border border-black/10 dark:border-white/10 p-3.5 rounded-2xl font-bold outline-none text-xs transition-colors text-black dark:text-white cursor-pointer"
+                      >
+                        {flattenTopics(topics).map((t) => (
+                          <option key={`csv-topic-opt-${t.id}`} value={t.id}>
+                            {t.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div className="flex gap-2.5 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCsvModalOpen(false);
+                        setPendingCsvRows(null);
+                      }}
+                      className="flex-1 bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 text-black/70 dark:text-gray-300 font-extrabold uppercase p-4 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 transition-all text-[10px] tracking-wider cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={processPendingCsvQuizzes}
+                      className="flex-1 bg-[#32befa] text-black font-extrabold uppercase p-4 rounded-xl hover:bg-opacity-90 transition-all text-[10px] tracking-widest shadow-lg shadow-primary/10 cursor-pointer"
+                    >
+                      Import Now
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
     </div>
   );
 }

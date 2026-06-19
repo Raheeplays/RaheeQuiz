@@ -16,6 +16,7 @@ interface MixSettings {
   harp?: number;
   beats?: number;
   bpm?: number;
+  bgmMasterVolume?: number;
   midiPresetName?: string;
   midiUrlSynth?: string;
   midiUrlFlute?: string;
@@ -30,6 +31,7 @@ class BgmService {
   private masterGain: GainNode | null = null;
   private rootFilter: BiquadFilterNode | null = null;
   private isBgmPlaying = false;
+  private bgmMasterVolume = 0.5;
 
   // Active synthesizer nodes for smooth fading
   private synthNodes: { osc: OscillatorNode; gain: GainNode }[] = [];
@@ -70,7 +72,7 @@ class BgmService {
   private nextNoteIndices: { [instrumentKey: string]: number } = {};
 
   // Custom audio URL fallback player
-  private customAudio: HTMLAudioElement | null = null;
+  private customAudio: HTMLMediaElement | null = null;
   private currentCustomUrl = '';
   private shouldPlayCustom = false;
 
@@ -90,7 +92,7 @@ class BgmService {
 
       this.masterGain = this.audioCtx.createGain();
       // Master balance levels
-      this.masterGain.gain.setValueAtTime(0.09, this.audioCtx.currentTime);
+      this.masterGain.gain.setValueAtTime(0.18 * this.bgmMasterVolume, this.audioCtx.currentTime);
 
       this.rootFilter = this.audioCtx.createBiquadFilter();
       this.rootFilter.type = 'lowpass';
@@ -153,12 +155,28 @@ class BgmService {
     userEnabled: boolean,
     preset: BgmPresetType = 'synth',
     customUrl?: string,
-    mix?: MixSettings
+    mix?: MixSettings,
+    bgmMode: string = 'all',
+    uploadedBgmBase64?: string
   ) {
     const shouldPlay = globalEnabled && (userEnabled !== false);
 
     // Sync volume sliders and track assignments in real-time
     if (mix) {
+      if (mix.bgmMasterVolume !== undefined) {
+        this.bgmMasterVolume = mix.bgmMasterVolume;
+        if (this.customAudio) {
+          try {
+            this.customAudio.volume = this.bgmMasterVolume * 0.7;
+          } catch (e) {}
+        }
+        if (this.audioCtx && this.masterGain) {
+          try {
+            this.masterGain.gain.setValueAtTime(0.18 * this.bgmMasterVolume, this.audioCtx.currentTime);
+          } catch (e) {}
+        }
+      }
+
       if (mix.synth !== undefined) this.volSynth = mix.synth;
       if (mix.flute !== undefined) this.volFlute = mix.flute;
       if (mix.piano !== undefined) this.volPiano = mix.piano;
@@ -211,12 +229,28 @@ class BgmService {
     }
 
     if (shouldPlay) {
-      if (customUrl && customUrl.trim().length > 0) {
+      if (bgmMode === 'uploaded_only') {
         this.stopSynthesizedMusic();
-        this.playCustomUrl(customUrl.trim());
-      } else {
+        this.playCustomUrl('/Music/Rahee Quiz Final.mp3');
+      } else if (bgmMode === 'synth_only') {
         this.stopCustomUrl();
         this.playSynthesizedMusic(preset);
+      } else if (bgmMode === 'link_only') {
+        this.stopSynthesizedMusic();
+        if (customUrl && customUrl.trim().length > 0) {
+          this.playCustomUrl(customUrl.trim());
+        } else {
+          this.stopCustomUrl();
+        }
+      } else {
+        // 'all' style
+        if (customUrl && customUrl.trim().length > 0) {
+          this.stopSynthesizedMusic();
+          this.playCustomUrl(customUrl.trim());
+        } else {
+          this.stopCustomUrl();
+          this.playSynthesizedMusic(preset);
+        }
       }
     } else {
       this.stop();
@@ -238,10 +272,25 @@ class BgmService {
       this.stopCustomUrl();
       this.currentCustomUrl = url;
       try {
-        const audio = new Audio(url);
-        audio.loop = true;
-        audio.volume = 0.35;
-        this.customAudio = audio;
+        let playableUrl = url;
+        if (playableUrl.startsWith('data:image/')) {
+          const semi = playableUrl.indexOf(';');
+          if (semi !== -1) {
+            playableUrl = 'data:audio/mp3' + playableUrl.substring(semi);
+          }
+        }
+        const isVideo = playableUrl.toLowerCase().includes('.mp4') || playableUrl.toLowerCase().includes('.m4v') || playableUrl.toLowerCase().includes('.mov') || playableUrl.toLowerCase().includes('.webm');
+        let media: HTMLMediaElement;
+        if (isVideo) {
+          media = document.createElement('video');
+          (media as HTMLVideoElement).playsInline = true;
+          (media as HTMLVideoElement).muted = false;
+        } else {
+          media = new Audio(playableUrl);
+        }
+        media.loop = true;
+        media.volume = this.bgmMasterVolume * 0.7;
+        this.customAudio = media;
       } catch (err) {
         console.error('Failed to play custom ambient MP3 stream:', err);
       }

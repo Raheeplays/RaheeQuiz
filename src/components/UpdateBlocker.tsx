@@ -7,14 +7,15 @@ import { RefreshCw, Smartphone, Layers, KeyRound, ArrowRight } from 'lucide-reac
 
 interface UpdateBlockerProps {
   children: React.ReactNode;
+  onCheckingComplete?: (hasMismatch: boolean) => void;
 }
 
-export default function UpdateBlocker({ children }: UpdateBlockerProps) {
+export default function UpdateBlocker({ children, onCheckingComplete }: UpdateBlockerProps) {
   const { currentUser } = useUser();
   const [globalCode, setGlobalCode] = useState<string | null>(null);
   const [globalMessage, setGlobalMessage] = useState<string>('');
   const [globalHelpMessage, setGlobalHelpMessage] = useState<string>('Please Contact Developer Or Admin For More Info');
-  const [checkedPathPattern, setCheckedPathPattern] = useState<string>('users/{userId}/AppCode');
+  const [checkedPathPattern, setCheckedPathPattern] = useState<string>('UserDevices/{deviceUid}/User/UserCode');
   const [customPathOverride, setCustomPathOverride] = useState<string | null>(null);
   const [userAppCode, setUserAppCode] = useState<string | null>(null);
   const [isBypassed, setIsBypassed] = useState(() => localStorage.getItem('__admin_update_bypass_2') === 'true');
@@ -23,7 +24,8 @@ export default function UpdateBlocker({ children }: UpdateBlockerProps) {
   const [showBypassInput, setShowBypassInput] = useState(false);
   const [bypassPasscode, setBypassPasscode] = useState('');
   const [bypassError, setBypassError] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [globalLoading, setGlobalLoading] = useState(true);
+  const [userAppCodeLoaded, setUserAppCodeLoaded] = useState(false);
 
   // Press & Hold Logic
   const [pressProgress, setPressProgress] = useState(0); 
@@ -42,17 +44,17 @@ export default function UpdateBlocker({ children }: UpdateBlockerProps) {
         if (val.CheckedPathPattern) {
           setCheckedPathPattern(String(val.CheckedPathPattern).trim());
         } else {
-          setCheckedPathPattern('users/{userId}/AppCode');
+          setCheckedPathPattern('UserDevices/{deviceUid}/User/UserCode');
         }
       } else {
         setGlobalCode(null);
-        setCheckedPathPattern('users/{userId}/AppCode');
+        setCheckedPathPattern('UserDevices/{deviceUid}/User/UserCode');
         setGlobalHelpMessage("Please Contact Developer Or Admin For More Info");
       }
-      setLoading(false);
+      setGlobalLoading(false);
     }, (error) => {
       console.error("Global Update node fetch failed:", error);
-      setLoading(false);
+      setGlobalLoading(false);
     });
 
     return () => unsubscribe();
@@ -82,17 +84,23 @@ export default function UpdateBlocker({ children }: UpdateBlockerProps) {
   // Determine active pattern & final resolved live DB path
   const activePattern = customPathOverride || checkedPathPattern;
   const resolvedPath = currentUser?.id 
-    ? activePattern
-        .replace(/{userId}/g, currentUser.id)
-        .replace(/{deviceUid}/g, currentUser.deviceUid || '')
+    ? (currentUser.deviceUid 
+        ? `UserDevices/${currentUser.deviceUid}/User/UserCode`
+        : activePattern
+            .replace(/{userId}/g, currentUser.id)
+            .replace(/{deviceUid}/g, currentUser.deviceUid || '')
+      )
     : '';
 
   // 3. Dynamic Realtime Subscription to userAppCode at resolvedPath
   useEffect(() => {
     if (!resolvedPath) {
       setUserAppCode(null);
+      setUserAppCodeLoaded(true);
       return;
     }
+
+    setUserAppCodeLoaded(false);
 
     const userAppCodeRef = ref(db, resolvedPath);
     const unsubscribe = onValue(userAppCodeRef, (snapshot) => {
@@ -102,13 +110,26 @@ export default function UpdateBlocker({ children }: UpdateBlockerProps) {
       } else {
         setUserAppCode(null);
       }
+      setUserAppCodeLoaded(true);
     }, (error) => {
       console.error(`AppCode fetch failed at dynamic path [${resolvedPath}]:`, error);
       setUserAppCode(null);
+      setUserAppCodeLoaded(true);
     });
 
     return () => unsubscribe();
   }, [resolvedPath]);
+
+  const isCheckingComplete = !globalLoading && (!currentUser || !resolvedPath || userAppCodeLoaded);
+  const isMismatch = globalCode !== null && userAppCode !== globalCode;
+  const showBlocker = currentUser && isMismatch && !isBypassed;
+
+  // Let parent know checking has completed
+  useEffect(() => {
+    if (isCheckingComplete && onCheckingComplete) {
+      onCheckingComplete(showBlocker);
+    }
+  }, [isCheckingComplete, showBlocker, onCheckingComplete]);
 
   // Press & Hold Handler triggers
   const startPress = () => {
@@ -164,14 +185,11 @@ export default function UpdateBlocker({ children }: UpdateBlockerProps) {
     }
   };
 
-  // If loading global node configuration, run concurrently in background without blocker
-  if (loading) {
-    return <>{children}</>;
+  // If checking is in progress, do NOT render children to prevent any glimpse/glitch of MainMenu
+  // Render a clean black screen or simple placeholder instead, which merges with the splash
+  if (!isCheckingComplete) {
+    return <div className="fixed inset-0 bg-black z-[9999]" />;
   }
-
-  // Determine if update is required
-  const isMismatch = globalCode !== null && userAppCode !== globalCode;
-  const showBlocker = currentUser && isMismatch && !isBypassed;
 
   if (showBlocker) {
     // Inhibition on click, context menu and select behavior

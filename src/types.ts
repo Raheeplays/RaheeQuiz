@@ -13,9 +13,12 @@ export interface User {
   rank: number;
   currentRound: number;
   currentQuizIndex: number;
+  solvedQuizzes?: { [quizId: string]: boolean };
+  currentRoundQuizzes?: string[];
   AppCode?: string | number;
   CustomAppCodePath?: string;
   isBot?: boolean;
+  isOnline?: boolean;
   avatar?: string;
   avatarUrl?: string;
   pendingAvatarUrl?: string | null;
@@ -35,8 +38,10 @@ export interface User {
   selectedSubSubTopicId?: string;
   fixedTopicId?: string | null; // Locked topic ID
   canSwitchTopic?: boolean; // Admin flag to allow switching
+  themesDisabled?: boolean; // Admin flag to hide theme controls for this user
   language: 'en' | 'hi';
   raheeCoins: number;
+  quizCoins?: number;
   lifelines: {
     'fiftyFifty': number;
     'changeQuiz': number;
@@ -87,6 +92,7 @@ export interface User {
   midiUrlHarp?: string;
   midiPresetName?: string;
   ambientThreshold?: number;
+  bgmVolume?: number;
   playedDates?: string[];
   dailyRewards?: {
     lastClaimDate?: string;
@@ -100,6 +106,7 @@ export interface User {
     lastClaimTier4?: string;
     lastClaimTier5?: string;
   };
+  createdAt?: number;
 }
 
 export interface Coupon {
@@ -112,6 +119,10 @@ export interface Coupon {
   usedAt?: number;
   createdAt: number;
   createdBy: string;
+  maxUses?: number;
+  usesCount?: number;
+  usedUsers?: { [userId: string]: number };
+  secretLinkedCode?: string;
 }
 
 export interface CouponLog {
@@ -136,6 +147,7 @@ export interface Settings {
   livesEnabledForAll: boolean;
   quizTimerEnabled?: boolean;
   quizTimerSeconds?: number;
+  correctQuizCoinValue?: number;
   pushNotificationsEnabled?: boolean;
   customization?: {
     correctSound: string;
@@ -178,6 +190,10 @@ export interface Settings {
   midiUrlHarp?: string;
   midiPresetName?: string;
   ambientThreshold?: number;
+  bgmVolume?: number;
+  bgmMode?: string;
+  bgmBase64?: string;
+  bgmFileName?: string;
   updateCodeSettings?: {
     code: string;
     updateUrl?: string;
@@ -208,6 +224,7 @@ export interface Event {
   participants?: { [userId: string]: boolean };
   hasTimer?: boolean;
   timerDuration?: number;
+  difficultyFilter?: string; // New field for selecting quiz difficulty values (e.g. 1-5, or 'all')
   certificateTitle?: string;
   certificateSubtitle?: string;
   certificateFooter?: string;
@@ -285,6 +302,7 @@ export interface Quiz {
   };
   correctAnswerIndex: number;
   topicId: string;
+  difficulty?: number; // Difficulty rating from 1 to 5
   explanation?: {
     en: string;
     hi: string;
@@ -324,6 +342,8 @@ export interface QuizHistory {
   timestamp: number;
   language?: 'en' | 'hi';
   theme?: 'light' | 'dark';
+  round?: number;
+  questionNumber?: number;
 }
 
 export interface SessionHistory {
@@ -335,6 +355,7 @@ export interface SessionHistory {
   timestamp: number;
   language?: 'en' | 'hi';
   theme?: 'light' | 'dark';
+  round?: number;
   answers: {
     quizId: string;
     userAnswerIndex: number;

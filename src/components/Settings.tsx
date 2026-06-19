@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { X, Volume2, VolumeX, Globe, LogOut, Shield, Moon, Sun, MessageSquare, ChevronRight, Zap, History, EyeOff, AlertTriangle, Music } from 'lucide-react';
+import { X, Volume2, VolumeX, Globe, LogOut, Shield, Moon, Sun, MessageSquare, ChevronRight, Zap, History, EyeOff, AlertTriangle, Music, Palette } from 'lucide-react';
 import { useUser } from '../contexts/UserContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { useDialog } from '../contexts/DialogContext';
@@ -23,15 +23,16 @@ export default function Settings({
   activeQuizText?: string
 }) {
   const { currentUser, logout, settings } = useUser();
-  const { isDark, setIsDark, soundEnabled, setSoundEnabled, vibrationEnabled, setVibrationEnabled } = useTheme();
+  const { isDark, setIsDark, soundEnabled, setSoundEnabled, vibrationEnabled, setVibrationEnabled, layoutTheme, setLayoutTheme } = useTheme();
   const { confirm, alert } = useDialog();
   
   const lang = currentUser?.language || 'en';
   const t = translations[lang] || translations.en;
+  const userPath = currentUser?.isBot ? `bots/${currentUser.id}` : `users/${currentUser.id}`;
 
   const handleLanguageChange = async (newLang: 'en' | 'hi') => {
     if (!currentUser) return;
-    await update(ref(db, `users/${currentUser.id}`), { language: newLang });
+    await update(ref(db, `${userPath}`), { language: newLang });
   };
 
   const handleReportQuestion = async () => {
@@ -171,10 +172,79 @@ export default function Settings({
                     </button>
                  </div>
 
+                 {/* Selectable Play Layout Themes */}
+                  {!(settings?.themesDisabled === true || currentUser?.themesDisabled === true) && (
+                 <div className="p-3.5 bg-black/5 dark:bg-white/5 rounded-2xl space-y-3 text-left">
+                    <p className="font-black text-[10px] uppercase tracking-wider text-primary flex items-center gap-1.5 justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Palette size={13} />
+                        <span>{lang === 'hi' ? 'खिलाड़ी डिजाइन थीम' : 'Personal Design Theme'}</span>
+                      </span>
+                    </p>
+                    
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {/* Classic Layout */}
+                      <button 
+                        onClick={() => setLayoutTheme('classic')}
+                        className={cn(
+                          "p-2.5 rounded-xl border text-left transition-all relative flex flex-col gap-0.5 cursor-pointer",
+                          layoutTheme === 'classic' 
+                            ? "border-primary bg-primary/10 text-neutral-900 dark:text-white" 
+                            : "border-black/5 dark:border-white/5 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-black/50 dark:text-white/50"
+                        )}
+                      >
+                        <span className="font-black text-[10px] uppercase tracking-wide">Classic Design</span>
+                        <span className="text-[7px] font-bold uppercase tracking-tight opacity-70">Classic Clean</span>
+                        {layoutTheme === 'classic' && (
+                          <div className="absolute right-2 top-2 w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                        )}
+                      </button>
+
+
+
+
+
+                      {/* Glass Design Layout */}
+                      <button 
+                        onClick={() => setLayoutTheme('glass')}
+                        className={cn(
+                          "p-2.5 rounded-xl border text-left transition-all relative flex flex-col gap-0.5 cursor-pointer",
+                          layoutTheme === 'glass' 
+                            ? "border-violet-500 bg-violet-500/10 text-neutral-950 dark:text-white" 
+                            : "border-black/5 dark:border-white/5 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-black/50 dark:text-white/50"
+                        )}
+                      >
+                        <span className="font-black text-[10px] uppercase tracking-wide text-violet-500 font-sans">Glass Design</span>
+                        <span className="text-[7px] font-bold uppercase tracking-tight opacity-70 font-sans">Frosted Glass</span>
+                        {layoutTheme === 'glass' && (
+                          <div className="absolute right-2 top-2 w-1.5 h-1.5 rounded-full bg-violet-500 animate-pulse" />
+                        )}
+                      </button>
+
+                      {/* Rahee Edition Layout */}
+                      <button 
+                        onClick={() => setLayoutTheme('rahee-edition')}
+                        className={cn(
+                          "p-2.5 rounded-xl border text-left transition-all relative flex flex-col gap-0.5 cursor-pointer col-span-2",
+                          layoutTheme === 'rahee-edition' 
+                            ? "border-cyan-400 bg-cyan-400/10 text-neutral-900 dark:text-white" 
+                            : "border-black/5 dark:border-white/5 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-black/50 dark:text-white/50"
+                        )}
+                      >
+                        <span className="font-black text-[10px] uppercase tracking-wide text-cyan-400 font-sans">🏆 Rahee Edition</span>
+                        <span className="text-[7px] font-bold uppercase tracking-tight opacity-70">Glassmorphism & Chrome metallic finish 3D</span>
+                        {layoutTheme === 'rahee-edition' && (
+                          <div className="absolute right-2 top-2 w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                        )}
+                      </button>
+                    </div>
+                 </div>
+               )}
+
                  {/* Search Privacy Toggle */}
                  <div className="flex items-center justify-between p-3 bg-black/5 dark:bg-white/5 rounded-2xl">
                     <div className="flex items-center gap-3">
-                       <div className={cn("p-1.5 rounded-lg bg-white dark:bg-black shadow-sm", currentUser?.privacyEnabled ? "text-primary" : "text-black/20 dark:text-white/20")}>
+                       <div className={cn("p-1.5 rounded-lg bg-white dark:bg-black shadow-sm", (currentUser?.privacyEnabled !== false) ? "text-primary" : "text-black/20 dark:text-white/20")}>
                           <EyeOff size={16} />
                        </div>
                        <div>
@@ -189,13 +259,13 @@ export default function Settings({
                     <button 
                       onClick={async () => {
                         if (!currentUser) return;
-                        await update(ref(db, `users/${currentUser.id}`), {
-                          privacyEnabled: !currentUser.privacyEnabled
+                        await update(ref(db, `${userPath}`), {
+                          privacyEnabled: !(currentUser.privacyEnabled !== false)
                         });
                       }}
-                      className={cn("w-8 h-4 rounded-full transition-all relative", currentUser?.privacyEnabled ? "bg-primary" : "bg-black/10 dark:bg-white/10")}
+                      className={cn("w-8 h-4 rounded-full transition-all relative", (currentUser?.privacyEnabled !== false) ? "bg-primary" : "bg-black/10 dark:bg-white/10")}
                     >
-                      <div className={cn("absolute top-0.5 w-3 h-3 rounded-full bg-white dark:bg-black transition-all", currentUser?.privacyEnabled ? "left-4.5" : "left-0.5")} />
+                      <div className={cn("absolute top-0.5 w-3 h-3 rounded-full bg-white dark:bg-black transition-all", (currentUser?.privacyEnabled !== false) ? "left-4.5" : "left-0.5")} />
                     </button>
                  </div>
 
@@ -239,7 +309,7 @@ export default function Settings({
                        onClick={async () => {
                          if (!currentUser) return;
                          const updatedBgm = !(currentUser.bgmEnabled !== false);
-                         await update(ref(db, `users/${currentUser.id}`), {
+                         await update(ref(db, `${userPath}`), {
                            bgmEnabled: updatedBgm
                          });
                        }}
@@ -248,6 +318,31 @@ export default function Settings({
                        <div className={cn("absolute top-0.5 w-3 h-3 rounded-full bg-white dark:bg-black transition-all", (currentUser?.bgmEnabled !== false) ? "left-4.5" : "left-0.5")} />
                      </button>
                   </div>
+
+                  {/* BGM Master Volume Slider - Accessible to all users */}
+                  {(currentUser?.bgmEnabled !== false) && (
+                    <div className="p-3 bg-black/5 dark:bg-white/5 rounded-2xl space-y-2">
+                       <div className="flex justify-between items-center text-[8px] font-black uppercase text-black/50 dark:text-white/50">
+                          <span className="flex items-center gap-1">🎵 {lang === 'hi' ? 'संगीत की तीव्र ध्वनि' : 'BGM Master Volume'}</span>
+                          <span className="font-mono text-primary font-bold">
+                             {Math.round((currentUser?.bgmVolume !== undefined ? currentUser.bgmVolume : 0.5) * 100)}%
+                          </span>
+                       </div>
+                       <input 
+                         type="range"
+                         min="0"
+                         max="1"
+                         step="0.05"
+                         value={currentUser?.bgmVolume !== undefined ? currentUser.bgmVolume : 0.5}
+                         onChange={async (e) => {
+                           if (!currentUser) return;
+                           const val = parseFloat(e.target.value);
+                           await update(ref(db, `${userPath}`), { bgmVolume: val });
+                         }}
+                         className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
+                       />
+                    </div>
+                  )}
 
                   {/* Custom Studio Audio Mixer panel for players */}
                   {(currentUser?.bgmEnabled !== false && currentUser?.role === 'admin') && (
@@ -276,7 +371,7 @@ export default function Settings({
                             onChange={async (e) => {
                               if (!currentUser) return;
                               const val = parseFloat(e.target.value);
-                              await update(ref(db, `users/${currentUser.id}`), { bgmVolumeSynth: val });
+                              await update(ref(db, `${userPath}`), { bgmVolumeSynth: val });
                             }}
                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
                           />
@@ -299,7 +394,7 @@ export default function Settings({
                             onChange={async (e) => {
                               if (!currentUser) return;
                               const val = parseFloat(e.target.value);
-                              await update(ref(db, `users/${currentUser.id}`), { bgmVolumeFlute: val });
+                              await update(ref(db, `${userPath}`), { bgmVolumeFlute: val });
                             }}
                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
                           />
@@ -322,7 +417,7 @@ export default function Settings({
                             onChange={async (e) => {
                               if (!currentUser) return;
                               const val = parseFloat(e.target.value);
-                              await update(ref(db, `users/${currentUser.id}`), { bgmVolumePiano: val });
+                              await update(ref(db, `${userPath}`), { bgmVolumePiano: val });
                             }}
                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
                           />
@@ -345,7 +440,7 @@ export default function Settings({
                             onChange={async (e) => {
                               if (!currentUser) return;
                               const val = parseFloat(e.target.value);
-                              await update(ref(db, `users/${currentUser.id}`), { bgmVolumeGuitar: val });
+                              await update(ref(db, `${userPath}`), { bgmVolumeGuitar: val });
                             }}
                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
                           />
@@ -368,7 +463,7 @@ export default function Settings({
                             onChange={async (e) => {
                               if (!currentUser) return;
                               const val = parseFloat(e.target.value);
-                              await update(ref(db, `users/${currentUser.id}`), { bgmVolumeBeats: val });
+                              await update(ref(db, `${userPath}`), { bgmVolumeBeats: val });
                             }}
                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
                           />
@@ -391,7 +486,7 @@ export default function Settings({
                             onChange={async (e) => {
                               if (!currentUser) return;
                               const val = parseInt(e.target.value, 10);
-                              await update(ref(db, `users/${currentUser.id}`), { bgmBpm: val });
+                              await update(ref(db, `${userPath}`), { bgmBpm: val });
                             }}
                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
                           />
@@ -414,7 +509,7 @@ export default function Settings({
                             onChange={async (e) => {
                               if (!currentUser) return;
                               const val = parseFloat(e.target.value);
-                              await update(ref(db, `users/${currentUser.id}`), { bgmVolumeViolin: val });
+                              await update(ref(db, `${userPath}`), { bgmVolumeViolin: val });
                             }}
                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
                           />
@@ -437,7 +532,7 @@ export default function Settings({
                             onChange={async (e) => {
                               if (!currentUser) return;
                               const val = parseFloat(e.target.value);
-                              await update(ref(db, `users/${currentUser.id}`), { bgmVolumeHarp: val });
+                              await update(ref(db, `${userPath}`), { bgmVolumeHarp: val });
                             }}
                             className="w-full accent-primary h-1 bg-black/10 dark:bg-white/10 rounded-lg cursor-pointer"
                           />
@@ -453,7 +548,7 @@ export default function Settings({
                              value={currentUser?.midiPresetName || settings?.midiPresetName || 'satie'}
                              onChange={async (e) => {
                                if (!currentUser) return;
-                               await update(ref(db, `users/${currentUser.id}`), { midiPresetName: e.target.value });
+                               await update(ref(db, `${userPath}`), { midiPresetName: e.target.value });
                              }}
                              className="w-full bg-white dark:bg-black border border-black/10 dark:border-white/10 rounded-xl px-2.5 py-1.5 text-[10px] font-bold text-black dark:text-white focus:border-primary outline-none cursor-pointer uppercase"
                            >
@@ -486,7 +581,7 @@ export default function Settings({
                        onClick={async () => {
                          if (!currentUser) return;
                          const updatedAmbient = !currentUser.ambientModeEnabled;
-                         await update(ref(db, `users/${currentUser.id}`), {
+                         await update(ref(db, `${userPath}`), {
                            ambientModeEnabled: updatedAmbient
                          });
                        }}
@@ -512,7 +607,7 @@ export default function Settings({
                      </div>
                      <button 
                        onClick={async () => {
-                         await update(ref(db, `users/${currentUser.id}`), { 
+                         await update(ref(db, `${userPath}`), { 
                            autoCorrectEnabled: !currentUser.autoCorrectEnabled 
                          });
                        }}
@@ -553,33 +648,19 @@ export default function Settings({
                  </div>
               )}
 
-              <p className="text-[9px] font-black text-black/20 dark:text-white/20 uppercase tracking-[0.2em] ml-4">Journal & Help</p>
-              <div className="grid grid-cols-2 gap-2">
-                 {/* Quiz History */}
-                 <button 
-                   onClick={() => { onClose(); onShowHistory(); }}
-                   className="flex flex-col gap-2 p-4 bg-black/5 dark:bg-white/5 rounded-2xl hover:bg-primary/10 transition-all border border-black/5 dark:border-white/5 text-left group"
-                 >
-                    <div className="p-1.5 rounded-lg bg-white dark:bg-black shadow-sm text-primary w-fit group-hover:scale-110 transition-transform">
-                       <History size={16} />
-                    </div>
-                    <div>
-                       <p className="font-black text-[10px] uppercase tracking-tight">Journal</p>
-                       <p className="text-[7px] font-bold text-black/30 dark:text-white/30 uppercase mt-0.5">Past Runs</p>
-                    </div>
-                 </button>
-
+              <p className="text-[9px] font-black text-black/20 dark:text-white/20 uppercase tracking-[0.2em] ml-4">Feedback & Support</p>
+              <div>
                  {/* Feedback */}
                  <button 
                    onClick={() => { onClose(); onShowFeedback(); }}
-                   className="flex flex-col gap-2 p-4 bg-black/5 dark:bg-white/5 rounded-2xl hover:bg-primary/10 transition-all border border-black/5 dark:border-white/5 text-left group"
+                   className="w-full flex items-center gap-4 p-4 bg-black/5 dark:bg-white/5 rounded-2xl hover:bg-primary/10 transition-all border border-black/5 dark:border-white/5 text-left group"
                  >
-                    <div className="p-1.5 rounded-lg bg-white dark:bg-black shadow-sm text-primary w-fit group-hover:scale-110 transition-transform">
-                       <MessageSquare size={16} />
+                    <div className="p-2.5 rounded-xl bg-white dark:bg-black shadow-sm text-primary group-hover:scale-110 transition-transform">
+                       <MessageSquare size={18} />
                     </div>
                     <div>
-                       <p className="font-black text-[10px] uppercase tracking-tight">Support</p>
-                       <p className="text-[7px] font-bold text-black/30 dark:text-white/30 uppercase mt-0.5">Feedback</p>
+                       <p className="font-black text-[11px] uppercase tracking-tight">Support</p>
+                       <p className="text-[8px] font-bold text-black/30 dark:text-white/30 uppercase mt-0.5">Send Feedback & Suggestions</p>
                     </div>
                  </button>
               </div>

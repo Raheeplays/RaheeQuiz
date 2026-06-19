@@ -50,7 +50,7 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
         const nameLower = (u.name || '').toLowerCase();
 
         // Enforce privacy settings
-        if (u.privacyEnabled) {
+        if (u.privacyEnabled !== false) {
           // Can only match if search query is exact full username or exact full name
           return cleanQuery === cleanUsernameLower || query === nameLower;
         }
@@ -65,39 +65,60 @@ export default function SocialHub({ onClose, allUsers, totalQuizzesCount }: Soci
 
   const sendFriendRequest = async (targetUserId: string) => {
     try {
+      const targetUserObj = allUsers.find(u => u.id === targetUserId);
+      const targetIsBot = targetUserObj?.isBot || false;
+      const targetPath = targetIsBot ? `bots/${targetUserId}` : `users/${targetUserId}`;
+
       await update(ref(db, `users/${currentUser.id}/pendingRequests`), {
         [targetUserId]: 'outgoing'
       });
-      await update(ref(db, `users/${targetUserId}/pendingRequests`), {
+      await update(ref(db, `${targetPath}/pendingRequests`), {
         [currentUser.id]: 'incoming'
       });
 
       // Send FCM Notification
       if (settings?.pushNotificationsEnabled !== false) {
         try {
-          const tokensSnap = await get(ref(db, `fcmTokens/${targetUserId}`));
-          if (tokensSnap.exists()) {
-            const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
-            const templateSnap = await get(ref(db, 'customNotifications/friendRequest'));
-            let title = 'New Friend Request';
-            let body = `${currentUser.name} wants to be your friend!`;
-
-            if (templateSnap.exists()) {
-              const template = templateSnap.val();
-              if (template?.title) title = template.title;
-              if (template?.body) body = template.body.replace('{player}', currentUser.name);
+          if (targetIsBot) {
+            const adminToken = settings?.adminConfigFcmToken;
+            const isMasterFcmEnabled = settings?.adminMasterFcmEnabled !== false;
+            if (isMasterFcmEnabled && adminToken && adminToken.trim().length > 10 && serviceAccount) {
+              const title = 'Bot Friend Request';
+              const body = `Real player ${currentUser.name} (@${currentUser.username}) sent a friend request to bot ${targetUserObj?.name || targetUserId} (@${targetUserObj?.username || ''})`;
+              const pushData = {
+                action_type: 'friend_request_to_bot',
+                senderId: currentUser.id,
+                senderName: currentUser.name,
+                targetUserId: targetUserId,
+                targetUserName: targetUserObj?.name || 'Bot'
+              };
+              await NotificationService.sendToToken(serviceAccount, adminToken.trim(), title, body, undefined, pushData);
             }
+          } else {
+            const tokensSnap = await get(ref(db, `fcmTokens/${targetUserId}`));
+            if (tokensSnap.exists()) {
+              const tokens = NotificationService.getTokensFromValue(tokensSnap.val());
+              const templateSnap = await get(ref(db, 'customNotifications/friendRequest'));
+              let title = 'New Friend Request';
+              let body = `${currentUser.name} wants to be your friend!`;
 
-            const pushData = {
-              action_type: 'friend_request',
-              senderId: currentUser.id,
-              senderName: currentUser.name,
-              targetUserId: targetUserId,
-              targetUserName: allUsers.find(u => u.id === targetUserId)?.name || 'Opponent'
-            };
+              if (templateSnap.exists()) {
+                const template = templateSnap.val();
+                if (template?.title) title = template.title;
+                if (template?.body) body = template.body.replace('{player}', currentUser.name);
+              }
 
-            for (const token of tokens) {
-              await NotificationService.sendToToken(serviceAccount, token, title, body, undefined, pushData);
+              const pushData = {
+                action_type: 'friend_request',
+                senderId: currentUser.id,
+                senderName: currentUser.name,
+                targetUserId: targetUserId,
+                targetUserName: allUsers.find(u => u.id === targetUserId)?.name || 'Opponent'
+              };
+
+              for (const token of tokens) {
+                await NotificationService.sendToToken(serviceAccount, token, title, body, undefined, pushData);
+              }
             }
           }
         } catch (e) {

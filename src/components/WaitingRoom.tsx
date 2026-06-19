@@ -16,7 +16,7 @@ export default function WaitingRoom() {
         <div className="w-20 h-20 bg-[#32befa]/20 rounded-full flex items-center justify-center mx-auto mb-6">
           <Clock className="text-[#32befa]" size={40} />
         </div>
-        <h2 className="text-2xl font-bold mb-4">Approval Pending</h2>
+        <h2 className="text-2xl font-bold mb-4 text-white">Approval Pending</h2>
         <p className="text-white/60 mb-8 leading-relaxed">
           Your account has been created successfully! Please wait for <span className="text-[#32befa] font-bold">Rahee</span> to approve your request.
         </p>
