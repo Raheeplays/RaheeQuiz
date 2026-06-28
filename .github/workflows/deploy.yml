@@ -18,7 +18,7 @@ jobs:
       - run: npm install
       - run: npm run build
       
-      # Sabse zaroori step sub-pages ke liye:
+      # Sabse zaroyori step sub-pages ke liye:
       - name: Setup Multi-page Routing
         run: cp dist/index.html dist/404.html
 
